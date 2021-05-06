@@ -82,7 +82,7 @@ option(ALSOFT_NO_CONFIG_UTIL "Disable building the alsoft-config utility" OFF)
 option(ALSOFT_EXAMPLES  "Build example programs"  OFF)
 
 option(ALSOFT_INSTALL "Install main library" ON)
-option(ALSOFT_INSTALL_CONFIG "Install alsoft.conf sample configuration file" ON)
+option(ALSOFT_INSTALL_CONFIG "Install alsoft.conf sample configuration file" OFF)
 option(ALSOFT_INSTALL_HRTF_DATA "Install HRTF data files" ON)
 option(ALSOFT_INSTALL_AMBDEC_PRESETS "Install AmbDec preset files" ON)
 option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)" OFF)
