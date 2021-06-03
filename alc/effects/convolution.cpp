@@ -1,50 +1,65 @@
 
 #include "config.h"
 
+#include <algorithm>
+#include <array>
+#include <complex>
+#include <cstddef>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <stdint.h>
+#include <utility>
+
 #ifdef HAVE_SSE_INTRINSICS
 #include <xmmintrin.h>
+#elif defined(HAVE_NEON)
+#include <arm_neon.h>
 #endif
 
-#include "AL/al.h"
-#include "AL/alc.h"
-
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
+#include "albyte.h"
 #include "alcomplex.h"
-#include "alcontext.h"
+#include "alc/effectslot.h"
 #include "almalloc.h"
+#include "alnumeric.h"
 #include "alspan.h"
-#include "ambidefs.h"
-#include "bformatdec.h"
-#include "buffer_storage.h"
-#include "effects/base.h"
-#include "filters/splitter.h"
-#include "fmt_traits.h"
-#include "logging.h"
+#include "base.h"
+#include "core/ambidefs.h"
+#include "core/bufferline.h"
+#include "core/buffer_storage.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/filters/splitter.h"
+#include "core/fmt_traits.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+#include "math_defs.h"
 #include "polyphase_resampler.h"
+#include "vector.h"
 
 
 namespace {
 
 /* Convolution reverb is implemented using a segmented overlap-add method. The
- * impulse response is broken up into multiple segments of 512 samples, and
- * each segment has an FFT applied with a 1024-sample buffer (the latter half
+ * impulse response is broken up into multiple segments of 128 samples, and
+ * each segment has an FFT applied with a 256-sample buffer (the latter half
  * left silent) to get its frequency-domain response. The resulting response
- * has its positive/non-mirrored frequencies saved (513 bins) in each segment.
+ * has its positive/non-mirrored frequencies saved (129 bins) in each segment.
  *
- * Input samples are similarly broken up into 512-sample segments, with an FFT
- * applied to each new incoming segment to get its 513 bins. A history of FFT'd
+ * Input samples are similarly broken up into 128-sample segments, with an FFT
+ * applied to each new incoming segment to get its 129 bins. A history of FFT'd
  * input segments is maintained, equal to the length of the impulse response.
  *
  * To apply the reverberation, each impulse response segment is convolved with
  * its paired input segment (using complex multiplies, far cheaper than FIRs),
- * accumulating into a 1024-bin FFT buffer. The input history is then shifted
- * to align with later impulse response segments for next time.
+ * accumulating into a 256-bin FFT buffer. The input history is then shifted to
+ * align with later impulse response segments for next time.
  *
- * An inverse FFT is then applied to the accumulated FFT buffer to get a 1024-
+ * An inverse FFT is then applied to the accumulated FFT buffer to get a 256-
  * sample time-domain response for output, which is split in two halves. The
- * first half is the 512-sample output, and the second half is a 512-sample
- * (really, 511) delayed extension, which gets added to the output next time.
+ * first half is the 128-sample output, and the second half is a 128-sample
+ * (really, 127) delayed extension, which gets added to the output next time.
  * Convolving two time-domain responses of lengths N and M results in a time-
  * domain signal of length N+M-1, and this holds true regardless of the
  * convolution being applied in the frequency domain, so these "overflow"
@@ -74,23 +89,23 @@ void LoadSamples(double *RESTRICT dst, const al::byte *src, const size_t srcstep
 }
 
 
-auto GetAmbiScales(AmbiScaling scaletype) noexcept -> const std::array<float,MAX_AMBI_CHANNELS>&
+inline auto& GetAmbiScales(AmbiScaling scaletype) noexcept
 {
-    if(scaletype == AmbiScaling::FuMa) return AmbiScale::FromFuMa;
-    if(scaletype == AmbiScaling::SN3D) return AmbiScale::FromSN3D;
-    return AmbiScale::FromN3D;
+    if(scaletype == AmbiScaling::FuMa) return AmbiScale::FromFuMa();
+    if(scaletype == AmbiScaling::SN3D) return AmbiScale::FromSN3D();
+    return AmbiScale::FromN3D();
 }
 
-auto GetAmbiLayout(AmbiLayout layouttype) noexcept -> const std::array<uint8_t,MAX_AMBI_CHANNELS>&
+inline auto& GetAmbiLayout(AmbiLayout layouttype) noexcept
 {
-    if(layouttype == AmbiLayout::FuMa) return AmbiIndex::FromFuMa;
-    return AmbiIndex::FromACN;
+    if(layouttype == AmbiLayout::FuMa) return AmbiIndex::FromFuMa();
+    return AmbiIndex::FromACN();
 }
 
-auto GetAmbi2DLayout(AmbiLayout layouttype) noexcept -> const std::array<uint8_t,MAX_AMBI2D_CHANNELS>&
+inline auto& GetAmbi2DLayout(AmbiLayout layouttype) noexcept
 {
-    if(layouttype == AmbiLayout::FuMa) return AmbiIndex::FromFuMa2D;
-    return AmbiIndex::From2D;
+    if(layouttype == AmbiLayout::FuMa) return AmbiIndex::FromFuMa2D();
+    return AmbiIndex::FromACN2D();
 }
 
 
@@ -102,7 +117,7 @@ struct ChanMap {
 
 using complex_d = std::complex<double>;
 
-constexpr size_t ConvolveUpdateSize{1024};
+constexpr size_t ConvolveUpdateSize{256};
 constexpr size_t ConvolveUpdateSamples{ConvolveUpdateSize / 2};
 
 
@@ -126,6 +141,19 @@ void apply_fir(al::span<float> dst, const float *RESTRICT src, const float *REST
         ++src;
     }
 
+#elif defined(HAVE_NEON)
+
+    for(float &output : dst)
+    {
+        float32x4_t r4{vdupq_n_f32(0.0f)};
+        for(size_t j{0};j < ConvolveUpdateSamples;j+=4)
+            r4 = vmlaq_f32(r4, vld1q_f32(&src[j]), vld1q_f32(&filter[j]));
+        r4 = vaddq_f32(r4, vrev64q_f32(r4));
+        output = vget_lane_f32(vadd_f32(vget_low_f32(r4), vget_high_f32(r4)), 0);
+
+        ++src;
+    }
+
 #else
 
     for(float &output : dst)
@@ -143,7 +171,7 @@ struct ConvolutionState final : public EffectState {
     FmtChannels mChannels{};
     AmbiLayout mAmbiLayout{};
     AmbiScaling mAmbiScaling{};
-    ALuint mAmbiOrder{};
+    uint mAmbiOrder{};
 
     size_t mFifoPos{0};
     std::array<float,ConvolveUpdateSamples*2> mInput{};
@@ -175,9 +203,8 @@ struct ConvolutionState final : public EffectState {
     void (ConvolutionState::*mMix)(const al::span<FloatBufferLine>,const size_t)
     {&ConvolutionState::NormalMix};
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void setBuffer(const ALCdevice *device, const BufferStorage *buffer) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -205,13 +232,9 @@ void ConvolutionState::UpsampleMix(const al::span<FloatBufferLine> samplesOut,
 }
 
 
-void ConvolutionState::deviceUpdate(const ALCdevice* /*device*/)
+void ConvolutionState::deviceUpdate(const DeviceBase *device, const Buffer &buffer)
 {
-}
-
-void ConvolutionState::setBuffer(const ALCdevice *device, const BufferStorage *buffer)
-{
-    constexpr ALuint MaxConvolveAmbiOrder{1u};
+    constexpr uint MaxConvolveAmbiOrder{1u};
 
     mFifoPos = 0;
     mInput.fill(0.0f);
@@ -226,13 +249,13 @@ void ConvolutionState::setBuffer(const ALCdevice *device, const BufferStorage *b
     mComplexData = nullptr;
 
     /* An empty buffer doesn't need a convolution filter. */
-    if(!buffer || buffer->mSampleLen < 1) return;
+    if(!buffer.storage || buffer.storage->mSampleLen < 1) return;
 
     constexpr size_t m{ConvolveUpdateSize/2 + 1};
-    auto bytesPerSample = BytesFromFmt(buffer->mType);
-    auto realChannels = ChannelsFromFmt(buffer->mChannels, buffer->mAmbiOrder);
-    auto numChannels = ChannelsFromFmt(buffer->mChannels,
-        minu(buffer->mAmbiOrder, MaxConvolveAmbiOrder));
+    auto bytesPerSample = BytesFromFmt(buffer.storage->mType);
+    auto realChannels = ChannelsFromFmt(buffer.storage->mChannels, buffer.storage->mAmbiOrder);
+    auto numChannels = ChannelsFromFmt(buffer.storage->mChannels,
+        minu(buffer.storage->mAmbiOrder, MaxConvolveAmbiOrder));
 
     mChans = ChannelDataArray::Create(numChannels);
 
@@ -242,13 +265,13 @@ void ConvolutionState::setBuffer(const ALCdevice *device, const BufferStorage *b
      * called very infrequently, go ahead and use the polyphase resampler.
      */
     PPhaseResampler resampler;
-    if(device->Frequency != buffer->mSampleRate)
-        resampler.init(buffer->mSampleRate, device->Frequency);
-    const auto resampledCount = static_cast<ALuint>(
-        (uint64_t{buffer->mSampleLen}*device->Frequency + (buffer->mSampleRate-1)) /
-        buffer->mSampleRate);
+    if(device->Frequency != buffer.storage->mSampleRate)
+        resampler.init(buffer.storage->mSampleRate, device->Frequency);
+    const auto resampledCount = static_cast<uint>(
+        (uint64_t{buffer.storage->mSampleLen}*device->Frequency+(buffer.storage->mSampleRate-1)) /
+        buffer.storage->mSampleRate);
 
-    const BandSplitter splitter{400.0f / static_cast<float>(device->Frequency)};
+    const BandSplitter splitter{device->mXOverFreq / static_cast<float>(device->Frequency)};
     for(auto &e : *mChans)
         e.mFilter = splitter;
 
@@ -267,20 +290,20 @@ void ConvolutionState::setBuffer(const ALCdevice *device, const BufferStorage *b
     mComplexData = std::make_unique<complex_d[]>(complex_length);
     std::fill_n(mComplexData.get(), complex_length, complex_d{});
 
-    mChannels = buffer->mChannels;
-    mAmbiLayout = buffer->mAmbiLayout;
-    mAmbiScaling = buffer->mAmbiScaling;
-    mAmbiOrder = minu(buffer->mAmbiOrder, MaxConvolveAmbiOrder);
+    mChannels = buffer.storage->mChannels;
+    mAmbiLayout = buffer.storage->mAmbiLayout;
+    mAmbiScaling = buffer.storage->mAmbiScaling;
+    mAmbiOrder = minu(buffer.storage->mAmbiOrder, MaxConvolveAmbiOrder);
 
-    auto srcsamples = std::make_unique<double[]>(maxz(buffer->mSampleLen, resampledCount));
+    auto srcsamples = std::make_unique<double[]>(maxz(buffer.storage->mSampleLen, resampledCount));
     complex_d *filteriter = mComplexData.get() + mNumConvolveSegs*m;
     for(size_t c{0};c < numChannels;++c)
     {
         /* Load the samples from the buffer, and resample to match the device. */
-        LoadSamples(srcsamples.get(), buffer->mData.data() + bytesPerSample*c, realChannels,
-            buffer->mType, buffer->mSampleLen);
-        if(device->Frequency != buffer->mSampleRate)
-            resampler.process(buffer->mSampleLen, srcsamples.get(), resampledCount,
+        LoadSamples(srcsamples.get(), buffer.samples.data() + bytesPerSample*c, realChannels,
+            buffer.storage->mType, buffer.storage->mSampleLen);
+        if(device->Frequency != buffer.storage->mSampleRate)
+            resampler.process(buffer.storage->mSampleLen, srcsamples.get(), resampledCount,
                 srcsamples.get());
 
         /* Store the first segment's samples in reverse in the time-domain, to
@@ -306,7 +329,7 @@ void ConvolutionState::setBuffer(const ALCdevice *device, const BufferStorage *b
 }
 
 
-void ConvolutionState::update(const ALCcontext *context, const EffectSlot *slot,
+void ConvolutionState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps* /*props*/, const EffectTarget target)
 {
     /* NOTE: Stereo and Rear are slightly different from normal mixing (as
@@ -364,25 +387,43 @@ void ConvolutionState::update(const ALCcontext *context, const EffectSlot *slot,
     for(auto &chan : *mChans)
         std::fill(std::begin(chan.Target), std::end(chan.Target), 0.0f);
     const float gain{slot->Gain};
-    if(mChannels == FmtBFormat3D || mChannels == FmtBFormat2D)
+    /* TODO: UHJ should be decoded to B-Format and processed that way, since
+     * there's no telling if it can ever do a direct-out mix (even if the
+     * device is outputing UHJ, the effect slot can feed another effect that's
+     * not UHJ).
+     *
+     * Not that UHJ should really ever be used for convolution, but it's a
+     * valid format regardless.
+     */
+    if((mChannels == FmtUHJ2 || mChannels == FmtUHJ3 || mChannels == FmtUHJ4) && target.RealOut
+        && target.RealOut->ChannelIndex[FrontLeft] != INVALID_CHANNEL_INDEX
+        && target.RealOut->ChannelIndex[FrontRight] != INVALID_CHANNEL_INDEX)
     {
-        ALCdevice *device{context->mDevice.get()};
+        mOutTarget = target.RealOut->Buffer;
+        const uint lidx = target.RealOut->ChannelIndex[FrontLeft];
+        const uint ridx = target.RealOut->ChannelIndex[FrontRight];
+        (*mChans)[0].Target[lidx] = gain;
+        (*mChans)[1].Target[ridx] = gain;
+    }
+    else if(mChannels == FmtBFormat3D || mChannels == FmtBFormat2D)
+    {
+        DeviceBase *device{context->mDevice};
         if(device->mAmbiOrder > mAmbiOrder)
         {
             mMix = &ConvolutionState::UpsampleMix;
-            const auto scales = BFormatDec::GetHFOrderScales(mAmbiOrder, device->mAmbiOrder);
+            const auto scales = AmbiScale::GetHFOrderScales(mAmbiOrder, device->mAmbiOrder);
             (*mChans)[0].mHfScale = scales[0];
             for(size_t i{1};i < mChans->size();++i)
                 (*mChans)[i].mHfScale = scales[1];
         }
         mOutTarget = target.Main->Buffer;
 
-        const auto &scales = GetAmbiScales(mAmbiScaling);
+        auto&& scales = GetAmbiScales(mAmbiScaling);
         const uint8_t *index_map{(mChannels == FmtBFormat2D) ?
             GetAmbi2DLayout(mAmbiLayout).data() :
             GetAmbiLayout(mAmbiLayout).data()};
 
-        std::array<float,MAX_AMBI_CHANNELS> coeffs{};
+        std::array<float,MaxAmbiChannels> coeffs{};
         for(size_t c{0u};c < mChans->size();++c)
         {
             const size_t acn{index_map[c]};
@@ -393,7 +434,7 @@ void ConvolutionState::update(const ALCcontext *context, const EffectSlot *slot,
     }
     else
     {
-        ALCdevice *device{context->mDevice.get()};
+        DeviceBase *device{context->mDevice};
         al::span<const ChanMap> chanmap{};
         switch(mChannels)
         {
@@ -406,6 +447,9 @@ void ConvolutionState::update(const ALCcontext *context, const EffectSlot *slot,
         case FmtX71: chanmap = X71Map; break;
         case FmtBFormat2D:
         case FmtBFormat3D:
+        case FmtUHJ2:
+        case FmtUHJ3:
+        case FmtUHJ4:
             break;
         }
 
@@ -513,8 +557,8 @@ void ConvolutionState::process(const size_t samplesToDo,
             for(size_t i{m};i < ConvolveUpdateSize;++i)
                 mFftBuffer[i] = std::conj(mFftBuffer[ConvolveUpdateSize-i]);
 
-            /* Apply iFFT to get the 1024 (really 1023) samples for output. The
-             * 512 output samples are combined with the last output's 511
+            /* Apply iFFT to get the 256 (really 255) samples for output. The
+             * 128 output samples are combined with the last output's 127
              * second-half samples (and this output's second half is
              * subsequently saved for next time).
              */
@@ -544,7 +588,8 @@ void ConvolutionState::process(const size_t samplesToDo,
 
 
 struct ConvolutionStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new ConvolutionState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new ConvolutionState{}}; }
 };
 
 } // namespace

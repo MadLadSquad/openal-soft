@@ -1,36 +1,61 @@
 /**
- * OpenAL cross platform audio library
+ * This file is part of the OpenAL Soft cross platform audio library
+ *
  * Copyright (C) 2019 by Anis A. Hireche
- * This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Library General Public
- *  License as published by the Free Software Foundation; either
- *  version 2 of the License, or (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Library General Public License for more details.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
- * You should have received a copy of the GNU Library General Public
- *  License along with this library; if not, write to the
- *  Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- * Or go to http://www.gnu.org/copyleft/lgpl.html
+ * * Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * * Neither the name of Spherical-Harmonic-Transform nor the names of its
+ *   contributors may be used to endorse or promote products derived from
+ *   this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
 
-#include <cmath>
-#include <cstdlib>
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <functional>
+#include <iterator>
 
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alnumeric.h"
+#include "alspan.h"
+#include "core/ambidefs.h"
+#include "core/bufferline.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+#include "math_defs.h"
+
 
 namespace {
+
+using uint = unsigned int;
 
 #define MAX_UPDATE_SAMPLES 256
 #define NUM_FORMANTS       4
@@ -44,22 +69,22 @@ namespace {
 #define WAVEFORM_FRACONE   (1<<WAVEFORM_FRACBITS)
 #define WAVEFORM_FRACMASK  (WAVEFORM_FRACONE-1)
 
-inline float Sin(ALuint index)
+inline float Sin(uint index)
 {
     constexpr float scale{al::MathDefs<float>::Tau() / WAVEFORM_FRACONE};
     return std::sin(static_cast<float>(index) * scale)*0.5f + 0.5f;
 }
 
-inline float Saw(ALuint index)
+inline float Saw(uint index)
 { return static_cast<float>(index) / float{WAVEFORM_FRACONE}; }
 
-inline float Triangle(ALuint index)
+inline float Triangle(uint index)
 { return std::fabs(static_cast<float>(index)*(2.0f/WAVEFORM_FRACONE) - 1.0f); }
 
-inline float Half(ALuint) { return 0.5f; }
+inline float Half(uint) { return 0.5f; }
 
-template<float (&func)(ALuint)>
-void Oscillate(float *RESTRICT dst, ALuint index, const ALuint step, size_t todo)
+template<float (&func)(uint)>
+void Oscillate(float *RESTRICT dst, uint index, const uint step, size_t todo)
 {
     for(size_t i{0u};i < todo;i++)
     {
@@ -124,30 +149,32 @@ struct VmorpherState final : public EffectState {
         /* Effect gains for each channel */
         float CurrentGains[MAX_OUTPUT_CHANNELS]{};
         float TargetGains[MAX_OUTPUT_CHANNELS]{};
-    } mChans[MAX_AMBI_CHANNELS];
+    } mChans[MaxAmbiChannels];
 
-    void (*mGetSamples)(float*RESTRICT, ALuint, const ALuint, size_t){};
+    void (*mGetSamples)(float*RESTRICT, uint, const uint, size_t){};
 
-    ALuint mIndex{0};
-    ALuint mStep{1};
+    uint mIndex{0};
+    uint mStep{1};
 
     /* Effects buffers */
     alignas(16) float mSampleBufferA[MAX_UPDATE_SAMPLES]{};
     alignas(16) float mSampleBufferB[MAX_UPDATE_SAMPLES]{};
     alignas(16) float mLfo[MAX_UPDATE_SAMPLES]{};
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
 
-    static std::array<FormantFilter,4> getFiltersByPhoneme(ALenum phoneme, float frequency, float pitch);
+    static std::array<FormantFilter,4> getFiltersByPhoneme(VMorpherPhenome phoneme,
+        float frequency, float pitch);
 
     DEF_NEWDEL(VmorpherState)
 };
 
-std::array<FormantFilter,4> VmorpherState::getFiltersByPhoneme(ALenum phoneme, float frequency, float pitch)
+std::array<FormantFilter,4> VmorpherState::getFiltersByPhoneme(VMorpherPhenome phoneme,
+    float frequency, float pitch)
 {
     /* Using soprano formant set of values to
      * better match mid-range frequency space.
@@ -156,47 +183,49 @@ std::array<FormantFilter,4> VmorpherState::getFiltersByPhoneme(ALenum phoneme, f
      */
     switch(phoneme)
     {
-    case AL_VOCAL_MORPHER_PHONEME_A:
+    case VMorpherPhenome::A:
         return {{
             {( 800 * pitch) / frequency, 1.000000f}, /* std::pow(10.0f,   0 / 20.0f); */
             {(1150 * pitch) / frequency, 0.501187f}, /* std::pow(10.0f,  -6 / 20.0f); */
             {(2900 * pitch) / frequency, 0.025118f}, /* std::pow(10.0f, -32 / 20.0f); */
             {(3900 * pitch) / frequency, 0.100000f}  /* std::pow(10.0f, -20 / 20.0f); */
         }};
-    case AL_VOCAL_MORPHER_PHONEME_E:
+    case VMorpherPhenome::E:
         return {{
             {( 350 * pitch) / frequency, 1.000000f}, /* std::pow(10.0f,   0 / 20.0f); */
             {(2000 * pitch) / frequency, 0.100000f}, /* std::pow(10.0f, -20 / 20.0f); */
             {(2800 * pitch) / frequency, 0.177827f}, /* std::pow(10.0f, -15 / 20.0f); */
             {(3600 * pitch) / frequency, 0.009999f}  /* std::pow(10.0f, -40 / 20.0f); */
         }};
-    case AL_VOCAL_MORPHER_PHONEME_I:
+    case VMorpherPhenome::I:
         return {{
             {( 270 * pitch) / frequency, 1.000000f}, /* std::pow(10.0f,   0 / 20.0f); */
             {(2140 * pitch) / frequency, 0.251188f}, /* std::pow(10.0f, -12 / 20.0f); */
             {(2950 * pitch) / frequency, 0.050118f}, /* std::pow(10.0f, -26 / 20.0f); */
             {(3900 * pitch) / frequency, 0.050118f}  /* std::pow(10.0f, -26 / 20.0f); */
         }};
-    case AL_VOCAL_MORPHER_PHONEME_O:
+    case VMorpherPhenome::O:
         return {{
             {( 450 * pitch) / frequency, 1.000000f}, /* std::pow(10.0f,   0 / 20.0f); */
             {( 800 * pitch) / frequency, 0.281838f}, /* std::pow(10.0f, -11 / 20.0f); */
             {(2830 * pitch) / frequency, 0.079432f}, /* std::pow(10.0f, -22 / 20.0f); */
             {(3800 * pitch) / frequency, 0.079432f}  /* std::pow(10.0f, -22 / 20.0f); */
         }};
-    case AL_VOCAL_MORPHER_PHONEME_U:
+    case VMorpherPhenome::U:
         return {{
             {( 325 * pitch) / frequency, 1.000000f}, /* std::pow(10.0f,   0 / 20.0f); */
             {( 700 * pitch) / frequency, 0.158489f}, /* std::pow(10.0f, -16 / 20.0f); */
             {(2700 * pitch) / frequency, 0.017782f}, /* std::pow(10.0f, -35 / 20.0f); */
             {(3800 * pitch) / frequency, 0.009999f}  /* std::pow(10.0f, -40 / 20.0f); */
         }};
+    default:
+        break;
     }
     return {};
 }
 
 
-void VmorpherState::deviceUpdate(const ALCdevice* /*device*/)
+void VmorpherState::deviceUpdate(const DeviceBase*, const Buffer&)
 {
     for(auto &e : mChans)
     {
@@ -208,22 +237,22 @@ void VmorpherState::deviceUpdate(const ALCdevice* /*device*/)
     }
 }
 
-void VmorpherState::update(const ALCcontext *context, const EffectSlot *slot,
+void VmorpherState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
-    const ALCdevice *device{context->mDevice.get()};
+    const DeviceBase *device{context->mDevice};
     const float frequency{static_cast<float>(device->Frequency)};
     const float step{props->Vmorpher.Rate / frequency};
     mStep = fastf2u(clampf(step*WAVEFORM_FRACONE, 0.0f, float{WAVEFORM_FRACONE-1}));
 
     if(mStep == 0)
         mGetSamples = Oscillate<Half>;
-    else if(props->Vmorpher.Waveform == AL_VOCAL_MORPHER_WAVEFORM_SINUSOID)
+    else if(props->Vmorpher.Waveform == VMorpherWaveform::Sinusoid)
         mGetSamples = Oscillate<Sin>;
-    else if(props->Vmorpher.Waveform == AL_VOCAL_MORPHER_WAVEFORM_SAWTOOTH)
-        mGetSamples = Oscillate<Saw>;
-    else /*if(props->Vmorpher.Waveform == AL_VOCAL_MORPHER_WAVEFORM_TRIANGLE)*/
+    else if(props->Vmorpher.Waveform == VMorpherWaveform::Triangle)
         mGetSamples = Oscillate<Triangle>;
+    else /*if(props->Vmorpher.Waveform == VMorpherWaveform::Sawtooth)*/
+        mGetSamples = Oscillate<Saw>;
 
     const float pitchA{std::pow(2.0f,
         static_cast<float>(props->Vmorpher.PhonemeACoarseTuning) / 12.0f)};
@@ -241,7 +270,7 @@ void VmorpherState::update(const ALCcontext *context, const EffectSlot *slot,
     }
 
     mOutTarget = target.Main->Buffer;
-    auto set_gains = [slot,target](auto &chan, al::span<const float,MAX_AMBI_CHANNELS> coeffs)
+    auto set_gains = [slot,target](auto &chan, al::span<const float,MaxAmbiChannels> coeffs)
     { ComputePanGains(target.Main, coeffs.data(), slot->Gain, chan.TargetGains); };
     SetAmbiPanIdentity(std::begin(mChans), slot->Wet.Buffer.size(), set_gains);
 }
@@ -256,10 +285,10 @@ void VmorpherState::process(const size_t samplesToDo, const al::span<const Float
         const size_t td{minz(MAX_UPDATE_SAMPLES, samplesToDo-base)};
 
         mGetSamples(mLfo, mIndex, mStep, td);
-        mIndex += static_cast<ALuint>(mStep * td);
+        mIndex += static_cast<uint>(mStep * td);
         mIndex &= WAVEFORM_FRACMASK;
 
-        auto chandata = std::addressof(mChans[0]);
+        auto chandata = std::begin(mChans);
         for(const auto &input : samplesIn)
         {
             auto& vowelA = chandata->Formants[VOWEL_A_INDEX];
@@ -295,7 +324,8 @@ void VmorpherState::process(const size_t samplesToDo, const al::span<const Float
 
 
 struct VmorpherStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new VmorpherState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new VmorpherState{}}; }
 };
 
 } // namespace

@@ -1,25 +1,45 @@
 #ifndef EFFECTSLOT_H
 #define EFFECTSLOT_H
 
-#include <atomic.h>
+#include <atomic>
 
 #include "almalloc.h"
-#include "alcmain.h"
+#include "core/device.h"
 #include "effects/base.h"
 #include "intrusive_ptr.h"
 
-
 struct EffectSlot;
+struct WetBuffer;
 
 using EffectSlotArray = al::FlexArray<EffectSlot*>;
 
+
+enum class EffectSlotType : unsigned char {
+    None,
+    Reverb,
+    Chorus,
+    Distortion,
+    Echo,
+    Flanger,
+    FrequencyShifter,
+    VocalMorpher,
+    PitchShifter,
+    RingModulator,
+    Autowah,
+    Compressor,
+    Equalizer,
+    EAXReverb,
+    DedicatedLFE,
+    DedicatedDialog,
+    Convolution
+};
 
 struct EffectSlotProps {
     float Gain;
     bool  AuxSendAuto;
     EffectSlot *Target;
 
-    ALenum Type;
+    EffectSlotType Type;
     EffectProps Props;
 
     al::intrusive_ptr<EffectState> State;
@@ -44,7 +64,7 @@ struct EffectSlot {
     bool  AuxSendAuto{true};
     EffectSlot *Target{nullptr};
 
-    ALenum EffectType{};
+    EffectSlotType EffectType{EffectSlotType::None};
     EffectProps mEffectProps{};
     EffectState *mEffectState{nullptr};
 
@@ -54,6 +74,11 @@ struct EffectSlot {
     float DecayHFRatio{0.0f};
     bool DecayHFLimit{false};
     float AirAbsorptionGainHF{1.0f};
+
+    /* Mixing buffer used by the Wet mix. */
+    WetBuffer *mWetBuffer{nullptr};
+
+    ~EffectSlot();
 
     static EffectSlotArray *CreatePtrArray(size_t count) noexcept;
 

@@ -1,12 +1,5 @@
-/* API declaration export attribute */
-#define AL_API  ${EXPORT_DECL}
-#define ALC_API ${EXPORT_DECL}
-
 /* Define if HRTF data is embedded in the library */
 #cmakedefine ALSOFT_EMBED_HRTF_DATA
-
-/* Define if we have the std::aligned_alloc function */
-#cmakedefine HAVE_STD_ALIGNED_ALLOC
 
 /* Define if we have the posix_memalign function */
 #cmakedefine HAVE_POSIX_MEMALIGN
@@ -19,6 +12,9 @@
 
 /* Define if we have the getopt function */
 #cmakedefine HAVE_GETOPT
+
+/* Define if we have DBus/RTKit */
+#cmakedefine HAVE_RTKIT
 
 /* Define if we have SSE CPU extensions */
 #cmakedefine HAVE_SSE

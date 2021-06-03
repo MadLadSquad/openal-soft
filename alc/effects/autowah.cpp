@@ -20,23 +20,33 @@
 
 #include "config.h"
 
-#include <cmath>
-#include <cstdlib>
-
 #include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <iterator>
+#include <utility>
 
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
-#include "filters/biquad.h"
-#include "vecmat.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alnumeric.h"
+#include "alspan.h"
+#include "core/ambidefs.h"
+#include "core/bufferline.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+#include "math_defs.h"
+
 
 namespace {
 
-#define MIN_FREQ 20.0f
-#define MAX_FREQ 2500.0f
-#define Q_FACTOR 5.0f
+constexpr float GainScale{31621.0f};
+constexpr float MinFreq{20.0f};
+constexpr float MaxFreq{2500.0f};
+constexpr float QFactor{5.0f};
 
 struct AutowahState final : public EffectState {
     /* Effect parameters */
@@ -63,14 +73,14 @@ struct AutowahState final : public EffectState {
         /* Effect gains for each output channel */
         float CurrentGains[MAX_OUTPUT_CHANNELS];
         float TargetGains[MAX_OUTPUT_CHANNELS];
-    } mChans[MAX_AMBI_CHANNELS];
+    } mChans[MaxAmbiChannels];
 
     /* Effects buffers */
     alignas(16) float mBufferOut[BufferLineSize];
 
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -78,7 +88,7 @@ struct AutowahState final : public EffectState {
     DEF_NEWDEL(AutowahState)
 };
 
-void AutowahState::deviceUpdate(const ALCdevice*)
+void AutowahState::deviceUpdate(const DeviceBase*, const Buffer&)
 {
     /* (Re-)initializing parameters and clear the buffers. */
 
@@ -104,10 +114,10 @@ void AutowahState::deviceUpdate(const ALCdevice*)
     }
 }
 
-void AutowahState::update(const ALCcontext *context, const EffectSlot *slot,
+void AutowahState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
-    const ALCdevice *device{context->mDevice.get()};
+    const DeviceBase *device{context->mDevice};
     const auto frequency = static_cast<float>(device->Frequency);
 
     const float ReleaseTime{clampf(props->Autowah.ReleaseTime, 0.001f, 1.0f)};
@@ -116,12 +126,12 @@ void AutowahState::update(const ALCcontext *context, const EffectSlot *slot,
     mReleaseRate   = std::exp(-1.0f / (ReleaseTime*frequency));
     /* 0-20dB Resonance Peak gain */
     mResonanceGain = std::sqrt(std::log10(props->Autowah.Resonance)*10.0f / 3.0f);
-    mPeakGain      = 1.0f - std::log10(props->Autowah.PeakGain/AL_AUTOWAH_MAX_PEAK_GAIN);
-    mFreqMinNorm   = MIN_FREQ / frequency;
-    mBandwidthNorm = (MAX_FREQ-MIN_FREQ) / frequency;
+    mPeakGain      = 1.0f - std::log10(props->Autowah.PeakGain / GainScale);
+    mFreqMinNorm   = MinFreq / frequency;
+    mBandwidthNorm = (MaxFreq-MinFreq) / frequency;
 
     mOutTarget = target.Main->Buffer;
-    auto set_gains = [slot,target](auto &chan, al::span<const float,MAX_AMBI_CHANNELS> coeffs)
+    auto set_gains = [slot,target](auto &chan, al::span<const float,MaxAmbiChannels> coeffs)
     { ComputePanGains(target.Main, coeffs.data(), slot->Gain, chan.TargetGains); };
     SetAmbiPanIdentity(std::begin(mChans), slot->Wet.Buffer.size(), set_gains);
 }
@@ -151,7 +161,7 @@ void AutowahState::process(const size_t samplesToDo,
         /* Calculate the cos and alpha components for this sample's filter. */
         w0 = minf((bandwidth*env_delay + freq_min), 0.46f) * al::MathDefs<float>::Tau();
         mEnv[i].cos_w0 = std::cos(w0);
-        mEnv[i].alpha = std::sin(w0)/(2.0f * Q_FACTOR);
+        mEnv[i].alpha = std::sin(w0)/(2.0f * QFactor);
     }
     mEnvDelay = env_delay;
 
@@ -199,7 +209,8 @@ void AutowahState::process(const size_t samplesToDo,
 
 
 struct AutowahStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new AutowahState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new AutowahState{}}; }
 };
 
 } // namespace

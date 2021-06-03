@@ -35,21 +35,25 @@
 #include <mutex>
 #include <new>
 #include <numeric>
+#include <stdexcept>
 #include <utility>
 
 #include "AL/al.h"
 #include "AL/alc.h"
 #include "AL/alext.h"
 
+#include "albit.h"
 #include "albyte.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alexcpt.h"
+#include "alc/context.h"
+#include "alc/device.h"
+#include "alc/inprogext.h"
 #include "almalloc.h"
 #include "alnumeric.h"
 #include "aloptional.h"
 #include "atomic.h"
-#include "inprogext.h"
+#include "core/except.h"
+#include "core/logging.h"
+#include "core/voice.h"
 #include "opthelpers.h"
 
 
@@ -270,6 +274,9 @@ ALuint ChannelsFromUserFmt(UserFmtChannels chans, ALuint ambiorder) noexcept
     case UserFmtX71: return 8;
     case UserFmtBFormat2D: return (ambiorder*2) + 1;
     case UserFmtBFormat3D: return (ambiorder+1) * (ambiorder+1);
+    case UserFmtUHJ2: return 2;
+    case UserFmtUHJ3: return 3;
+    case UserFmtUHJ4: return 4;
     }
     return 0;
 }
@@ -326,7 +333,7 @@ bool EnsureBuffers(ALCdevice *device, size_t needed)
 {
     size_t count{std::accumulate(device->BufferList.cbegin(), device->BufferList.cend(), size_t{0},
         [](size_t cur, const BufferSubList &sublist) noexcept -> size_t
-        { return cur + static_cast<ALuint>(PopCount(sublist.FreeMask)); })};
+        { return cur + static_cast<ALuint>(al::popcount(sublist.FreeMask)); })};
 
     while(needed > count)
     {
@@ -355,7 +362,7 @@ ALbuffer *AllocBuffer(ALCdevice *device)
     );
 
     auto lidx = static_cast<ALuint>(std::distance(device->BufferList.begin(), sublist));
-    auto slidx = static_cast<ALuint>(CountTrailingZeros(sublist->FreeMask));
+    auto slidx = static_cast<ALuint>(al::countr_zero(sublist->FreeMask));
 
     ALbuffer *buffer{::new (sublist->Buffers + slidx) ALbuffer{}};
 
@@ -464,6 +471,9 @@ void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
     case UserFmtX71: DstChannels = FmtX71; break;
     case UserFmtBFormat2D: DstChannels = FmtBFormat2D; break;
     case UserFmtBFormat3D: DstChannels = FmtBFormat3D; break;
+    case UserFmtUHJ2: DstChannels = FmtUHJ2; break;
+    case UserFmtUHJ3: DstChannels = FmtUHJ3; break;
+    case UserFmtUHJ4: DstChannels = FmtUHJ4; break;
     }
     if UNLIKELY(static_cast<long>(SrcChannels) != static_cast<long>(DstChannels))
         SETERR_RETURN(context, AL_INVALID_ENUM, , "Invalid format");
@@ -500,7 +510,9 @@ void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
             unpackalign, NameFromUserFmtType(SrcType));
 
     const ALuint ambiorder{(DstChannels == FmtBFormat2D || DstChannels == FmtBFormat3D) ?
-        ALBuf->UnpackAmbiOrder : 0};
+        ALBuf->UnpackAmbiOrder :
+        ((DstChannels == FmtUHJ2 || DstChannels == FmtUHJ3 || DstChannels == FmtUHJ4) ? 1 :
+        0)};
 
     if((access&AL_PRESERVE_DATA_BIT_SOFT))
     {
@@ -621,6 +633,9 @@ void PrepareCallback(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
     case UserFmtX71: DstChannels = FmtX71; break;
     case UserFmtBFormat2D: DstChannels = FmtBFormat2D; break;
     case UserFmtBFormat3D: DstChannels = FmtBFormat3D; break;
+    case UserFmtUHJ2: DstChannels = FmtUHJ2; break;
+    case UserFmtUHJ3: DstChannels = FmtUHJ3; break;
+    case UserFmtUHJ4: DstChannels = FmtUHJ4; break;
     }
     if UNLIKELY(static_cast<long>(SrcChannels) != static_cast<long>(DstChannels))
         SETERR_RETURN(context, AL_INVALID_ENUM,, "Invalid format");
@@ -642,10 +657,13 @@ void PrepareCallback(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
         SETERR_RETURN(context, AL_INVALID_ENUM,, "Unsupported callback format");
 
     const ALuint ambiorder{(DstChannels == FmtBFormat2D || DstChannels == FmtBFormat3D) ?
-        ALBuf->UnpackAmbiOrder : 0};
+        ALBuf->UnpackAmbiOrder :
+        ((DstChannels == FmtUHJ2 || DstChannels == FmtUHJ3 || DstChannels == FmtUHJ4) ? 1 :
+        0)};
 
+    constexpr uint line_size{BufferLineSize + MaxPostVoiceLoad};
     al::vector<al::byte,16>(FrameSizeFromFmt(DstChannels, DstType, ambiorder) *
-        size_t{BufferLineSize + (MaxResamplerPadding>>1)}).swap(ALBuf->mData);
+        size_t{line_size}).swap(ALBuf->mData);
 
     ALBuf->mCallback = callback;
     ALBuf->mUserData = userptr;
@@ -674,7 +692,7 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
         UserFmtChannels channels;
         UserFmtType type;
     };
-    static const std::array<FormatMap,46> UserFmtList{{
+    static const std::array<FormatMap,55> UserFmtList{{
         { AL_FORMAT_MONO8,             UserFmtMono, UserFmtUByte   },
         { AL_FORMAT_MONO16,            UserFmtMono, UserFmtShort   },
         { AL_FORMAT_MONO_FLOAT32,      UserFmtMono, UserFmtFloat   },
@@ -730,6 +748,18 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
         { AL_FORMAT_BFORMAT3D_16,      UserFmtBFormat3D, UserFmtShort },
         { AL_FORMAT_BFORMAT3D_FLOAT32, UserFmtBFormat3D, UserFmtFloat },
         { AL_FORMAT_BFORMAT3D_MULAW,   UserFmtBFormat3D, UserFmtMulaw },
+
+        { AL_FORMAT_UHJ2CHN8_SOFT,        UserFmtUHJ2, UserFmtUByte },
+        { AL_FORMAT_UHJ2CHN16_SOFT,       UserFmtUHJ2, UserFmtShort },
+        { AL_FORMAT_UHJ2CHN_FLOAT32_SOFT, UserFmtUHJ2, UserFmtFloat },
+
+        { AL_FORMAT_UHJ3CHN8_SOFT,        UserFmtUHJ3, UserFmtUByte },
+        { AL_FORMAT_UHJ3CHN16_SOFT,       UserFmtUHJ3, UserFmtShort },
+        { AL_FORMAT_UHJ3CHN_FLOAT32_SOFT, UserFmtUHJ3, UserFmtFloat },
+
+        { AL_FORMAT_UHJ4CHN8_SOFT,        UserFmtUHJ4, UserFmtUByte },
+        { AL_FORMAT_UHJ4CHN16_SOFT,       UserFmtUHJ4, UserFmtShort },
+        { AL_FORMAT_UHJ4CHN_FLOAT32_SOFT, UserFmtUHJ4, UserFmtFloat },
     }};
 
     for(const auto &fmt : UserFmtList)
@@ -753,7 +783,7 @@ START_API_FUNC
         context->setError(AL_INVALID_VALUE, "Generating %d buffers", n);
     if UNLIKELY(n <= 0) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     if(!EnsureBuffers(device, static_cast<ALuint>(n)))
     {
@@ -793,7 +823,7 @@ START_API_FUNC
         context->setError(AL_INVALID_VALUE, "Deleting %d buffers", n);
     if UNLIKELY(n <= 0) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     /* First try to find any buffers that are invalid or in-use. */
@@ -833,7 +863,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if LIKELY(context)
     {
-        ALCdevice *device{context->mDevice.get()};
+        ALCdevice *device{context->mALDevice.get()};
         std::lock_guard<std::mutex> _{device->BufferLock};
         if(!buffer || LookupBuffer(device, buffer))
             return AL_TRUE;
@@ -854,7 +884,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -888,7 +918,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return nullptr;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -941,7 +971,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -964,7 +994,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -996,7 +1026,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -1126,7 +1156,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1146,7 +1176,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1165,7 +1195,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1187,7 +1217,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -1249,7 +1279,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1282,7 +1312,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -1320,7 +1350,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -1342,7 +1372,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1370,7 +1400,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
@@ -1392,7 +1422,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     ALbuffer *albuf = LookupBuffer(device, buffer);
     if UNLIKELY(!albuf)
@@ -1449,7 +1479,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
         context->setError(AL_INVALID_NAME, "Invalid buffer ID %u", buffer);
@@ -1487,7 +1517,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     ALbuffer *albuf = LookupBuffer(device, buffer);
     if UNLIKELY(!albuf)
@@ -1515,7 +1545,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
 
     ALbuffer *albuf = LookupBuffer(device, buffer);
@@ -1545,7 +1575,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     ALbuffer *albuf = LookupBuffer(device, buffer);
     if UNLIKELY(!albuf)
@@ -1573,7 +1603,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
         context->setError(AL_INVALID_NAME, "Invalid buffer ID %u", buffer);
@@ -1601,7 +1631,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    ALCdevice *device{context->mDevice.get()};
+    ALCdevice *device{context->mALDevice.get()};
     std::lock_guard<std::mutex> _{device->BufferLock};
     if UNLIKELY(LookupBuffer(device, buffer) == nullptr)
         context->setError(AL_INVALID_NAME, "Invalid buffer ID %u", buffer);
@@ -1621,7 +1651,7 @@ BufferSubList::~BufferSubList()
     uint64_t usemask{~FreeMask};
     while(usemask)
     {
-        const ALsizei idx{CountTrailingZeros(usemask)};
+        const int idx{al::countr_zero(usemask)};
         al::destroy_at(Buffers+idx);
         usemask &= ~(1_u64 << idx);
     }

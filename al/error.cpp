@@ -35,10 +35,10 @@
 #include "AL/al.h"
 #include "AL/alc.h"
 
-#include "alcontext.h"
-#include "alexcpt.h"
+#include "alc/context.h"
 #include "almalloc.h"
-#include "logging.h"
+#include "core/except.h"
+#include "core/logging.h"
 #include "opthelpers.h"
 #include "vector.h"
 

@@ -21,33 +21,48 @@
 
 #include "config.h"
 
-#include "backends/pulseaudio.h"
+#include "pulseaudio.h"
 
-#include <poll.h>
-#include <cstring>
-
-#include <array>
-#include <string>
-#include <vector>
-#include <atomic>
-#include <thread>
 #include <algorithm>
-#include <functional>
+#include <array>
+#include <atomic>
+#include <bitset>
+#include <chrono>
 #include <condition_variable>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <mutex>
+#include <new>
+#include <poll.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string>
+#include <sys/types.h>
+#include <thread>
+#include <utility>
 
-#include "alcmain.h"
-#include "alu.h"
-#include "alconfig.h"
-#include "alexcpt.h"
-#include "compat.h"
+#include "albyte.h"
+#include "alc/alconfig.h"
+#include "almalloc.h"
+#include "alnumeric.h"
+#include "aloptional.h"
+#include "alspan.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/helpers.h"
+#include "core/logging.h"
 #include "dynload.h"
-#include "logging.h"
+#include "opthelpers.h"
 #include "strutils.h"
+#include "vector.h"
 
 #include <pulse/pulseaudio.h>
 
 
 namespace {
+
+using uint = unsigned int;
 
 #ifdef HAVE_DYNLOAD
 #define PULSE_FUNCS(MAGIC)                                                    \
@@ -283,10 +298,10 @@ al::optional<Channel> ChannelFromPulse(pa_channel_position_t chan)
     return al::nullopt;
 }
 
-void SetChannelOrderFromMap(ALCdevice *device, const pa_channel_map &chanmap)
+void SetChannelOrderFromMap(DeviceBase *device, const pa_channel_map &chanmap)
 {
     device->RealOut.ChannelIndex.fill(INVALID_CHANNEL_INDEX);
-    for(ALuint i{0};i < chanmap.channels;++i)
+    for(uint i{0};i < chanmap.channels;++i)
     {
         if(auto label = ChannelFromPulse(chanmap.map[i]))
             device->RealOut.ChannelIndex[*label] = i;
@@ -320,7 +335,7 @@ struct DevMap {
     std::string device_name;
 };
 
-bool checkName(const al::vector<DevMap> &list, const std::string &name)
+bool checkName(const al::span<const DevMap> list, const std::string &name)
 {
     auto match_name = [&name](const DevMap &entry) -> bool { return entry.name == name; };
     return std::find_if(list.cbegin(), list.cend(), match_name) != list.cend();
@@ -498,20 +513,15 @@ public:
 
 pa_context *PulseMainloop::connectContext(std::unique_lock<std::mutex> &plock)
 {
-    const char *name{"OpenAL Soft"};
-
-    const PathNamePair &binname = GetProcBinary();
-    if(!binname.fname.empty())
-        name = binname.fname.c_str();
-
     if(!mMainloop)
     {
         mThread = std::thread{std::mem_fn(&PulseMainloop::mainloop_proc), this};
         mCondVar.wait(plock, [this]() noexcept { return mMainloop; });
     }
 
-    pa_context *context{pa_context_new(pa_mainloop_get_api(mMainloop), name)};
-    if(!context) throw al::backend_exception{ALC_OUT_OF_MEMORY, "pa_context_new() failed"};
+    pa_context *context{pa_context_new(pa_mainloop_get_api(mMainloop), nullptr)};
+    if(!context) throw al::backend_exception{al::backend_error::OutOfMemory,
+        "pa_context_new() failed"};
 
     pa_context_set_state_callback(context, &contextStateCallbackC, this);
 
@@ -536,7 +546,7 @@ pa_context *PulseMainloop::connectContext(std::unique_lock<std::mutex> &plock)
     if(err < 0)
     {
         pa_context_unref(context);
-        throw al::backend_exception{ALC_INVALID_VALUE, "Context did not connect (%s)",
+        throw al::backend_exception{al::backend_error::DeviceError, "Context did not connect (%s)",
             pa_strerror(err)};
     }
 
@@ -550,7 +560,7 @@ pa_stream *PulseMainloop::connectStream(const char *device_name,
     const char *stream_id{(type==BackendType::Playback) ? "Playback Stream" : "Capture Stream"};
     pa_stream *stream{pa_stream_new(context, stream_id, spec, chanmap)};
     if(!stream)
-        throw al::backend_exception{ALC_OUT_OF_MEMORY, "pa_stream_new() failed (%s)",
+        throw al::backend_exception{al::backend_error::OutOfMemory, "pa_stream_new() failed (%s)",
             pa_strerror(pa_context_errno(context))};
 
     pa_stream_set_state_callback(stream, &streamStateCallbackC, this);
@@ -561,8 +571,8 @@ pa_stream *PulseMainloop::connectStream(const char *device_name,
     if(err < 0)
     {
         pa_stream_unref(stream);
-        throw al::backend_exception{ALC_INVALID_VALUE, "%s did not connect (%s)", stream_id,
-            pa_strerror(err)};
+        throw al::backend_exception{al::backend_error::DeviceError, "%s did not connect (%s)",
+            stream_id, pa_strerror(err)};
     }
 
     pa_stream_state_t state;
@@ -572,8 +582,8 @@ pa_stream *PulseMainloop::connectStream(const char *device_name,
         {
             err = pa_context_errno(context);
             pa_stream_unref(stream);
-            throw al::backend_exception{ALC_INVALID_VALUE, "%s did not get ready (%s)", stream_id,
-                pa_strerror(err)};
+            throw al::backend_exception{al::backend_error::DeviceError,
+                "%s did not get ready (%s)", stream_id, pa_strerror(err)};
         }
 
         mCondVar.wait(plock);
@@ -611,24 +621,9 @@ void PulseMainloop::probePlaybackDevices()
         std::unique_lock<std::mutex> plock{mMutex};
 
         context = connectContext(plock);
-
-        constexpr pa_stream_flags_t flags{PA_STREAM_FIX_FORMAT | PA_STREAM_FIX_RATE |
-            PA_STREAM_FIX_CHANNELS | PA_STREAM_DONT_MOVE | PA_STREAM_START_CORKED};
-
-        pa_sample_spec spec{};
-        spec.format = PA_SAMPLE_S16NE;
-        spec.rate = 44100;
-        spec.channels = 2;
-
-        stream = connectStream(nullptr, plock, context, flags, nullptr, &spec, nullptr,
-            BackendType::Playback);
-        pa_operation *op{pa_context_get_sink_info_by_name(context,
-            pa_stream_get_device_name(stream), &deviceSinkCallbackC, this)};
+        pa_operation *op{pa_context_get_sink_info_by_name(context, nullptr,
+            &deviceSinkCallbackC, this)};
         waitForOperation(op, plock);
-
-        pa_stream_disconnect(stream);
-        pa_stream_unref(stream);
-        stream = nullptr;
 
         op = pa_context_get_sink_info_list(context, &deviceSinkCallbackC, this);
         waitForOperation(op, plock);
@@ -653,24 +648,9 @@ void PulseMainloop::probeCaptureDevices()
         std::unique_lock<std::mutex> plock{mMutex};
 
         context = connectContext(plock);
-
-        constexpr pa_stream_flags_t flags{PA_STREAM_FIX_FORMAT | PA_STREAM_FIX_RATE |
-            PA_STREAM_FIX_CHANNELS | PA_STREAM_DONT_MOVE | PA_STREAM_START_CORKED};
-
-        pa_sample_spec spec{};
-        spec.format = PA_SAMPLE_S16NE;
-        spec.rate = 44100;
-        spec.channels = 1;
-
-        stream = connectStream(nullptr, plock, context, flags, nullptr, &spec, nullptr,
-            BackendType::Capture);
-        pa_operation *op{pa_context_get_source_info_by_name(context,
-            pa_stream_get_device_name(stream), &deviceSourceCallbackC, this)};
+        pa_operation *op{pa_context_get_source_info_by_name(context, nullptr,
+            &deviceSourceCallbackC, this)};
         waitForOperation(op, plock);
-
-        pa_stream_disconnect(stream);
-        pa_stream_unref(stream);
-        stream = nullptr;
 
         op = pa_context_get_source_info_list(context, &deviceSourceCallbackC, this);
         waitForOperation(op, plock);
@@ -691,7 +671,7 @@ PulseMainloop gGlobalMainloop;
 
 
 struct PulsePlayback final : public BackendBase {
-    PulsePlayback(ALCdevice *device) noexcept : BackendBase{device} { }
+    PulsePlayback(DeviceBase *device) noexcept : BackendBase{device} { }
     ~PulsePlayback() override;
 
     void bufferAttrCallback(pa_stream *stream) noexcept;
@@ -718,7 +698,7 @@ struct PulsePlayback final : public BackendBase {
     static void streamMovedCallbackC(pa_stream *stream, void *pdata) noexcept
     { static_cast<PulsePlayback*>(pdata)->streamMovedCallback(stream); }
 
-    void open(const ALCchar *name) override;
+    void open(const char *name) override;
     bool reset() override;
     void start() override;
     void stop() override;
@@ -726,7 +706,7 @@ struct PulsePlayback final : public BackendBase {
 
     PulseMainloop mMainloop;
 
-    std::string mDeviceName;
+    al::optional<std::string> mDeviceName{al::nullopt};
 
     pa_buffer_attr mAttr;
     pa_sample_spec mSpec;
@@ -734,7 +714,7 @@ struct PulsePlayback final : public BackendBase {
     pa_stream *mStream{nullptr};
     pa_context *mContext{nullptr};
 
-    ALuint mFrameSize{0u};
+    uint mFrameSize{0u};
 
     DEF_NEWDEL(PulsePlayback)
 };
@@ -787,7 +767,7 @@ void PulsePlayback::streamWriteCallback(pa_stream *stream, size_t nbytes) noexce
             buflen = minz(buflen, nbytes);
         nbytes -= buflen;
 
-        mDevice->renderSamples(buf, static_cast<ALuint>(buflen/mFrameSize), mSpec.channels);
+        mDevice->renderSamples(buf, static_cast<uint>(buflen/mFrameSize), mSpec.channels);
 
         int ret{pa_stream_write(stream, buf, buflen, free_func, 0, PA_SEEK_RELATIVE)};
         if UNLIKELY(ret != PA_OK)
@@ -823,7 +803,7 @@ void PulsePlayback::sinkInfoCallback(pa_context*, const pa_sink_info *info, int 
     );
     if(chaniter != chanmaps.cend())
     {
-        if(!mDevice->Flags.get<ChannelsRequest>())
+        if(!mDevice->Flags.test(ChannelsRequest))
             mDevice->FmtChans = chaniter->fmt;
     }
     else
@@ -852,11 +832,11 @@ void PulsePlayback::sinkNameCallback(pa_context*, const pa_sink_info *info, int 
 void PulsePlayback::streamMovedCallback(pa_stream *stream) noexcept
 {
     mDeviceName = pa_stream_get_device_name(stream);
-    TRACE("Stream moved to %s\n", mDeviceName.c_str());
+    TRACE("Stream moved to %s\n", mDeviceName->c_str());
 }
 
 
-void PulsePlayback::open(const ALCchar *name)
+void PulsePlayback::open(const char *name)
 {
     const char *pulse_name{nullptr};
     const char *dev_name{nullptr};
@@ -869,13 +849,15 @@ void PulsePlayback::open(const ALCchar *name)
         auto iter = std::find_if(PlaybackDevices.cbegin(), PlaybackDevices.cend(),
             [name](const DevMap &entry) -> bool { return entry.name == name; });
         if(iter == PlaybackDevices.cend())
-            throw al::backend_exception{ALC_INVALID_VALUE, "Device name \"%s\" not found", name};
+            throw al::backend_exception{al::backend_error::NoDevice,
+                "Device name \"%s\" not found", name};
         pulse_name = iter->device_name.c_str();
         dev_name = iter->name.c_str();
     }
 
     auto plock = mMainloop.getUniqueLock();
-    mContext = mMainloop.connectContext(plock);
+    if(!mContext)
+        mContext = mMainloop.connectContext(plock);
 
     pa_stream_flags_t flags{PA_STREAM_START_CORKED | PA_STREAM_FIX_FORMAT | PA_STREAM_FIX_RATE |
         PA_STREAM_FIX_CHANNELS};
@@ -893,17 +875,27 @@ void PulsePlayback::open(const ALCchar *name)
         if(defname) pulse_name = defname->c_str();
     }
     TRACE("Connecting to \"%s\"\n", pulse_name ? pulse_name : "(default)");
-    mStream = mMainloop.connectStream(pulse_name, plock, mContext, flags, nullptr, &spec, nullptr,
-        BackendType::Playback);
+    pa_stream *stream{mMainloop.connectStream(pulse_name, plock, mContext, flags, nullptr, &spec,
+        nullptr, BackendType::Playback)};
+    if(mStream)
+    {
+        pa_stream_set_state_callback(mStream, nullptr, nullptr);
+        pa_stream_set_moved_callback(mStream, nullptr, nullptr);
+        pa_stream_set_write_callback(mStream, nullptr, nullptr);
+        pa_stream_set_buffer_attr_callback(mStream, nullptr, nullptr);
+        pa_stream_disconnect(mStream);
+        pa_stream_unref(mStream);
+    }
+    mStream = stream;
 
     pa_stream_set_moved_callback(mStream, &PulsePlayback::streamMovedCallbackC, this);
-    mFrameSize = static_cast<ALuint>(pa_frame_size(pa_stream_get_sample_spec(mStream)));
+    mFrameSize = static_cast<uint>(pa_frame_size(pa_stream_get_sample_spec(mStream)));
 
-    mDeviceName = pa_stream_get_device_name(mStream);
+    mDeviceName = pulse_name ? al::make_optional<std::string>(pulse_name) : al::nullopt;
     if(!dev_name)
     {
-        pa_operation *op{pa_context_get_sink_info_by_name(mContext, mDeviceName.c_str(),
-            &PulsePlayback::sinkNameCallbackC, this)};
+        pa_operation *op{pa_context_get_sink_info_by_name(mContext,
+            pa_stream_get_device_name(mStream), &PulsePlayback::sinkNameCallbackC, this)};
         mMainloop.waitForOperation(op, plock);
     }
     else
@@ -913,6 +905,7 @@ void PulsePlayback::open(const ALCchar *name)
 bool PulsePlayback::reset()
 {
     auto plock = mMainloop.getUniqueLock();
+    const auto deviceName = mDeviceName ? mDeviceName->c_str() : nullptr;
 
     if(mStream)
     {
@@ -925,7 +918,7 @@ bool PulsePlayback::reset()
         mStream = nullptr;
     }
 
-    pa_operation *op{pa_context_get_sink_info_by_name(mContext, mDeviceName.c_str(),
+    pa_operation *op{pa_context_get_sink_info_by_name(mContext, deviceName,
         &PulsePlayback::sinkInfoCallbackC, this)};
     mMainloop.waitForOperation(op, plock);
 
@@ -942,8 +935,8 @@ bool PulsePlayback::reset()
         flags &= ~PA_STREAM_EARLY_REQUESTS;
         flags |= PA_STREAM_ADJUST_LATENCY;
     }
-    if(GetConfigValueBool(mDevice->DeviceName.c_str(), "pulse", "fix-rate", 0) ||
-       !mDevice->Flags.get<FrequencyRequest>())
+    if(GetConfigValueBool(mDevice->DeviceName.c_str(), "pulse", "fix-rate", 0)
+        || !mDevice->Flags.test(FrequencyRequest))
         flags |= PA_STREAM_FIX_RATE;
 
     pa_channel_map chanmap{};
@@ -1003,23 +996,23 @@ bool PulsePlayback::reset()
     mSpec.rate = mDevice->Frequency;
     mSpec.channels = static_cast<uint8_t>(mDevice->channelsFromFmt());
     if(pa_sample_spec_valid(&mSpec) == 0)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Invalid sample spec"};
+        throw al::backend_exception{al::backend_error::DeviceError, "Invalid sample spec"};
 
-    const ALuint frame_size{static_cast<ALuint>(pa_frame_size(&mSpec))};
+    const auto frame_size = static_cast<uint>(pa_frame_size(&mSpec));
     mAttr.maxlength = ~0u;
     mAttr.tlength = mDevice->BufferSize * frame_size;
     mAttr.prebuf = 0u;
     mAttr.minreq = mDevice->UpdateSize * frame_size;
     mAttr.fragsize = ~0u;
 
-    mStream = mMainloop.connectStream(mDeviceName.c_str(), plock, mContext, flags, &mAttr, &mSpec,
+    mStream = mMainloop.connectStream(deviceName, plock, mContext, flags, &mAttr, &mSpec,
         &chanmap, BackendType::Playback);
 
     pa_stream_set_state_callback(mStream, &PulsePlayback::streamStateCallbackC, this);
     pa_stream_set_moved_callback(mStream, &PulsePlayback::streamMovedCallbackC, this);
 
     mSpec = *(pa_stream_get_sample_spec(mStream));
-    mFrameSize = static_cast<ALuint>(pa_frame_size(&mSpec));
+    mFrameSize = static_cast<uint>(pa_frame_size(&mSpec));
 
     if(mDevice->Frequency != mSpec.rate)
     {
@@ -1027,10 +1020,10 @@ bool PulsePlayback::reset()
          * accordingly.
          */
         const auto scale = static_cast<double>(mSpec.rate) / mDevice->Frequency;
-        const ALuint perlen{static_cast<ALuint>(clampd(scale*mDevice->UpdateSize + 0.5, 64.0,
-            8192.0))};
-        const ALuint buflen{static_cast<ALuint>(clampd(scale*mDevice->BufferSize + 0.5, perlen*2,
-            std::numeric_limits<int>::max()/mFrameSize))};
+        const auto perlen = static_cast<uint>(clampd(scale*mDevice->UpdateSize + 0.5, 64.0,
+            8192.0));
+        const auto buflen = static_cast<uint>(clampd(scale*mDevice->BufferSize + 0.5, perlen*2,
+            std::numeric_limits<int>::max()/mFrameSize));
 
         mAttr.maxlength = ~0u;
         mAttr.tlength = buflen * mFrameSize;
@@ -1057,33 +1050,33 @@ void PulsePlayback::start()
 {
     auto plock = mMainloop.getUniqueLock();
 
-    pa_stream_set_write_callback(mStream, &PulsePlayback::streamWriteCallbackC, this);
-    pa_operation *op{pa_stream_cork(mStream, 0, &PulseMainloop::streamSuccessCallbackC,
-        &mMainloop)};
-
-    /* Write some (silent) samples to fill the prebuf amount if needed. */
-    if(size_t prebuf{mAttr.prebuf})
+    /* Write some (silent) samples to fill the buffer before we start feeding
+     * it newly mixed samples.
+     */
+    if(size_t todo{pa_stream_writable_size(mStream)})
     {
-        prebuf = minz(prebuf, pa_stream_writable_size(mStream));
-
-        void *buf{pa_xmalloc(prebuf)};
+        void *buf{pa_xmalloc(todo)};
         switch(mSpec.format)
         {
         case PA_SAMPLE_U8:
-            std::fill_n(static_cast<uint8_t*>(buf), prebuf, 0x80);
+            std::fill_n(static_cast<uint8_t*>(buf), todo, 0x80);
             break;
         case PA_SAMPLE_ALAW:
-            std::fill_n(static_cast<uint8_t*>(buf), prebuf, 0xD5);
+            std::fill_n(static_cast<uint8_t*>(buf), todo, 0xD5);
             break;
         case PA_SAMPLE_ULAW:
-            std::fill_n(static_cast<uint8_t*>(buf), prebuf, 0x7f);
+            std::fill_n(static_cast<uint8_t*>(buf), todo, 0x7f);
             break;
         default:
-            std::fill_n(static_cast<uint8_t*>(buf), prebuf, 0x00);
+            std::fill_n(static_cast<uint8_t*>(buf), todo, 0x00);
             break;
         }
-        pa_stream_write(mStream, buf, prebuf, pa_xfree, 0, PA_SEEK_RELATIVE);
+        pa_stream_write(mStream, buf, todo, pa_xfree, 0, PA_SEEK_RELATIVE);
     }
+
+    pa_stream_set_write_callback(mStream, &PulsePlayback::streamWriteCallbackC, this);
+    pa_operation *op{pa_stream_cork(mStream, 0, &PulseMainloop::streamSuccessCallbackC,
+        &mMainloop)};
 
     mMainloop.waitForOperation(op, plock);
 }
@@ -1131,7 +1124,7 @@ ClockLatency PulsePlayback::getClockLatency()
 
 
 struct PulseCapture final : public BackendBase {
-    PulseCapture(ALCdevice *device) noexcept : BackendBase{device} { }
+    PulseCapture(DeviceBase *device) noexcept : BackendBase{device} { }
     ~PulseCapture() override;
 
     void streamStateCallback(pa_stream *stream) noexcept;
@@ -1146,18 +1139,18 @@ struct PulseCapture final : public BackendBase {
     static void streamMovedCallbackC(pa_stream *stream, void *pdata) noexcept
     { static_cast<PulseCapture*>(pdata)->streamMovedCallback(stream); }
 
-    void open(const ALCchar *name) override;
+    void open(const char *name) override;
     void start() override;
     void stop() override;
-    ALCenum captureSamples(al::byte *buffer, ALCuint samples) override;
-    ALCuint availableSamples() override;
+    void captureSamples(al::byte *buffer, uint samples) override;
+    uint availableSamples() override;
     ClockLatency getClockLatency() override;
 
     PulseMainloop mMainloop;
 
-    std::string mDeviceName;
+    al::optional<std::string> mDeviceName{al::nullopt};
 
-    ALCuint mLastReadable{0u};
+    uint mLastReadable{0u};
     al::byte mSilentVal{};
 
     al::span<const al::byte> mCapBuffer;
@@ -1206,11 +1199,11 @@ void PulseCapture::sourceNameCallback(pa_context*, const pa_source_info *info, i
 void PulseCapture::streamMovedCallback(pa_stream *stream) noexcept
 {
     mDeviceName = pa_stream_get_device_name(stream);
-    TRACE("Stream moved to %s\n", mDeviceName.c_str());
+    TRACE("Stream moved to %s\n", mDeviceName->c_str());
 }
 
 
-void PulseCapture::open(const ALCchar *name)
+void PulseCapture::open(const char *name)
 {
     const char *pulse_name{nullptr};
     if(name)
@@ -1221,7 +1214,8 @@ void PulseCapture::open(const ALCchar *name)
         auto iter = std::find_if(CaptureDevices.cbegin(), CaptureDevices.cend(),
             [name](const DevMap &entry) -> bool { return entry.name == name; });
         if(iter == CaptureDevices.cend())
-            throw al::backend_exception{ALC_INVALID_VALUE, "Device name \"%s\" not found", name};
+            throw al::backend_exception{al::backend_error::NoDevice,
+                "Device name \"%s\" not found", name};
         pulse_name = iter->device_name.c_str();
         mDevice->DeviceName = iter->name;
     }
@@ -1254,7 +1248,7 @@ void PulseCapture::open(const ALCchar *name)
         chanmap = X71ChanMap;
         break;
     case DevFmtAmbi3D:
-        throw al::backend_exception{ALC_INVALID_VALUE, "%s capture not supported",
+        throw al::backend_exception{al::backend_error::DeviceError, "%s capture not supported",
             DevFmtChannelsString(mDevice->FmtChans)};
     }
     SetChannelOrderFromMap(mDevice, chanmap);
@@ -1277,16 +1271,16 @@ void PulseCapture::open(const ALCchar *name)
     case DevFmtByte:
     case DevFmtUShort:
     case DevFmtUInt:
-        throw al::backend_exception{ALC_INVALID_VALUE, "%s capture samples not supported",
-            DevFmtTypeString(mDevice->FmtType)};
+        throw al::backend_exception{al::backend_error::DeviceError,
+            "%s capture samples not supported", DevFmtTypeString(mDevice->FmtType)};
     }
     mSpec.rate = mDevice->Frequency;
     mSpec.channels = static_cast<uint8_t>(mDevice->channelsFromFmt());
     if(pa_sample_spec_valid(&mSpec) == 0)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Invalid sample format"};
+        throw al::backend_exception{al::backend_error::DeviceError, "Invalid sample format"};
 
-    const ALuint frame_size{static_cast<ALuint>(pa_frame_size(&mSpec))};
-    const ALuint samples{maxu(mDevice->BufferSize, 100 * mDevice->Frequency / 1000)};
+    const auto frame_size = static_cast<uint>(pa_frame_size(&mSpec));
+    const uint samples{maxu(mDevice->BufferSize, 100 * mDevice->Frequency / 1000)};
     mAttr.minreq = ~0u;
     mAttr.prebuf = ~0u;
     mAttr.maxlength = samples * frame_size;
@@ -1304,11 +1298,11 @@ void PulseCapture::open(const ALCchar *name)
     pa_stream_set_moved_callback(mStream, &PulseCapture::streamMovedCallbackC, this);
     pa_stream_set_state_callback(mStream, &PulseCapture::streamStateCallbackC, this);
 
-    mDeviceName = pa_stream_get_device_name(mStream);
+    mDeviceName = pulse_name ? al::make_optional<std::string>(pulse_name) : al::nullopt;
     if(mDevice->DeviceName.empty())
     {
-        pa_operation *op{pa_context_get_source_info_by_name(mContext, mDeviceName.c_str(),
-            &PulseCapture::sourceNameCallbackC, this)};
+        pa_operation *op{pa_context_get_source_info_by_name(mContext,
+            pa_stream_get_device_name(mStream), &PulseCapture::sourceNameCallbackC, this)};
         mMainloop.waitForOperation(op, plock);
     }
 }
@@ -1329,13 +1323,13 @@ void PulseCapture::stop()
     mMainloop.waitForOperation(op, plock);
 }
 
-ALCenum PulseCapture::captureSamples(al::byte *buffer, ALCuint samples)
+void PulseCapture::captureSamples(al::byte *buffer, uint samples)
 {
     al::span<al::byte> dstbuf{buffer, samples * pa_frame_size(&mSpec)};
 
     /* Capture is done in fragment-sized chunks, so we loop until we get all
      * that's available */
-    mLastReadable -= static_cast<ALCuint>(dstbuf.size());
+    mLastReadable -= static_cast<uint>(dstbuf.size());
     while(!dstbuf.empty())
     {
         if(!mCapBuffer.empty())
@@ -1386,11 +1380,9 @@ ALCenum PulseCapture::captureSamples(al::byte *buffer, ALCuint samples)
     }
     if(!dstbuf.empty())
         std::fill(dstbuf.begin(), dstbuf.end(), mSilentVal);
-
-    return ALC_NO_ERROR;
 }
 
-ALCuint PulseCapture::availableSamples()
+uint PulseCapture::availableSamples()
 {
     size_t readable{mCapBuffer.size()};
 
@@ -1411,9 +1403,9 @@ ALCuint PulseCapture::availableSamples()
         }
     }
 
-    readable = std::min<size_t>(readable, std::numeric_limits<ALCuint>::max());
-    mLastReadable = std::max(mLastReadable, static_cast<ALCuint>(readable));
-    return mLastReadable / static_cast<ALCuint>(pa_frame_size(&mSpec));
+    readable = std::min<size_t>(readable, std::numeric_limits<uint>::max());
+    mLastReadable = std::max(mLastReadable, static_cast<uint>(readable));
+    return mLastReadable / static_cast<uint>(pa_frame_size(&mSpec));
 }
 
 
@@ -1534,7 +1526,7 @@ std::string PulseBackendFactory::probe(BackendType type)
     return outnames;
 }
 
-BackendPtr PulseBackendFactory::createBackend(ALCdevice *device, BackendType type)
+BackendPtr PulseBackendFactory::createBackend(DeviceBase *device, BackendType type)
 {
     if(type == BackendType::Playback)
         return BackendPtr{new PulsePlayback{device}};

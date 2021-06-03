@@ -40,8 +40,8 @@
 
 #include "alfstream.h"
 #include "alstring.h"
-#include "compat.h"
-#include "logging.h"
+#include "core/helpers.h"
+#include "core/logging.h"
 #include "strutils.h"
 #include "vector.h"
 

@@ -3,39 +3,38 @@
 
 #include "base.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
-#include <thread>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <mmreg.h>
+
+#include "albit.h"
+#include "core/logging.h"
+#include "aloptional.h"
 #endif
 
-#include "AL/al.h"
-
-#include "alcmain.h"
-#include "alexcpt.h"
-#include "alnumeric.h"
-#include "aloptional.h"
 #include "atomic.h"
-#include "logging.h"
+#include "core/devformat.h"
 
 
 bool BackendBase::reset()
-{ throw al::backend_exception{ALC_INVALID_DEVICE, "Invalid BackendBase call"}; }
+{ throw al::backend_exception{al::backend_error::DeviceError, "Invalid BackendBase call"}; }
 
-ALCenum BackendBase::captureSamples(al::byte*, ALCuint)
-{ return ALC_INVALID_DEVICE; }
+void BackendBase::captureSamples(al::byte*, uint)
+{ }
 
-ALCuint BackendBase::availableSamples()
+uint BackendBase::availableSamples()
 { return 0; }
 
 ClockLatency BackendBase::getClockLatency()
 {
     ClockLatency ret;
 
-    ALuint refcount;
+    uint refcount;
     do {
         refcount = mDevice->waitForMix();
         ret.ClockTime = GetDeviceClockTime(mDevice);
@@ -150,7 +149,7 @@ void BackendBase::setDefaultChannelOrder()
 }
 
 #ifdef _WIN32
-void BackendBase::setChannelOrderFromWFXMask(ALuint chanmask)
+void BackendBase::setChannelOrderFromWFXMask(uint chanmask)
 {
     auto get_channel = [](const DWORD chanbit) noexcept -> al::optional<Channel>
     {
@@ -179,12 +178,12 @@ void BackendBase::setChannelOrderFromWFXMask(ALuint chanmask)
         return al::nullopt;
     };
 
-    const ALuint numchans{mDevice->channelsFromFmt()};
-    ALuint idx{0};
+    const uint numchans{mDevice->channelsFromFmt()};
+    uint idx{0};
     while(chanmask)
     {
-        const int bit{CountTrailingZeros(chanmask)};
-        const ALuint mask{1u << bit};
+        const int bit{al::countr_zero(chanmask)};
+        const uint mask{1u << bit};
         chanmask &= ~mask;
 
         if(auto label = get_channel(mask))

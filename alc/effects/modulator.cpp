@@ -20,21 +20,30 @@
 
 #include "config.h"
 
-#include <cmath>
-#include <cstdlib>
-
-#include <cmath>
 #include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <iterator>
 
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
-#include "filters/biquad.h"
-#include "vecmat.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alnumeric.h"
+#include "alspan.h"
+#include "core/ambidefs.h"
+#include "core/bufferline.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/filters/biquad.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+#include "math_defs.h"
 
 
 namespace {
+
+using uint = unsigned int;
 
 #define MAX_UPDATE_SAMPLES 128
 
@@ -42,22 +51,22 @@ namespace {
 #define WAVEFORM_FRACONE   (1<<WAVEFORM_FRACBITS)
 #define WAVEFORM_FRACMASK  (WAVEFORM_FRACONE-1)
 
-inline float Sin(ALuint index)
+inline float Sin(uint index)
 {
     constexpr float scale{al::MathDefs<float>::Tau() / WAVEFORM_FRACONE};
     return std::sin(static_cast<float>(index) * scale);
 }
 
-inline float Saw(ALuint index)
+inline float Saw(uint index)
 { return static_cast<float>(index)*(2.0f/WAVEFORM_FRACONE) - 1.0f; }
 
-inline float Square(ALuint index)
+inline float Square(uint index)
 { return static_cast<float>(static_cast<int>((index>>(WAVEFORM_FRACBITS-2))&2) - 1); }
 
-inline float One(ALuint) { return 1.0f; }
+inline float One(uint) { return 1.0f; }
 
-template<float (&func)(ALuint)>
-void Modulate(float *RESTRICT dst, ALuint index, const ALuint step, size_t todo)
+template<float (&func)(uint)>
+void Modulate(float *RESTRICT dst, uint index, const uint step, size_t todo)
 {
     for(size_t i{0u};i < todo;i++)
     {
@@ -69,21 +78,21 @@ void Modulate(float *RESTRICT dst, ALuint index, const ALuint step, size_t todo)
 
 
 struct ModulatorState final : public EffectState {
-    void (*mGetSamples)(float*RESTRICT, ALuint, const ALuint, size_t){};
+    void (*mGetSamples)(float*RESTRICT, uint, const uint, size_t){};
 
-    ALuint mIndex{0};
-    ALuint mStep{1};
+    uint mIndex{0};
+    uint mStep{1};
 
     struct {
         BiquadFilter Filter;
 
         float CurrentGains[MAX_OUTPUT_CHANNELS]{};
         float TargetGains[MAX_OUTPUT_CHANNELS]{};
-    } mChans[MAX_AMBI_CHANNELS];
+    } mChans[MaxAmbiChannels];
 
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -91,7 +100,7 @@ struct ModulatorState final : public EffectState {
     DEF_NEWDEL(ModulatorState)
 };
 
-void ModulatorState::deviceUpdate(const ALCdevice*)
+void ModulatorState::deviceUpdate(const DeviceBase*, const Buffer&)
 {
     for(auto &e : mChans)
     {
@@ -100,21 +109,21 @@ void ModulatorState::deviceUpdate(const ALCdevice*)
     }
 }
 
-void ModulatorState::update(const ALCcontext *context, const EffectSlot *slot,
+void ModulatorState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
-    const ALCdevice *device{context->mDevice.get()};
+    const DeviceBase *device{context->mDevice};
 
     const float step{props->Modulator.Frequency / static_cast<float>(device->Frequency)};
     mStep = fastf2u(clampf(step*WAVEFORM_FRACONE, 0.0f, float{WAVEFORM_FRACONE-1}));
 
     if(mStep == 0)
         mGetSamples = Modulate<One>;
-    else if(props->Modulator.Waveform == AL_RING_MODULATOR_SINUSOID)
+    else if(props->Modulator.Waveform == ModulatorWaveform::Sinusoid)
         mGetSamples = Modulate<Sin>;
-    else if(props->Modulator.Waveform == AL_RING_MODULATOR_SAWTOOTH)
+    else if(props->Modulator.Waveform == ModulatorWaveform::Sawtooth)
         mGetSamples = Modulate<Saw>;
-    else /*if(props->Modulator.Waveform == AL_RING_MODULATOR_SQUARE)*/
+    else /*if(props->Modulator.Waveform == ModulatorWaveform::Square)*/
         mGetSamples = Modulate<Square>;
 
     float f0norm{props->Modulator.HighPassCutoff / static_cast<float>(device->Frequency)};
@@ -125,7 +134,7 @@ void ModulatorState::update(const ALCcontext *context, const EffectSlot *slot,
         mChans[i].Filter.copyParamsFrom(mChans[0].Filter);
 
     mOutTarget = target.Main->Buffer;
-    auto set_gains = [slot,target](auto &chan, al::span<const float,MAX_AMBI_CHANNELS> coeffs)
+    auto set_gains = [slot,target](auto &chan, al::span<const float,MaxAmbiChannels> coeffs)
     { ComputePanGains(target.Main, coeffs.data(), slot->Gain, chan.TargetGains); };
     SetAmbiPanIdentity(std::begin(mChans), slot->Wet.Buffer.size(), set_gains);
 }
@@ -135,13 +144,13 @@ void ModulatorState::process(const size_t samplesToDo, const al::span<const Floa
     for(size_t base{0u};base < samplesToDo;)
     {
         alignas(16) float modsamples[MAX_UPDATE_SAMPLES];
-        size_t td{minz(MAX_UPDATE_SAMPLES, samplesToDo-base)};
+        const size_t td{minz(MAX_UPDATE_SAMPLES, samplesToDo-base)};
 
         mGetSamples(modsamples, mIndex, mStep, td);
-        mIndex += static_cast<ALuint>(mStep * td);
+        mIndex += static_cast<uint>(mStep * td);
         mIndex &= WAVEFORM_FRACMASK;
 
-        auto chandata = std::addressof(mChans[0]);
+        auto chandata = std::begin(mChans);
         for(const auto &input : samplesIn)
         {
             alignas(16) float temps[MAX_UPDATE_SAMPLES];
@@ -161,7 +170,8 @@ void ModulatorState::process(const size_t samplesToDo, const al::span<const Floa
 
 
 struct ModulatorStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new ModulatorState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new ModulatorState{}}; }
 };
 
 } // namespace

@@ -20,18 +20,25 @@
 
 #include "config.h"
 
-#include <cmath>
-#include <cstdlib>
-
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <functional>
+#include <iterator>
+#include <utility>
 
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
-#include "filters/biquad.h"
-#include "vecmat.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alspan.h"
+#include "core/ambidefs.h"
+#include "core/bufferline.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/filters/biquad.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
 
 
 namespace {
@@ -86,13 +93,13 @@ struct EqualizerState final : public EffectState {
         /* Effect gains for each channel */
         float CurrentGains[MAX_OUTPUT_CHANNELS]{};
         float TargetGains[MAX_OUTPUT_CHANNELS]{};
-    } mChans[MAX_AMBI_CHANNELS];
+    } mChans[MaxAmbiChannels];
 
     FloatBufferLine mSampleBuffer{};
 
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -100,7 +107,7 @@ struct EqualizerState final : public EffectState {
     DEF_NEWDEL(EqualizerState)
 };
 
-void EqualizerState::deviceUpdate(const ALCdevice*)
+void EqualizerState::deviceUpdate(const DeviceBase*, const Buffer&)
 {
     for(auto &e : mChans)
     {
@@ -109,10 +116,10 @@ void EqualizerState::deviceUpdate(const ALCdevice*)
     }
 }
 
-void EqualizerState::update(const ALCcontext *context, const EffectSlot *slot,
+void EqualizerState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
-    const ALCdevice *device{context->mDevice.get()};
+    const DeviceBase *device{context->mDevice};
     auto frequency = static_cast<float>(device->Frequency);
     float gain, f0norm;
 
@@ -150,7 +157,7 @@ void EqualizerState::update(const ALCcontext *context, const EffectSlot *slot,
     }
 
     mOutTarget = target.Main->Buffer;
-    auto set_gains = [slot,target](auto &chan, al::span<const float,MAX_AMBI_CHANNELS> coeffs)
+    auto set_gains = [slot,target](auto &chan, al::span<const float,MaxAmbiChannels> coeffs)
     { ComputePanGains(target.Main, coeffs.data(), slot->Gain, chan.TargetGains); };
     SetAmbiPanIdentity(std::begin(mChans), slot->Wet.Buffer.size(), set_gains);
 }
@@ -172,7 +179,8 @@ void EqualizerState::process(const size_t samplesToDo, const al::span<const Floa
 
 
 struct EqualizerStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new EqualizerState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new EqualizerState{}}; }
 };
 
 } // namespace

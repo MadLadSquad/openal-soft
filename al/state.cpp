@@ -24,23 +24,25 @@
 
 #include <atomic>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 
 #include "AL/al.h"
 #include "AL/alc.h"
 #include "AL/alext.h"
 
-#include "alcontext.h"
-#include "alexcpt.h"
-#include "almalloc.h"
+#include "alc/alu.h"
+#include "alc/context.h"
+#include "alc/inprogext.h"
 #include "alnumeric.h"
-#include "alspan.h"
-#include "alu.h"
+#include "aloptional.h"
 #include "atomic.h"
-#include "event.h"
-#include "inprogext.h"
+#include "core/context.h"
+#include "core/except.h"
+#include "core/mixer/defs.h"
+#include "core/voice.h"
+#include "intrusive_ptr.h"
 #include "opthelpers.h"
 #include "strutils.h"
 
@@ -94,6 +96,35 @@ const ALchar *GetResamplerName(const Resampler rtype)
     throw std::runtime_error{"Unexpected resampler index"};
 }
 
+al::optional<DistanceModel> DistanceModelFromALenum(ALenum model)
+{
+    switch(model)
+    {
+    case AL_NONE: return al::make_optional(DistanceModel::Disable);
+    case AL_INVERSE_DISTANCE: return al::make_optional(DistanceModel::Inverse);
+    case AL_INVERSE_DISTANCE_CLAMPED: return al::make_optional(DistanceModel::InverseClamped);
+    case AL_LINEAR_DISTANCE: return al::make_optional(DistanceModel::Linear);
+    case AL_LINEAR_DISTANCE_CLAMPED: return al::make_optional(DistanceModel::LinearClamped);
+    case AL_EXPONENT_DISTANCE: return al::make_optional(DistanceModel::Exponent);
+    case AL_EXPONENT_DISTANCE_CLAMPED: return al::make_optional(DistanceModel::ExponentClamped);
+    }
+    return al::nullopt;
+}
+ALenum ALenumFromDistanceModel(DistanceModel model)
+{
+    switch(model)
+    {
+    case DistanceModel::Disable: return AL_NONE;
+    case DistanceModel::Inverse: return AL_INVERSE_DISTANCE;
+    case DistanceModel::InverseClamped: return AL_INVERSE_DISTANCE_CLAMPED;
+    case DistanceModel::Linear: return AL_LINEAR_DISTANCE;
+    case DistanceModel::LinearClamped: return AL_LINEAR_DISTANCE_CLAMPED;
+    case DistanceModel::Exponent: return AL_EXPONENT_DISTANCE;
+    case DistanceModel::ExponentClamped: return AL_EXPONENT_DISTANCE_CLAMPED;
+    }
+    throw std::runtime_error{"Unexpected distance model "+std::to_string(static_cast<int>(model))};
+}
+
 } // namespace
 
 /* WARNING: Non-standard export! Not part of any extension, or exposed in the
@@ -112,7 +143,7 @@ END_API_FUNC
     if(!context->mDeferUpdates.load(std::memory_order_acquire))               \
         UpdateContextProps(context.get());                                    \
     else                                                                      \
-        context->mPropsClean.clear(std::memory_order_release);                \
+        context->mPropsDirty.set(std::memory_order_release);                  \
 } while(0)
 
 
@@ -122,12 +153,18 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    std::lock_guard<std::mutex> _{context->mPropLock};
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
-        context->mSourceDistanceModel = true;
-        DO_UPDATEPROPS();
+        {
+            std::lock_guard<std::mutex> _{context->mPropLock};
+            context->mSourceDistanceModel = true;
+            DO_UPDATEPROPS();
+        }
+        break;
+
+    case AL_STOP_SOURCES_ON_DISCONNECT_SOFT:
+        context->setError(AL_INVALID_OPERATION, "Re-enabling AL_STOP_SOURCES_ON_DISCONNECT_SOFT not yet supported");
         break;
 
     default:
@@ -142,12 +179,18 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    std::lock_guard<std::mutex> _{context->mPropLock};
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
-        context->mSourceDistanceModel = false;
-        DO_UPDATEPROPS();
+        {
+            std::lock_guard<std::mutex> _{context->mPropLock};
+            context->mSourceDistanceModel = false;
+            DO_UPDATEPROPS();
+        }
+        break;
+
+    case AL_STOP_SOURCES_ON_DISCONNECT_SOFT:
+        context->mStopVoicesOnDisconnect = false;
         break;
 
     default:
@@ -168,6 +211,10 @@ START_API_FUNC
     {
     case AL_SOURCE_DISTANCE_MODEL:
         value = context->mSourceDistanceModel ? AL_TRUE : AL_FALSE;
+        break;
+
+    case AL_STOP_SOURCES_ON_DISCONNECT_SOFT:
+        value = context->mStopVoicesOnDisconnect ? AL_TRUE : AL_FALSE;
         break;
 
     default:
@@ -254,7 +301,7 @@ START_API_FUNC
         break;
 
     case AL_DISTANCE_MODEL:
-        value = static_cast<ALdouble>(context->mDistanceModel);
+        value = static_cast<ALdouble>(ALenumFromDistanceModel(context->mDistanceModel));
         break;
 
     case AL_SPEED_OF_SOUND:
@@ -305,7 +352,7 @@ START_API_FUNC
         break;
 
     case AL_DISTANCE_MODEL:
-        value = static_cast<ALfloat>(context->mDistanceModel);
+        value = static_cast<ALfloat>(ALenumFromDistanceModel(context->mDistanceModel));
         break;
 
     case AL_SPEED_OF_SOUND:
@@ -356,7 +403,7 @@ START_API_FUNC
         break;
 
     case AL_DISTANCE_MODEL:
-        value = static_cast<ALint>(context->mDistanceModel);
+        value = ALenumFromDistanceModel(context->mDistanceModel);
         break;
 
     case AL_SPEED_OF_SOUND:
@@ -407,7 +454,7 @@ START_API_FUNC
         break;
 
     case AL_DISTANCE_MODEL:
-        value = static_cast<ALint64SOFT>(context->mDistanceModel);
+        value = ALenumFromDistanceModel(context->mDistanceModel);
         break;
 
     case AL_SPEED_OF_SOUND:
@@ -770,18 +817,15 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
-    if(!(value == AL_INVERSE_DISTANCE || value == AL_INVERSE_DISTANCE_CLAMPED ||
-         value == AL_LINEAR_DISTANCE || value == AL_LINEAR_DISTANCE_CLAMPED ||
-         value == AL_EXPONENT_DISTANCE || value == AL_EXPONENT_DISTANCE_CLAMPED ||
-         value == AL_NONE))
-        context->setError(AL_INVALID_VALUE, "Distance model 0x%04x out of range", value);
-    else
+    if(auto model = DistanceModelFromALenum(value))
     {
         std::lock_guard<std::mutex> _{context->mPropLock};
-        context->mDistanceModel = static_cast<DistanceModel>(value);
+        context->mDistanceModel = *model;
         if(!context->mSourceDistanceModel)
             DO_UPDATEPROPS();
     }
+    else
+        context->setError(AL_INVALID_VALUE, "Distance model 0x%04x out of range", value);
 }
 END_API_FUNC
 
@@ -834,12 +878,12 @@ END_API_FUNC
 void UpdateContextProps(ALCcontext *context)
 {
     /* Get an unused proprty container, or allocate a new one as needed. */
-    ALcontextProps *props{context->mFreeContextProps.load(std::memory_order_acquire)};
+    ContextProps *props{context->mFreeContextProps.load(std::memory_order_acquire)};
     if(!props)
-        props = new ALcontextProps{};
+        props = new ContextProps{};
     else
     {
-        ALcontextProps *next;
+        ContextProps *next;
         do {
             next = props->next.load(std::memory_order_relaxed);
         } while(context->mFreeContextProps.compare_exchange_weak(props, next,
@@ -855,7 +899,7 @@ void UpdateContextProps(ALCcontext *context)
     props->mDistanceModel = context->mDistanceModel;
 
     /* Set the new container for updating internal parameters. */
-    props = context->mUpdate.exchange(props, std::memory_order_acq_rel);
+    props = context->mParams.ContextUpdate.exchange(props, std::memory_order_acq_rel);
     if(props)
     {
         /* If there was an unused update container, put it back in the

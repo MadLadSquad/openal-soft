@@ -20,21 +20,33 @@
 
 #include "config.h"
 
-#include <cmath>
-#include <cstdlib>
-
 #include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <iterator>
+#include <tuple>
 
-#include "al/auxeffectslot.h"
-#include "al/filter.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
-#include "filters/biquad.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alnumeric.h"
+#include "alspan.h"
+#include "core/bufferline.h"
+#include "core/context.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/filters/biquad.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+#include "opthelpers.h"
 #include "vector.h"
 
 
 namespace {
+
+using uint = unsigned int;
+
+constexpr float LowpassFreqRef{5000.0f};
 
 struct EchoState final : public EffectState {
     al::vector<float,16> mSampleBuffer;
@@ -57,8 +69,8 @@ struct EchoState final : public EffectState {
 
     alignas(16) float mTempBuffer[2][BufferLineSize];
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -66,14 +78,14 @@ struct EchoState final : public EffectState {
     DEF_NEWDEL(EchoState)
 };
 
-void EchoState::deviceUpdate(const ALCdevice *Device)
+void EchoState::deviceUpdate(const DeviceBase *Device, const Buffer&)
 {
     const auto frequency = static_cast<float>(Device->Frequency);
 
     // Use the next power of 2 for the buffer length, so the tap offsets can be
     // wrapped using a mask instead of a modulo
-    const ALuint maxlen{NextPowerOf2(float2uint(AL_ECHO_MAX_DELAY*frequency + 0.5f) +
-        float2uint(AL_ECHO_MAX_LRDELAY*frequency + 0.5f))};
+    const uint maxlen{NextPowerOf2(float2uint(EchoMaxDelay*frequency + 0.5f) +
+        float2uint(EchoMaxLRDelay*frequency + 0.5f))};
     if(maxlen != mSampleBuffer.size())
         al::vector<float,16>(maxlen).swap(mSampleBuffer);
 
@@ -85,17 +97,17 @@ void EchoState::deviceUpdate(const ALCdevice *Device)
     }
 }
 
-void EchoState::update(const ALCcontext *context, const EffectSlot *slot,
+void EchoState::update(const ContextBase *context, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
-    const ALCdevice *device{context->mDevice.get()};
+    const DeviceBase *device{context->mDevice};
     const auto frequency = static_cast<float>(device->Frequency);
 
     mTap[0].delay = maxu(float2uint(props->Echo.Delay*frequency + 0.5f), 1);
     mTap[1].delay = float2uint(props->Echo.LRDelay*frequency + 0.5f) + mTap[0].delay;
 
     const float gainhf{maxf(1.0f - props->Echo.Damping, 0.0625f)}; /* Limit -24dB */
-    mFilter.setParamsFromSlope(BiquadType::HighShelf, LOWPASSFREQREF/frequency, gainhf, 1.0f);
+    mFilter.setParamsFromSlope(BiquadType::HighShelf, LowpassFreqRef/frequency, gainhf, 1.0f);
 
     mFeedGain = props->Echo.Feedback;
 
@@ -148,14 +160,15 @@ void EchoState::process(const size_t samplesToDo, const al::span<const FloatBuff
     mFilter.setComponents(z1, z2);
     mOffset = offset;
 
-    for(ALsizei c{0};c < 2;c++)
+    for(size_t c{0};c < 2;c++)
         MixSamples({mTempBuffer[c], samplesToDo}, samplesOut, mGains[c].Current, mGains[c].Target,
             samplesToDo, 0);
 }
 
 
 struct EchoStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new EchoState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new EchoState{}}; }
 };
 
 } // namespace

@@ -3,15 +3,23 @@
 
 #include "AL/al.h"
 
-#include "alexcpt.h"
+#include "core/except.h"
 
 union EffectProps;
 
 
 class effect_exception final : public al::base_exception {
+    ALenum mErrorCode;
+
 public:
+#ifdef __USE_MINGW_ANSI_STDIO
+    [[gnu::format(gnu_printf, 3, 4)]]
+#else
     [[gnu::format(printf, 3, 4)]]
+#endif
     effect_exception(ALenum code, const char *msg, ...);
+
+    ALenum errorCode() const noexcept { return mErrorCode; }
 };
 
 

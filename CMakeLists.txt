@@ -2,21 +2,24 @@
 
 cmake_minimum_required(VERSION 3.0.2)
 
-# The workaround for try_compile failing with code signing
-# since cmake-3.18.2, not required
-set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
-    "CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED"
-    "CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED")
-set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO)
-set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
+if(APPLE)
+    # The workaround for try_compile failing with code signing
+    # since cmake-3.18.2, not required
+    set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+        ${CMAKE_TRY_COMPILE_PLATFORM_VARIABLES}
+        "CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED"
+        "CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED")
+    set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO)
+    set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
+endif()
 
-# Fix compile failure with armv7 deployment target >= 11.0, xcode clang will
-# report:
-# error: invalid iOS deployment version '--target=armv7-apple-ios13.6',
-# iOS 10 is the maximum deployment target for 32-bit targets
-# If CMAKE_OSX_DEPLOYMENT_TARGET is not defined, cmake will choose latest
-# deployment target
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Fix compile failure with armv7 deployment target >= 11.0, xcode clang
+    # will report:
+    # error: invalid iOS deployment version '--target=armv7-apple-ios13.6',
+    # iOS 10 is the maximum deployment target for 32-bit targets
+    # If CMAKE_OSX_DEPLOYMENT_TARGET is not defined, cmake will choose latest
+    # deployment target
     if("${CMAKE_OSX_ARCHITECTURES}" MATCHES ".*armv7.*")
         if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET
             OR NOT CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "11.0")
@@ -143,7 +146,7 @@ endif()
 
 set(LIB_MAJOR_VERSION "1")
 set(LIB_MINOR_VERSION "21")
-set(LIB_REVISION "0")
+set(LIB_REVISION "1")
 set(LIB_VERSION "${LIB_MAJOR_VERSION}.${LIB_MINOR_VERSION}.${LIB_REVISION}")
 set(LIB_VERSION_NUM ${LIB_MAJOR_VERSION},${LIB_MINOR_VERSION},${LIB_REVISION},0)
 
@@ -344,9 +347,6 @@ endif()
 
 
 set(SSE2_SWITCH "")
-set(SSE3_SWITCH "")
-set(SSE4_1_SWITCH "")
-set(FPU_NEON_SWITCH "")
 
 set(OLD_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
 if(NOT MSVC)
@@ -356,34 +356,94 @@ endif()
 check_c_compiler_flag(-msse2 HAVE_MSSE2_SWITCH)
 if(HAVE_MSSE2_SWITCH)
     set(SSE2_SWITCH "-msse2")
-    check_c_compiler_flag(-msse3 HAVE_MSSE3_SWITCH)
-    if(HAVE_MSSE3_SWITCH)
-        set(SSE3_SWITCH "-msse3")
-        check_c_compiler_flag(-msse4.1 HAVE_MSSE4_1_SWITCH)
-        if(HAVE_MSSE4_1_SWITCH)
-            set(SSE4_1_SWITCH "-msse4.1")
-        endif()
-    endif()
-endif()
-check_c_compiler_flag(-mfpu=neon HAVE_MFPU_NEON_SWITCH)
-if(HAVE_MFPU_NEON_SWITCH)
-    set(FPU_NEON_SWITCH "-mfpu=neon")
 endif()
 set(CMAKE_REQUIRED_FLAGS ${OLD_REQUIRED_FLAGS})
 unset(OLD_REQUIRED_FLAGS)
 
-check_include_file(xmmintrin.h HAVE_XMMINTRIN_H ${SSE2_SWITCH})
-check_include_file(emmintrin.h HAVE_EMMINTRIN_H ${SSE2_SWITCH})
-check_include_file(pmmintrin.h HAVE_PMMINTRIN_H ${SSE3_SWITCH})
-check_include_file(smmintrin.h HAVE_SMMINTRIN_H ${SSE4_1_SWITCH})
-check_include_file(arm_neon.h HAVE_ARM_NEON_H ${FPU_NEON_SWITCH})
+check_include_file(xmmintrin.h HAVE_XMMINTRIN_H)
+check_include_file(emmintrin.h HAVE_EMMINTRIN_H)
+check_include_file(pmmintrin.h HAVE_PMMINTRIN_H)
+check_include_file(smmintrin.h HAVE_SMMINTRIN_H)
+check_include_file(arm_neon.h HAVE_ARM_NEON_H)
+
+set(HAVE_SSE        0)
+set(HAVE_SSE2       0)
+set(HAVE_SSE3       0)
+set(HAVE_SSE4_1     0)
+set(HAVE_NEON       0)
+
+# Check for SSE support
+option(ALSOFT_REQUIRE_SSE "Require SSE support" OFF)
+if(HAVE_XMMINTRIN_H)
+    option(ALSOFT_CPUEXT_SSE "Enable SSE support" ON)
+    if(ALSOFT_CPUEXT_SSE)
+        set(HAVE_SSE 1)
+    endif()
+endif()
+if(ALSOFT_REQUIRE_SSE AND NOT HAVE_SSE)
+    message(FATAL_ERROR "Failed to enabled required SSE CPU extensions")
+endif()
+
+option(ALSOFT_REQUIRE_SSE2 "Require SSE2 support" OFF)
+if(HAVE_EMMINTRIN_H)
+    option(ALSOFT_CPUEXT_SSE2 "Enable SSE2 support" ON)
+    if(HAVE_SSE AND ALSOFT_CPUEXT_SSE2)
+        set(HAVE_SSE2 1)
+    endif()
+endif()
+if(ALSOFT_REQUIRE_SSE2 AND NOT HAVE_SSE2)
+    message(FATAL_ERROR "Failed to enable required SSE2 CPU extensions")
+endif()
+
+option(ALSOFT_REQUIRE_SSE3 "Require SSE3 support" OFF)
+if(HAVE_PMMINTRIN_H)
+    option(ALSOFT_CPUEXT_SSE3 "Enable SSE3 support" ON)
+    if(HAVE_SSE2 AND ALSOFT_CPUEXT_SSE3)
+        set(HAVE_SSE3 1)
+    endif()
+endif()
+if(ALSOFT_REQUIRE_SSE3 AND NOT HAVE_SSE3)
+    message(FATAL_ERROR "Failed to enable required SSE3 CPU extensions")
+endif()
+
+option(ALSOFT_REQUIRE_SSE4_1 "Require SSE4.1 support" OFF)
+if(HAVE_SMMINTRIN_H)
+    option(ALSOFT_CPUEXT_SSE4_1 "Enable SSE4.1 support" ON)
+    if(HAVE_SSE3 AND ALSOFT_CPUEXT_SSE4_1)
+        set(HAVE_SSE4_1 1)
+    endif()
+endif()
+if(ALSOFT_REQUIRE_SSE4_1 AND NOT HAVE_SSE4_1)
+    message(FATAL_ERROR "Failed to enable required SSE4.1 CPU extensions")
+endif()
+
+# Check for ARM Neon support
+option(ALSOFT_REQUIRE_NEON "Require ARM NEON support" OFF)
+if(HAVE_ARM_NEON_H)
+    option(ALSOFT_CPUEXT_NEON "Enable ARM NEON support" ON)
+    if(ALSOFT_CPUEXT_NEON)
+        check_c_source_compiles("#include <arm_neon.h>
+            int main()
+            {
+                int32x4_t ret4 = vdupq_n_s32(0);
+                return vgetq_lane_s32(ret4, 0);
+            }" HAVE_NEON_INTRINSICS)
+        if(HAVE_NEON_INTRINSICS)
+            set(HAVE_NEON 1)
+        endif()
+    endif()
+endif()
+if(ALSOFT_REQUIRE_NEON AND NOT HAVE_NEON)
+    message(FATAL_ERROR "Failed to enabled required ARM NEON CPU extensions")
+endif()
+
 
 set(SSE_FLAGS )
 set(FPMATH_SET "0")
-if(CMAKE_SIZEOF_VOID_P MATCHES "4" AND (SSE2_SWITCH OR MSVC))
+if(CMAKE_SIZEOF_VOID_P MATCHES "4" AND HAVE_SSE2)
     option(ALSOFT_ENABLE_SSE2_CODEGEN "Enable SSE2 code generation instead of x87 for 32-bit targets." TRUE)
     if(ALSOFT_ENABLE_SSE2_CODEGEN)
-        if(SSE2_SWITCH)
+        if(SSE2_SWITCH OR NOT MSVC)
             check_c_compiler_flag("${SSE2_SWITCH} -mfpmath=sse" HAVE_MFPMATH_SSE_2)
             if(HAVE_MFPMATH_SSE_2)
                 set(SSE_FLAGS ${SSE_FLAGS} ${SSE2_SWITCH} -mfpmath=sse)
@@ -406,14 +466,14 @@ if(CMAKE_SIZEOF_VOID_P MATCHES "4" AND (SSE2_SWITCH OR MSVC))
     endif()
 endif()
 
-if(HAVE_EMMINTRIN_H)
+if(HAVE_SSE2)
     set(OLD_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
     foreach(flag_var ${SSE_FLAGS})
         set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${flag_var}")
     endforeach()
 
     check_c_source_compiles("#include <emmintrin.h>
-                             int main() {_mm_pause(); return 0;}" HAVE_SSE_INTRINSICS)
+        int main() {_mm_pause(); return 0;}" HAVE_SSE_INTRINSICS)
 
     set(CMAKE_REQUIRED_FLAGS ${OLD_REQUIRED_FLAGS})
 endif()
@@ -472,13 +532,6 @@ if(HAVE_INTRIN_H)
         }" HAVE_CPUID_INTRINSIC)
 endif()
 
-check_cxx_source_compiles("#include <cstdlib>
-int main()
-{
-    void *ptr{std::aligned_alloc(alignof(int), sizeof(int))};
-    std::free(ptr);
-    return 0;
-}" HAVE_STD_ALIGNED_ALLOC)
 check_symbol_exists(posix_memalign   stdlib.h HAVE_POSIX_MEMALIGN)
 check_symbol_exists(_aligned_malloc  malloc.h HAVE__ALIGNED_MALLOC)
 check_symbol_exists(proc_pidpath     libproc.h HAVE_PROC_PIDPATH)
@@ -558,14 +611,14 @@ endif()
 check_symbol_exists(getopt unistd.h HAVE_GETOPT)
 
 
-# Common sources used by both the OpenAL implementation library and potentially
-# the OpenAL router.
+# Common sources used by both the OpenAL implementation library, the OpenAL
+# router, and certain tools and examples.
 set(COMMON_OBJS
+    common/albit.h
     common/albyte.h
     common/alcomplex.cpp
     common/alcomplex.h
-    common/alexcpt.cpp
-    common/alexcpt.h
+    common/aldeque.h
     common/alfstream.cpp
     common/alfstream.h
     common/almalloc.cpp
@@ -576,22 +629,111 @@ set(COMMON_OBJS
     common/alstring.cpp
     common/alstring.h
     common/atomic.h
+    common/comptr.h
     common/dynload.cpp
     common/dynload.h
-    common/endiantest.h
     common/intrusive_ptr.h
     common/math_defs.h
     common/opthelpers.h
+    common/phase_shifter.h
     common/polyphase_resampler.cpp
     common/polyphase_resampler.h
     common/pragmadefs.h
+    common/ringbuffer.cpp
+    common/ringbuffer.h
     common/strutils.cpp
     common/strutils.h
     common/threads.cpp
     common/threads.h
     common/vecmat.h
-    common/vector.h
-)
+    common/vector.h)
+
+# Core library routines
+set(CORE_OBJS
+    core/ambdec.cpp
+    core/ambdec.h
+    core/ambidefs.cpp
+    core/ambidefs.h
+    core/async_event.h
+    core/bformatdec.cpp
+    core/bformatdec.h
+    core/bs2b.cpp
+    core/bs2b.h
+    core/bsinc_defs.h
+    core/bsinc_tables.cpp
+    core/bsinc_tables.h
+    core/bufferline.h
+    core/buffer_storage.cpp
+    core/buffer_storage.h
+    core/context.cpp
+    core/context.h
+    core/converter.cpp
+    core/converter.h
+    core/cpu_caps.cpp
+    core/cpu_caps.h
+    core/devformat.cpp
+    core/devformat.h
+    core/device.cpp
+    core/device.h
+    core/except.cpp
+    core/except.h
+    core/filters/biquad.h
+    core/filters/biquad.cpp
+    core/filters/nfc.cpp
+    core/filters/nfc.h
+    core/filters/splitter.cpp
+    core/filters/splitter.h
+    core/fmt_traits.cpp
+    core/fmt_traits.h
+    core/fpu_ctrl.cpp
+    core/fpu_ctrl.h
+    core/front_stablizer.h
+    core/helpers.cpp
+    core/helpers.h
+    core/hrtf.cpp
+    core/hrtf.h
+    core/logging.cpp
+    core/logging.h
+    core/mastering.cpp
+    core/mastering.h
+    core/mixer.cpp
+    core/mixer.h
+    core/resampler_limits.h
+    core/uhjfilter.cpp
+    core/uhjfilter.h
+    core/uiddefs.cpp
+    core/voice.cpp
+    core/voice.h
+    core/voice_change.h)
+
+set(HAVE_RTKIT 0)
+option(ALSOFT_REQUIRE_RTKIT "Require RTKit/D-Bus support" FALSE)
+find_package(DBus1)
+if(DBus1_FOUND)
+    option(ALSOFT_RTKIT "Enable RTKit support" ON)
+    if(ALSOFT_RTKIT)
+        set(HAVE_RTKIT 1)
+        set(CORE_OBJS ${CORE_OBJS} core/dbus_wrap.cpp core/dbus_wrap.h core/rtkit.cpp core/rtkit.h)
+        if(WIN32 OR HAVE_DLFCN_H)
+            set(INC_PATHS ${INC_PATHS} ${DBus1_INCLUDE_DIRS})
+            set(CPP_DEFS ${CPP_DEFS} ${DBus1_DEFINITIONS})
+        else()
+            set(EXTRA_LIBS ${EXTRA_LIBS} ${DBus1_LIBRARIES})
+        endif()
+    endif()
+endif()
+if(ALSOFT_REQUIRE_RTKIT AND NOT HAVE_RTKIT)
+    message(FATAL_ERROR "Failed to enabled required RTKit support")
+endif()
+
+# Default mixers, always available
+set(CORE_OBJS ${CORE_OBJS}
+    core/mixer/defs.h
+    core/mixer/hrtfbase.h
+    core/mixer/hrtfdefs.h
+    core/mixer/mixer_c.cpp)
+
+# AL and related routines
 set(OPENAL_OBJS
     al/auxeffectslot.cpp
     al/auxeffectslot.h
@@ -624,37 +766,19 @@ set(OPENAL_OBJS
     al/listener.h
     al/source.cpp
     al/source.h
-    al/state.cpp
-)
-set(ALC_OBJS
-    core/bufferline.h
-    core/devformat.cpp
-    core/devformat.h
+    al/state.cpp)
 
+# ALC and related routines
+set(ALC_OBJS
     alc/alc.cpp
-    alc/alcmain.h
     alc/alu.cpp
     alc/alu.h
     alc/alconfig.cpp
     alc/alconfig.h
-    alc/alcontext.h
-    alc/ambdec.cpp
-    alc/ambdec.h
-    alc/ambidefs.h
-    alc/bformatdec.cpp
-    alc/bformatdec.h
-    alc/bs2b.cpp
-    alc/bs2b.h
-    alc/bsinc_defs.h
-    alc/bsinc_tables.cpp
-    alc/bsinc_tables.h
-    alc/buffer_storage.cpp
-    alc/buffer_storage.h
-    alc/compat.h
-    alc/converter.cpp
-    alc/converter.h
-    alc/cpu_caps.cpp
-    alc/cpu_caps.h
+    alc/context.cpp
+    alc/context.h
+    alc/device.cpp
+    alc/device.h
     alc/effectslot.cpp
     alc/effectslot.h
     alc/effects/base.h
@@ -672,119 +796,30 @@ set(ALC_OBJS
     alc/effects/pshifter.cpp
     alc/effects/reverb.cpp
     alc/effects/vmorpher.cpp
-    alc/filters/biquad.h
-    alc/filters/biquad.cpp
-    alc/filters/nfc.cpp
-    alc/filters/nfc.h
-    alc/filters/splitter.cpp
-    alc/filters/splitter.h
-    alc/fmt_traits.cpp
-    alc/fmt_traits.h
-    alc/fpu_ctrl.cpp
-    alc/fpu_ctrl.h
-    alc/front_stablizer.h
-    alc/helpers.cpp
-    alc/hrtf.cpp
-    alc/hrtf.h
     alc/inprogext.h
-    alc/logging.h
-    alc/mastering.cpp
-    alc/mastering.h
-    alc/panning.cpp
-    alc/ringbuffer.cpp
-    alc/ringbuffer.h
-    alc/uhjfilter.cpp
-    alc/uhjfilter.h
-    alc/uiddefs.cpp
-    alc/voice.cpp
-    alc/voice.h
-    alc/mixer/defs.h
-    alc/mixer/hrtfbase.h
-    alc/mixer/mixer_c.cpp
-)
+    alc/panning.cpp)
 
-
+# Include SIMD mixers
 set(CPU_EXTS "Default")
-set(HAVE_SSE        0)
-set(HAVE_SSE2       0)
-set(HAVE_SSE3       0)
-set(HAVE_SSE4_1     0)
-set(HAVE_NEON       0)
-
-# Check for SSE+SSE2 support
-option(ALSOFT_REQUIRE_SSE "Require SSE support" OFF)
-option(ALSOFT_REQUIRE_SSE2 "Require SSE2 support" OFF)
-if(HAVE_XMMINTRIN_H AND HAVE_EMMINTRIN_H)
-    option(ALSOFT_CPUEXT_SSE "Enable SSE support" ON)
-    option(ALSOFT_CPUEXT_SSE2 "Enable SSE2 support" ON)
-    if(ALSOFT_CPUEXT_SSE AND ALSOFT_CPUEXT_SSE2)
-        set(HAVE_SSE 1)
-        set(HAVE_SSE2 1)
-        set(ALC_OBJS  ${ALC_OBJS} alc/mixer/mixer_sse.cpp alc/mixer/mixer_sse2.cpp)
-        if(SSE2_SWITCH)
-            set_source_files_properties(alc/mixer/mixer_sse.cpp alc/mixer/mixer_sse2.cpp
-                PROPERTIES COMPILE_FLAGS "${SSE2_SWITCH}")
-        endif()
-        set(CPU_EXTS "${CPU_EXTS}, SSE, SSE2")
-    endif()
+if(HAVE_SSE)
+    set(CORE_OBJS  ${CORE_OBJS} core/mixer/mixer_sse.cpp)
+    set(CPU_EXTS "${CPU_EXTS}, SSE")
 endif()
-if(ALSOFT_REQUIRE_SSE AND NOT HAVE_SSE)
-    message(FATAL_ERROR "Failed to enabled required SSE CPU extensions")
+if(HAVE_SSE2)
+    set(CORE_OBJS  ${CORE_OBJS} core/mixer/mixer_sse2.cpp)
+    set(CPU_EXTS "${CPU_EXTS}, SSE2")
 endif()
-if(ALSOFT_REQUIRE_SSE2 AND NOT HAVE_SSE2)
-    message(FATAL_ERROR "Failed to enable required SSE2 CPU extensions")
+if(HAVE_SSE3)
+    set(CORE_OBJS  ${CORE_OBJS} core/mixer/mixer_sse3.cpp)
+    set(CPU_EXTS "${CPU_EXTS}, SSE3")
 endif()
-
-option(ALSOFT_REQUIRE_SSE3 "Require SSE3 support" OFF)
-if(HAVE_EMMINTRIN_H)
-    option(ALSOFT_CPUEXT_SSE3 "Enable SSE3 support" ON)
-    if(HAVE_SSE2 AND ALSOFT_CPUEXT_SSE3)
-        set(HAVE_SSE3 1)
-        set(ALC_OBJS  ${ALC_OBJS} alc/mixer/mixer_sse3.cpp)
-        if(SSE2_SWITCH)
-            set_source_files_properties(alc/mixer/mixer_sse3.cpp PROPERTIES
-                COMPILE_FLAGS "${SSE3_SWITCH}")
-        endif()
-        set(CPU_EXTS "${CPU_EXTS}, SSE3")
-    endif()
+if(HAVE_SSE4_1)
+    set(CORE_OBJS  ${CORE_OBJS} core/mixer/mixer_sse41.cpp)
+    set(CPU_EXTS "${CPU_EXTS}, SSE4.1")
 endif()
-if(ALSOFT_REQUIRE_SSE3 AND NOT HAVE_SSE3)
-    message(FATAL_ERROR "Failed to enable required SSE3 CPU extensions")
-endif()
-
-option(ALSOFT_REQUIRE_SSE4_1 "Require SSE4.1 support" OFF)
-if(HAVE_SMMINTRIN_H)
-    option(ALSOFT_CPUEXT_SSE4_1 "Enable SSE4.1 support" ON)
-    if(HAVE_SSE3 AND ALSOFT_CPUEXT_SSE4_1)
-        set(HAVE_SSE4_1 1)
-        set(ALC_OBJS  ${ALC_OBJS} alc/mixer/mixer_sse41.cpp)
-        if(SSE4_1_SWITCH)
-            set_source_files_properties(alc/mixer/mixer_sse41.cpp PROPERTIES
-                COMPILE_FLAGS "${SSE4_1_SWITCH}")
-        endif()
-        set(CPU_EXTS "${CPU_EXTS}, SSE4.1")
-    endif()
-endif()
-if(ALSOFT_REQUIRE_SSE4_1 AND NOT HAVE_SSE4_1)
-    message(FATAL_ERROR "Failed to enable required SSE4.1 CPU extensions")
-endif()
-
-# Check for ARM Neon support
-option(ALSOFT_REQUIRE_NEON "Require ARM Neon support" OFF)
-if(HAVE_ARM_NEON_H)
-    option(ALSOFT_CPUEXT_NEON "Enable ARM Neon support" ON)
-    if(ALSOFT_CPUEXT_NEON)
-        set(HAVE_NEON 1)
-        set(ALC_OBJS  ${ALC_OBJS} alc/mixer/mixer_neon.cpp)
-        if(FPU_NEON_SWITCH)
-            set_source_files_properties(alc/mixer/mixer_neon.cpp PROPERTIES
-                COMPILE_FLAGS "${FPU_NEON_SWITCH}")
-        endif()
-        set(CPU_EXTS "${CPU_EXTS}, Neon")
-    endif()
-endif()
-if(ALSOFT_REQUIRE_NEON AND NOT HAVE_NEON)
-    message(FATAL_ERROR "Failed to enabled required ARM Neon CPU extensions")
+if(HAVE_NEON)
+    set(CORE_OBJS  ${CORE_OBJS} core/mixer/mixer_neon.cpp)
+    set(CPU_EXTS "${CPU_EXTS}, Neon")
 endif()
 
 
@@ -899,38 +934,36 @@ option(ALSOFT_REQUIRE_WINMM "Require Windows Multimedia backend" OFF)
 option(ALSOFT_REQUIRE_DSOUND "Require DirectSound backend" OFF)
 option(ALSOFT_REQUIRE_WASAPI "Require WASAPI backend" OFF)
 if(WIN32)
-    set(WINSDK_LIB_DIRS )
-    set(WINSDK_INCLUDE_DIRS )
-    find_package(WindowsSDK)
-    if(WINDOWSSDK_FOUND)
-        get_windowssdk_library_dirs(${WINDOWSSDK_PREFERRED_DIR} WINSDK_LIB_DIRS)
-        get_windowssdk_include_dirs(${WINDOWSSDK_PREFERRED_DIR} WINSDK_INCLUDE_DIRS)
-    endif()
-
     # Check MMSystem backend
-    check_include_files("windows.h;mmsystem.h" HAVE_MMSYSTEM_H)
-    find_library(WINMM_LIBRARY NAMES winmm
-        PATHS ${WINSDK_LIB_DIRS})
-    if(HAVE_MMSYSTEM_H AND WINMM_LIBRARY)
-        option(ALSOFT_BACKEND_WINMM "Enable Windows Multimedia backend" ON)
-        if(ALSOFT_BACKEND_WINMM)
-            set(HAVE_WINMM 1)
-            set(BACKENDS  "${BACKENDS} WinMM,")
-            set(ALC_OBJS  ${ALC_OBJS} alc/backends/winmm.cpp alc/backends/winmm.h)
-            set(EXTRA_LIBS ${WINMM_LIBRARY} ${EXTRA_LIBS})
-        endif()
+    option(ALSOFT_BACKEND_WINMM "Enable Windows Multimedia backend" ON)
+    if(ALSOFT_BACKEND_WINMM)
+        set(HAVE_WINMM 1)
+        set(BACKENDS "${BACKENDS} WinMM,")
+        set(ALC_OBJS ${ALC_OBJS} alc/backends/winmm.cpp alc/backends/winmm.h)
+        # There doesn't seem to be good way to search for winmm.lib for MSVC.
+        # find_library doesn't find it without being told to look in a specific
+        # place in the WindowsSDK, but it links anyway. If there ends up being
+        # Windows targets without this, another means to detect it is needed.
+        set(EXTRA_LIBS winmm ${EXTRA_LIBS})
     endif()
 
     # Check DSound backend
-    find_package(DSound)
-    if(DSOUND_FOUND)
+    check_include_file(dsound.h HAVE_DSOUND_H)
+    if(DXSDK_DIR)
+        find_path(DSOUND_INCLUDE_DIR NAMES "dsound.h"
+            PATHS "${DXSDK_DIR}" PATH_SUFFIXES include
+            DOC "The DirectSound include directory")
+    endif()
+    if(HAVE_DSOUND_H OR DSOUND_INCLUDE_DIR)
         option(ALSOFT_BACKEND_DSOUND "Enable DirectSound backend" ON)
         if(ALSOFT_BACKEND_DSOUND)
             set(HAVE_DSOUND 1)
-            set(BACKENDS  "${BACKENDS} DirectSound${IS_LINKED},")
-            set(ALC_OBJS  ${ALC_OBJS} alc/backends/dsound.cpp alc/backends/dsound.h)
-            add_backend_libs(${DSOUND_LIBRARIES})
-            set(INC_PATHS ${INC_PATHS} ${DSOUND_INCLUDE_DIRS})
+            set(BACKENDS "${BACKENDS} DirectSound,")
+            set(ALC_OBJS ${ALC_OBJS} alc/backends/dsound.cpp alc/backends/dsound.h)
+
+            if(NOT HAVE_DSOUND_H)
+                set(INC_PATHS ${INC_PATHS} ${DSOUND_INCLUDE_DIR})
+            endif()
         endif()
     endif()
 
@@ -1047,8 +1080,7 @@ if(OPENSL_FOUND)
         set(HAVE_OPENSL 1)
         set(ALC_OBJS  ${ALC_OBJS} alc/backends/opensl.cpp alc/backends/opensl.h)
         set(BACKENDS  "${BACKENDS} OpenSL,")
-        set(EXTRA_LIBS ${OPENSL_LIBRARIES} ${EXTRA_LIBS})
-        set(INC_PATHS ${INC_PATHS} ${OPENSL_INCLUDE_DIRS})
+        set(EXTRA_LIBS "OpenSL::OpenSLES" ${EXTRA_LIBS})
     endif()
 endif()
 if(ALSOFT_REQUIRE_OPENSL AND NOT HAVE_OPENSL)
@@ -1163,10 +1195,13 @@ if(ALSOFT_EMBED_HRTF_DATA)
 endif()
 
 
-if(ALSOFT_UTILS AND NOT ALSOFT_NO_CONFIG_UTIL)
-    find_package(Qt5Widgets)
+if(ALSOFT_UTILS)
+    find_package(MySOFA)
+    if(NOT ALSOFT_NO_CONFIG_UTIL)
+        find_package(Qt5Widgets)
+    endif()
 endif()
-if(ALSOFT_EXAMPLES)
+if(ALSOFT_UTILS OR ALSOFT_EXAMPLES)
     find_package(SndFile)
     find_package(SDL2)
     if(SDL2_FOUND)
@@ -1224,7 +1259,7 @@ set(IMPL_TARGET OpenAL) # Either OpenAL or soft_oal.
 
 # Build main library
 if(LIBTYPE STREQUAL "STATIC")
-    add_library(${IMPL_TARGET} STATIC ${COMMON_OBJS} ${OPENAL_OBJS} ${ALC_OBJS})
+    add_library(${IMPL_TARGET} STATIC ${COMMON_OBJS} ${OPENAL_OBJS} ${ALC_OBJS} ${CORE_OBJS})
     target_compile_definitions(${IMPL_TARGET} PUBLIC AL_LIBTYPE_STATIC)
     target_link_libraries(${IMPL_TARGET} PRIVATE ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
     if(WIN32)
@@ -1247,7 +1282,8 @@ else()
             router/al.cpp
         )
         target_compile_definitions(OpenAL
-            PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES ${CPP_DEFS})
+            PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES "ALC_API=${EXPORT_DECL}"
+            "AL_API=${EXPORT_DECL}" ${CPP_DEFS})
         target_compile_options(OpenAL PRIVATE ${C_FLAGS})
         target_link_libraries(OpenAL PRIVATE common ${LINKER_FLAGS})
         target_include_directories(OpenAL
@@ -1273,7 +1309,7 @@ else()
     # !important: for osx framework public header works, the headers must be in
     # the project
     set(TARGET_PUBLIC_HEADERS include/AL/al.h include/AL/alc.h include/AL/alext.h include/AL/efx.h)
-    add_library(${IMPL_TARGET} SHARED ${OPENAL_OBJS} ${ALC_OBJS} ${RC_CONFIG}
+    add_library(${IMPL_TARGET} SHARED ${OPENAL_OBJS} ${ALC_OBJS} ${CORE_OBJS} ${RC_CONFIG}
         ${TARGET_PUBLIC_HEADERS})
     if(WIN32)
         set_target_properties(${IMPL_TARGET} PROPERTIES PREFIX "")
@@ -1323,7 +1359,6 @@ target_include_directories(${IMPL_TARGET}
     ${INC_PATHS}
     ${OpenAL_BINARY_DIR}
     ${OpenAL_SOURCE_DIR}
-    ${OpenAL_SOURCE_DIR}/alc
     ${OpenAL_SOURCE_DIR}/common
 )
 
@@ -1332,7 +1367,8 @@ set_target_properties(${IMPL_TARGET} PROPERTIES OUTPUT_NAME ${LIBNAME}
     SOVERSION ${LIB_MAJOR_VERSION}
 )
 target_compile_definitions(${IMPL_TARGET}
-    PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES ${CPP_DEFS})
+    PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES "ALC_API=${EXPORT_DECL}" "AL_API=${EXPORT_DECL}"
+    ${CPP_DEFS})
 target_compile_options(${IMPL_TARGET} PRIVATE ${C_FLAGS})
 
 if(TARGET build_version)
@@ -1444,7 +1480,16 @@ if(ALSOFT_UTILS)
         set(EXTRA_INSTALLS ${EXTRA_INSTALLS} openal-info)
     endif()
 
-    find_package(MySOFA)
+    if(SNDFILE_FOUND)
+        add_executable(uhjdecoder utils/uhjdecoder.cpp)
+        target_compile_definitions(uhjdecoder PRIVATE ${CPP_DEFS})
+        target_include_directories(uhjdecoder
+            PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
+        target_compile_options(uhjdecoder PRIVATE ${C_FLAGS})
+        target_link_libraries(uhjdecoder PUBLIC common
+            PRIVATE ${LINKER_FLAGS} SndFile::SndFile ${UNICODE_FLAG})
+    endif()
+
     if(MYSOFA_FOUND)
         set(SOFA_SUPPORT_SRCS
             utils/sofa-support.cpp

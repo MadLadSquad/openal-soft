@@ -4,11 +4,14 @@
 #include "AL/al.h"
 #include "AL/efx.h"
 
+#include "alc/effects/base.h"
 #include "effects.h"
-#include "effects/base.h"
 
 
 namespace {
+
+static_assert(EchoMaxDelay >= AL_ECHO_MAX_DELAY, "Echo max delay too short");
+static_assert(EchoMaxLRDelay >= AL_ECHO_MAX_LRDELAY, "Echo max left-right delay too short");
 
 void Echo_setParami(EffectProps*, ALenum param, int)
 { throw effect_exception{AL_INVALID_ENUM, "Invalid echo integer property 0x%04x", param}; }

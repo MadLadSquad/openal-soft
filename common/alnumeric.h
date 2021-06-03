@@ -67,6 +67,19 @@ constexpr inline size_t clampz(size_t val, size_t min, size_t max) noexcept
 { return minz(max, maxz(min, val)); }
 
 
+constexpr inline float lerp(float val1, float val2, float mu) noexcept
+{ return val1 + (val2-val1)*mu; }
+constexpr inline float cubic(float val1, float val2, float val3, float val4, float mu) noexcept
+{
+    const float mu2{mu*mu}, mu3{mu2*mu};
+    const float a0{-0.5f*mu3 +       mu2 + -0.5f*mu};
+    const float a1{ 1.5f*mu3 + -2.5f*mu2            + 1.0f};
+    const float a2{-1.5f*mu3 +  2.0f*mu2 +  0.5f*mu};
+    const float a3{ 0.5f*mu3 + -0.5f*mu2};
+    return val1*a0 + val2*a1 + val3*a2 + val4*a3;
+}
+
+
 /** Find the next power-of-2 for non-power-of-2 numbers. */
 inline uint32_t NextPowerOf2(uint32_t value) noexcept
 {
@@ -88,111 +101,6 @@ inline size_t RoundUp(size_t value, size_t r) noexcept
     value += r-1;
     return value - (value%r);
 }
-
-
-/* Define CountTrailingZeros (count trailing zero bits, starting from the lsb)
- * and PopCount (population count/count 1 bits) methods, for 32- and 64-bit
- * integers. The CountTrailingZeros results are *UNDEFINED* if the value is 0.
- */
-template<typename T>
-inline int PopCount(T val) = delete;
-template<typename T>
-inline int CountTrailingZeros(T val) = delete;
-
-#ifdef __GNUC__
-
-/* Define variations for unsigned (long (long)) int, since we don't know what
- * uint32/64_t are typedef'd to.
- */
-template<>
-inline int PopCount(unsigned long long val) { return __builtin_popcountll(val); }
-template<>
-inline int PopCount(unsigned long val) { return __builtin_popcountl(val); }
-template<>
-inline int PopCount(unsigned int val) { return __builtin_popcount(val); }
-
-template<>
-inline int CountTrailingZeros(unsigned long long val) { return __builtin_ctzll(val); }
-template<>
-inline int CountTrailingZeros(unsigned long val) { return __builtin_ctzl(val); }
-template<>
-inline int CountTrailingZeros(unsigned int val) { return __builtin_ctz(val); }
-
-#else
-
-/* There be black magics here. The popcnt method is derived from
- * https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
- * while the ctz-utilizing-popcnt algorithm is shown here
- * http://www.hackersdelight.org/hdcodetxt/ntz.c.txt
- * as the ntz2 variant. These likely aren't the most efficient methods, but
- * they're good enough if the GCC built-ins aren't available.
- */
-template<>
-inline int PopCount(uint32_t v)
-{
-    v = v - ((v >> 1) & 0x55555555u);
-    v = (v & 0x33333333u) + ((v >> 2) & 0x33333333u);
-    v = (v + (v >> 4)) & 0x0f0f0f0fu;
-    return static_cast<int>((v * 0x01010101u) >> 24);
-}
-template<>
-inline int PopCount(uint64_t v)
-{
-    v = v - ((v >> 1) & 0x5555555555555555_u64);
-    v = (v & 0x3333333333333333_u64) + ((v >> 2) & 0x3333333333333333_u64);
-    v = (v + (v >> 4)) & 0x0f0f0f0f0f0f0f0f_u64;
-    return static_cast<int>((v * 0x0101010101010101_u64) >> 56);
-}
-
-#if defined(_WIN64)
-
-template<>
-inline int CountTrailingZeros(uint32_t v)
-{
-    unsigned long idx = 32;
-    _BitScanForward(&idx, v);
-    return static_cast<int>(idx);
-}
-template<>
-inline int CountTrailingZeros(uint64_t v)
-{
-    unsigned long idx = 64;
-    _BitScanForward64(&idx, v);
-    return static_cast<int>(idx);
-}
-
-#elif defined(_WIN32)
-
-template<>
-inline int CountTrailingZeros(uint32_t v)
-{
-    unsigned long idx = 32;
-    _BitScanForward(&idx, v);
-    return static_cast<int>(idx);
-}
-template<>
-inline int CountTrailingZeros(uint64_t v)
-{
-    unsigned long idx = 64;
-    if(!_BitScanForward(&idx, static_cast<uint32_t>(v&0xffffffff)))
-    {
-        if(_BitScanForward(&idx, static_cast<uint32_t>(v>>32)))
-            idx += 32;
-    }
-    return static_cast<int>(idx);
-}
-
-#else
-
-template<>
-inline int CountTrailingZeros(uint32_t value)
-{ return PopCount(~value & (value - 1)); }
-template<>
-inline int CountTrailingZeros(uint64_t value)
-{ return PopCount(~value & (value - 1)); }
-
-#endif
-#endif
 
 
 /**
@@ -314,6 +222,12 @@ inline float fast_roundf(float f) noexcept
 
     float out;
     __asm__ __volatile__("frndint" : "=t"(out) : "0"(f));
+    return out;
+
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+
+    float out;
+    __asm__ volatile("frintx %s0, %s1" : "=w"(out) : "w"(f));
     return out;
 
 #else

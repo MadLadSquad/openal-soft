@@ -20,7 +20,7 @@
 
 #include "config.h"
 
-#include "backends/sndio.h"
+#include "sndio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,29 +29,29 @@
 #include <thread>
 #include <functional>
 
-#include "alcmain.h"
-#include "alexcpt.h"
-#include "alu.h"
+#include "alnumeric.h"
+#include "core/device.h"
+#include "core/helpers.h"
+#include "core/logging.h"
+#include "ringbuffer.h"
 #include "threads.h"
 #include "vector.h"
-#include "ringbuffer.h"
-#include "logging.h"
 
 #include <sndio.h>
 
 
 namespace {
 
-static const ALCchar sndio_device[] = "SndIO Default";
+static const char sndio_device[] = "SndIO Default";
 
 
 struct SndioPlayback final : public BackendBase {
-    SndioPlayback(ALCdevice *device) noexcept : BackendBase{device} { }
+    SndioPlayback(DeviceBase *device) noexcept : BackendBase{device} { }
     ~SndioPlayback() override;
 
     int mixerProc();
 
-    void open(const ALCchar *name) override;
+    void open(const char *name) override;
     bool reset() override;
     void start() override;
     void stop() override;
@@ -95,7 +95,7 @@ int SndioPlayback::mixerProc()
         al::byte *WritePtr{mBuffer.data()};
         size_t len{mBuffer.size()};
 
-        mDevice->renderSamples(WritePtr, static_cast<ALuint>(len)/frameSize, frameStep);
+        mDevice->renderSamples(WritePtr, static_cast<uint>(len/frameSize), frameStep);
         while(len > 0 && !mKillNow.load(std::memory_order_acquire))
         {
             size_t wrote{sio_write(mSndHandle, WritePtr, len)};
@@ -115,16 +115,21 @@ int SndioPlayback::mixerProc()
 }
 
 
-void SndioPlayback::open(const ALCchar *name)
+void SndioPlayback::open(const char *name)
 {
     if(!name)
         name = sndio_device;
     else if(strcmp(name, sndio_device) != 0)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Device name \"%s\" not found", name};
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%s\" not found",
+            name};
 
-    mSndHandle = sio_open(nullptr, SIO_PLAY, 0);
-    if(mSndHandle == nullptr)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Could not open backend device"};
+    sio_hdl *sndHandle{sio_open(nullptr, SIO_PLAY, 0)};
+    if(!sndHandle)
+        throw al::backend_exception{al::backend_error::NoDevice, "Could not open backend device"};
+
+    if(mSndHandle)
+        sio_close(mSndHandle);
+    mSndHandle = sndHandle;
 
     mDevice->DeviceName = name;
 }
@@ -263,7 +268,7 @@ bool SndioPlayback::reset()
 void SndioPlayback::start()
 {
     if(!sio_start(mSndHandle))
-        throw al::backend_exception{ALC_INVALID_DEVICE, "Error starting playback"};
+        throw al::backend_exception{al::backend_error::DeviceError, "Error starting playback"};
 
     try {
         mKillNow.store(false, std::memory_order_release);
@@ -271,8 +276,8 @@ void SndioPlayback::start()
     }
     catch(std::exception& e) {
         sio_stop(mSndHandle);
-        throw al::backend_exception{ALC_INVALID_DEVICE, "Failed to start mixing thread: %s",
-            e.what()};
+        throw al::backend_exception{al::backend_error::DeviceError,
+            "Failed to start mixing thread: %s", e.what()};
     }
 }
 
@@ -288,16 +293,16 @@ void SndioPlayback::stop()
 
 
 struct SndioCapture final : public BackendBase {
-    SndioCapture(ALCdevice *device) noexcept : BackendBase{device} { }
+    SndioCapture(DeviceBase *device) noexcept : BackendBase{device} { }
     ~SndioCapture() override;
 
     int recordProc();
 
-    void open(const ALCchar *name) override;
+    void open(const char *name) override;
     void start() override;
     void stop() override;
-    ALCenum captureSamples(al::byte *buffer, ALCuint samples) override;
-    ALCuint availableSamples() override;
+    void captureSamples(al::byte *buffer, uint samples) override;
+    uint availableSamples() override;
 
     sio_hdl *mSndHandle{nullptr};
 
@@ -321,10 +326,10 @@ int SndioCapture::recordProc()
     SetRTPriority();
     althrd_setname(RECORD_THREAD_NAME);
 
-    const ALuint frameSize{mDevice->frameSizeFromFmt()};
+    const uint frameSize{mDevice->frameSizeFromFmt()};
 
-    while(!mKillNow.load(std::memory_order_acquire) &&
-          mDevice->Connected.load(std::memory_order_acquire))
+    while(!mKillNow.load(std::memory_order_acquire)
+        && mDevice->Connected.load(std::memory_order_acquire))
     {
         auto data = mRing->getWriteVector();
         size_t todo{data.first.len + data.second.len};
@@ -363,16 +368,17 @@ int SndioCapture::recordProc()
 }
 
 
-void SndioCapture::open(const ALCchar *name)
+void SndioCapture::open(const char *name)
 {
     if(!name)
         name = sndio_device;
     else if(strcmp(name, sndio_device) != 0)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Device name \"%s\" not found", name};
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%s\" not found",
+            name};
 
     mSndHandle = sio_open(nullptr, SIO_REC, 0);
     if(mSndHandle == nullptr)
-        throw al::backend_exception{ALC_INVALID_VALUE, "Could not open backend device"};
+        throw al::backend_exception{al::backend_error::NoDevice, "Could not open backend device"};
 
     sio_par par;
     sio_initpar(&par);
@@ -404,8 +410,8 @@ void SndioCapture::open(const ALCchar *name)
         par.sig = 0;
         break;
     case DevFmtFloat:
-        throw al::backend_exception{ALC_INVALID_VALUE, "%s capture samples not supported",
-            DevFmtTypeString(mDevice->FmtType)};
+        throw al::backend_exception{al::backend_error::DeviceError,
+            "%s capture samples not supported", DevFmtTypeString(mDevice->FmtType)};
     }
     par.bits = par.bps * 8;
     par.le = SIO_LE_NATIVE;
@@ -420,10 +426,11 @@ void SndioCapture::open(const ALCchar *name)
     mDevice->BufferSize = par.appbufsz;
 
     if(!sio_setpar(mSndHandle, &par) || !sio_getpar(mSndHandle, &par))
-        throw al::backend_exception{ALC_INVALID_VALUE, "Failed to set device praameters"};
+        throw al::backend_exception{al::backend_error::DeviceError,
+            "Failed to set device praameters"};
 
     if(par.bits != par.bps*8)
-        throw al::backend_exception{ALC_INVALID_VALUE,
+        throw al::backend_exception{al::backend_error::DeviceError,
             "Padded samples not supported (got %u of %u bits)", par.bits, par.bps*8};
 
     if(!((mDevice->FmtType == DevFmtByte && par.bits == 8 && par.sig != 0)
@@ -433,7 +440,7 @@ void SndioCapture::open(const ALCchar *name)
         || (mDevice->FmtType == DevFmtInt && par.bits == 32 && par.sig != 0)
         || (mDevice->FmtType == DevFmtUInt && par.bits == 32 && par.sig == 0))
         || mDevice->channelsFromFmt() != par.rchan || mDevice->Frequency != par.rate)
-        throw al::backend_exception{ALC_INVALID_VALUE,
+        throw al::backend_exception{al::backend_error::DeviceError,
             "Failed to set format %s %s %uhz, got %c%u %u-channel %uhz instead",
             DevFmtTypeString(mDevice->FmtType), DevFmtChannelsString(mDevice->FmtChans),
             mDevice->Frequency, par.sig?'s':'u', par.bits, par.rchan, par.rate};
@@ -448,7 +455,7 @@ void SndioCapture::open(const ALCchar *name)
 void SndioCapture::start()
 {
     if(!sio_start(mSndHandle))
-        throw al::backend_exception{ALC_INVALID_DEVICE, "Error starting capture"};
+        throw al::backend_exception{al::backend_error::DeviceError, "Error starting capture"};
 
     try {
         mKillNow.store(false, std::memory_order_release);
@@ -456,8 +463,8 @@ void SndioCapture::start()
     }
     catch(std::exception& e) {
         sio_stop(mSndHandle);
-        throw al::backend_exception{ALC_INVALID_DEVICE, "Failed to start mixing thread: %s",
-            e.what()};
+        throw al::backend_exception{al::backend_error::DeviceError,
+            "Failed to start capture thread: %s", e.what()};
     }
 }
 
@@ -471,14 +478,11 @@ void SndioCapture::stop()
         ERR("Error stopping device\n");
 }
 
-ALCenum SndioCapture::captureSamples(al::byte *buffer, ALCuint samples)
-{
-    mRing->read(buffer, samples);
-    return ALC_NO_ERROR;
-}
+void SndioCapture::captureSamples(al::byte *buffer, uint samples)
+{ mRing->read(buffer, samples); }
 
-ALCuint SndioCapture::availableSamples()
-{ return static_cast<ALCuint>(mRing->readSpace()); }
+uint SndioCapture::availableSamples()
+{ return static_cast<uint>(mRing->readSpace()); }
 
 } // namespace
 
@@ -508,7 +512,7 @@ std::string SndIOBackendFactory::probe(BackendType type)
     return outnames;
 }
 
-BackendPtr SndIOBackendFactory::createBackend(ALCdevice *device, BackendType type)
+BackendPtr SndIOBackendFactory::createBackend(DeviceBase *device, BackendType type)
 {
     if(type == BackendType::Playback)
         return BackendPtr{new SndioPlayback{device}};

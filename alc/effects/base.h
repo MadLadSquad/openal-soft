@@ -1,17 +1,63 @@
 #ifndef EFFECTS_BASE_H
 #define EFFECTS_BASE_H
 
-#include <cstddef>
+#include <stddef.h>
 
-#include "alcmain.h"
+#include "albyte.h"
 #include "almalloc.h"
 #include "alspan.h"
 #include "atomic.h"
+#include "core/bufferline.h"
 #include "intrusive_ptr.h"
 
-struct EffectSlot;
 struct BufferStorage;
+struct ContextBase;
+struct DeviceBase;
+struct EffectSlot;
+struct MixParams;
+struct RealMixParams;
 
+
+/** Target gain for the reverb decay feedback reaching the decay time. */
+constexpr float ReverbDecayGain{0.001f}; /* -60 dB */
+
+constexpr float ReverbMaxReflectionsDelay{0.3f};
+constexpr float ReverbMaxLateReverbDelay{0.1f};
+
+enum class ChorusWaveform {
+    Sinusoid,
+    Triangle
+};
+
+constexpr float ChorusMaxDelay{0.016f};
+constexpr float FlangerMaxDelay{0.004f};
+
+constexpr float EchoMaxDelay{0.207f};
+constexpr float EchoMaxLRDelay{0.404f};
+
+enum class FShifterDirection {
+    Down,
+    Up,
+    Off
+};
+
+enum class ModulatorWaveform {
+    Sinusoid,
+    Sawtooth,
+    Square
+};
+
+enum class VMorpherPhenome {
+    A, E, I, O, U,
+    AA, AE, AH, AO, EH, ER, IH, IY, UH, UW,
+    B, D, F, G, J, K, L, M, N, P, R, S, T, V, Z
+};
+
+enum class VMorpherWaveform {
+    Sinusoid,
+    Triangle,
+    Sawtooth
+};
 
 union EffectProps {
     struct {
@@ -51,7 +97,7 @@ union EffectProps {
     } Autowah;
 
     struct {
-        int Waveform;
+        ChorusWaveform Waveform;
         int Phase;
         float Rate;
         float Depth;
@@ -96,14 +142,14 @@ union EffectProps {
 
     struct {
         float Frequency;
-        int LeftDirection;
-        int RightDirection;
+        FShifterDirection LeftDirection;
+        FShifterDirection RightDirection;
     } Fshifter;
 
     struct {
         float Frequency;
         float HighPassCutoff;
-        int Waveform;
+        ModulatorWaveform Waveform;
     } Modulator;
 
     struct {
@@ -113,11 +159,11 @@ union EffectProps {
 
     struct {
         float Rate;
-        int PhonemeA;
-        int PhonemeB;
+        VMorpherPhenome PhonemeA;
+        VMorpherPhenome PhonemeB;
         int PhonemeACoarseTuning;
         int PhonemeBCoarseTuning;
-        int Waveform;
+        VMorpherWaveform Waveform;
     } Vmorpher;
 
     struct {
@@ -132,14 +178,18 @@ struct EffectTarget {
 };
 
 struct EffectState : public al::intrusive_ref<EffectState> {
+    struct Buffer {
+        const BufferStorage *storage;
+        al::span<const al::byte> samples;
+    };
+
     al::span<FloatBufferLine> mOutTarget;
 
 
     virtual ~EffectState() = default;
 
-    virtual void deviceUpdate(const ALCdevice *device) = 0;
-    virtual void setBuffer(const ALCdevice* /*device*/, const BufferStorage* /*buffer*/) { }
-    virtual void update(const ALCcontext *context, const EffectSlot *slot,
+    virtual void deviceUpdate(const DeviceBase *device, const Buffer &buffer) = 0;
+    virtual void update(const ContextBase *context, const EffectSlot *slot,
         const EffectProps *props, const EffectTarget target) = 0;
     virtual void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) = 0;
@@ -149,7 +199,7 @@ struct EffectState : public al::intrusive_ref<EffectState> {
 struct EffectStateFactory {
     virtual ~EffectStateFactory() = default;
 
-    virtual EffectState *create() = 0;
+    virtual al::intrusive_ptr<EffectState> create() = 0;
 };
 
 

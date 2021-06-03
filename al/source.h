@@ -6,25 +6,34 @@
 #include <cstddef>
 #include <iterator>
 #include <limits>
+#include <deque>
 
 #include "AL/al.h"
 #include "AL/alc.h"
 
-#include "alcontext.h"
+#include "alc/alu.h"
+#include "alc/context.h"
+#include "aldeque.h"
 #include "almalloc.h"
 #include "alnumeric.h"
-#include "alu.h"
+#include "atomic.h"
+#include "core/voice.h"
 #include "math_defs.h"
 #include "vector.h"
 
 struct ALbuffer;
 struct ALeffectslot;
-struct BufferlistItem;
 
 
 #define DEFAULT_SENDS  2
 
 #define INVALID_VOICE_IDX static_cast<ALuint>(-1)
+
+struct ALbufferQueueItem : public VoiceBufferItem {
+    ALbuffer *mBuffer{nullptr};
+
+    DISABLE_ALLOC()
+};
 
 
 struct ALsource {
@@ -99,9 +108,9 @@ struct ALsource {
     ALenum state{AL_INITIAL};
 
     /** Source Buffer Queue head. */
-    BufferlistItem *queue{nullptr};
+    al::deque<ALbufferQueueItem> mQueue;
 
-    std::atomic_flag PropsClean;
+    al::atomic_invflag mPropsDirty;
 
     /* Index into the context's Voices array. Lazily updated, only checked and
      * reset when looking up the voice.

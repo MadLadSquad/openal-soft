@@ -20,25 +20,35 @@
 
 #include "config.h"
 
-#include <cstdlib>
-#include <cmath>
 #include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <iterator>
 
-#include "al/auxeffectslot.h"
-#include "alcmain.h"
-#include "alcontext.h"
-#include "alu.h"
+#include "alc/effects/base.h"
+#include "alc/effectslot.h"
+#include "almalloc.h"
+#include "alspan.h"
+#include "core/bufferline.h"
+#include "core/devformat.h"
+#include "core/device.h"
+#include "core/mixer.h"
+#include "intrusive_ptr.h"
+
+struct ContextBase;
 
 
 namespace {
+
+using uint = unsigned int;
 
 struct DedicatedState final : public EffectState {
     float mCurrentGains[MAX_OUTPUT_CHANNELS];
     float mTargetGains[MAX_OUTPUT_CHANNELS];
 
 
-    void deviceUpdate(const ALCdevice *device) override;
-    void update(const ALCcontext *context, const EffectSlot *slot, const EffectProps *props,
+    void deviceUpdate(const DeviceBase *device, const Buffer &buffer) override;
+    void update(const ContextBase *context, const EffectSlot *slot, const EffectProps *props,
         const EffectTarget target) override;
     void process(const size_t samplesToDo, const al::span<const FloatBufferLine> samplesIn,
         const al::span<FloatBufferLine> samplesOut) override;
@@ -46,21 +56,21 @@ struct DedicatedState final : public EffectState {
     DEF_NEWDEL(DedicatedState)
 };
 
-void DedicatedState::deviceUpdate(const ALCdevice*)
+void DedicatedState::deviceUpdate(const DeviceBase*, const Buffer&)
 {
     std::fill(std::begin(mCurrentGains), std::end(mCurrentGains), 0.0f);
 }
 
-void DedicatedState::update(const ALCcontext*, const EffectSlot *slot,
+void DedicatedState::update(const ContextBase*, const EffectSlot *slot,
     const EffectProps *props, const EffectTarget target)
 {
     std::fill(std::begin(mTargetGains), std::end(mTargetGains), 0.0f);
 
     const float Gain{slot->Gain * props->Dedicated.Gain};
 
-    if(slot->EffectType == AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT)
+    if(slot->EffectType == EffectSlotType::DedicatedLFE)
     {
-        const ALuint idx{!target.RealOut ? INVALID_CHANNEL_INDEX :
+        const uint idx{!target.RealOut ? INVALID_CHANNEL_INDEX :
             GetChannelIdxByName(*target.RealOut, LFE)};
         if(idx != INVALID_CHANNEL_INDEX)
         {
@@ -68,11 +78,11 @@ void DedicatedState::update(const ALCcontext*, const EffectSlot *slot,
             mTargetGains[idx] = Gain;
         }
     }
-    else if(slot->EffectType == AL_EFFECT_DEDICATED_DIALOGUE)
+    else if(slot->EffectType == EffectSlotType::DedicatedDialog)
     {
         /* Dialog goes to the front-center speaker if it exists, otherwise it
          * plays from the front-center location. */
-        const ALuint idx{!target.RealOut ? INVALID_CHANNEL_INDEX :
+        const uint idx{!target.RealOut ? INVALID_CHANNEL_INDEX :
             GetChannelIdxByName(*target.RealOut, FrontCenter)};
         if(idx != INVALID_CHANNEL_INDEX)
         {
@@ -97,7 +107,8 @@ void DedicatedState::process(const size_t samplesToDo, const al::span<const Floa
 
 
 struct DedicatedStateFactory final : public EffectStateFactory {
-    EffectState *create() override { return new DedicatedState{}; }
+    al::intrusive_ptr<EffectState> create() override
+    { return al::intrusive_ptr<EffectState>{new DedicatedState{}}; }
 };
 
 } // namespace
