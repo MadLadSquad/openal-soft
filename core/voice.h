@@ -207,6 +207,7 @@ struct Voice {
     FmtChannels mFmtChannels;
     FmtType mFmtType;
     uint mFrequency;
+    uint mNumChannels;
     uint mFrameSize;
     AmbiLayout mAmbiLayout;
     AmbiScaling mAmbiScaling;
@@ -236,10 +237,8 @@ struct Voice {
      * now current (which may be overwritten if the buffer data is still
      * available).
      */
-    static constexpr size_t LineSize{BufferLineSize + MaxResamplerPadding +
-        UhjDecoder::sFilterDelay};
-    using BufferLine = std::array<float,LineSize>;
-    al::vector<BufferLine,16> mVoiceSamples{2};
+    using HistoryLine = std::array<float,MaxResamplerPadding>;
+    al::vector<HistoryLine,16> mPrevSamples{2};
 
     struct ChannelData {
         float mAmbiScale;
