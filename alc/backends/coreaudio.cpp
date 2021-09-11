@@ -45,14 +45,23 @@
 
 namespace {
 
+#if TARGET_OS_IOS || TARGET_OS_TV
+#define CAN_ENUMERATE 0
+#else
+#define CAN_ENUMERATE 1
+#endif
+
 static const char ca_device[] = "CoreAudio Default";
 
+
+#if CAN_ENUMERATE
 struct DeviceEntry {
     AudioDeviceID mId;
     std::string mName;
 };
 
 std::vector<DeviceEntry> PlaybackList;
+std::vector<DeviceEntry> CaptureList;
 
 
 OSStatus GetHwProperty(AudioHardwarePropertyID propId, UInt32 dataSize, void *propData)
@@ -237,6 +246,7 @@ void EnumerateDevices(std::vector<DeviceEntry> &list, bool isCapture)
     newdevs.shrink_to_fit();
     newdevs.swap(list);
 }
+#endif
 
 
 struct CoreAudioPlayback final : public BackendBase {
@@ -289,13 +299,7 @@ OSStatus CoreAudioPlayback::MixerProc(AudioUnitRenderActionFlags*, const AudioTi
 
 void CoreAudioPlayback::open(const char *name)
 {
-#if TARGET_OS_IOS || TARGET_OS_TV
-    if(!name)
-        name = ca_device;
-    else if(strcmp(name, ca_device) != 0)
-        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%s\" not found",
-            name};
-#else
+#if CAN_ENUMERATE
     AudioDeviceID audioDevice{kAudioDeviceUnknown};
     if(!name)
         GetHwProperty(kAudioHardwarePropertyDefaultOutputDevice, sizeof(audioDevice),
@@ -314,16 +318,22 @@ void CoreAudioPlayback::open(const char *name)
 
         audioDevice = devmatch->mId;
     }
+#else
+    if(!name)
+        name = ca_device;
+    else if(strcmp(name, ca_device) != 0)
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%s\" not found",
+            name};
 #endif
 
     /* open the default output unit */
     AudioComponentDescription desc{};
     desc.componentType = kAudioUnitType_Output;
-#if TARGET_OS_IOS || TARGET_OS_TV
-    desc.componentSubType = kAudioUnitSubType_RemoteIO;
-#else
+#if CAN_ENUMERATE
     desc.componentSubType = (audioDevice == kAudioDeviceUnknown) ?
         kAudioUnitSubType_DefaultOutput : kAudioUnitSubType_HALOutput;
+#else
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
 #endif
     desc.componentManufacturer = kAudioUnitManufacturer_Apple;
     desc.componentFlags = 0;
@@ -339,7 +349,7 @@ void CoreAudioPlayback::open(const char *name)
         throw al::backend_exception{al::backend_error::NoDevice,
             "Could not create component instance: %u", err};
 
-#if !TARGET_OS_IOS && !TARGET_OS_TV
+#if CAN_ENUMERATE
     if(audioDevice != kAudioDeviceUnknown)
         AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global, 0, &audioDevice, sizeof(AudioDeviceID));
@@ -360,6 +370,7 @@ void CoreAudioPlayback::open(const char *name)
     }
     mAudioUnit = audioUnit;
 
+#if CAN_ENUMERATE
     if(name)
         mDevice->DeviceName = name;
     else
@@ -373,6 +384,9 @@ void CoreAudioPlayback::open(const char *name)
         if(!devname.empty()) mDevice->DeviceName = std::move(devname);
         else mDevice->DeviceName = "Unknown Device Name";
     }
+#else
+    mDevice->DeviceName = name;
+#endif
 }
 
 bool CoreAudioPlayback::reset()
@@ -383,10 +397,10 @@ bool CoreAudioPlayback::reset()
 
     /* retrieve default output unit's properties (output side) */
     AudioStreamBasicDescription streamFormat{};
-    auto size = static_cast<UInt32>(sizeof(AudioStreamBasicDescription));
+    UInt32 size{sizeof(streamFormat)};
     err = AudioUnitGetProperty(mAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output,
         0, &streamFormat, &size);
-    if(err != noErr || size != sizeof(AudioStreamBasicDescription))
+    if(err != noErr || size != sizeof(streamFormat))
     {
         ERR("AudioUnitGetProperty failed\n");
         return false;
@@ -402,15 +416,9 @@ bool CoreAudioPlayback::reset()
     TRACE("  streamFormat.mSampleRate = %5.0f\n", streamFormat.mSampleRate);
 #endif
 
-    /* set default output unit's input side to match output side */
-    err = AudioUnitSetProperty(mAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
-        0, &streamFormat, size);
-    if(err != noErr)
-    {
-        ERR("AudioUnitSetProperty failed\n");
-        return false;
-    }
-
+    /* Use the sample rate from the output unit's current parameters, but reset
+     * everything else.
+     */
     if(mDevice->Frequency != streamFormat.mSampleRate)
     {
         mDevice->BufferSize = static_cast<uint>(uint64_t{mDevice->BufferSize} *
@@ -419,81 +427,53 @@ bool CoreAudioPlayback::reset()
     }
 
     /* FIXME: How to tell what channels are what in the output device, and how
-     * to specify what we're giving?  eg, 6.0 vs 5.1 */
-    switch(streamFormat.mChannelsPerFrame)
-    {
-        case 1:
-            mDevice->FmtChans = DevFmtMono;
-            break;
-        case 2:
-            mDevice->FmtChans = DevFmtStereo;
-            break;
-        case 4:
-            mDevice->FmtChans = DevFmtQuad;
-            break;
-        case 6:
-            mDevice->FmtChans = DevFmtX51;
-            break;
-        case 7:
-            mDevice->FmtChans = DevFmtX61;
-            break;
-        case 8:
-            mDevice->FmtChans = DevFmtX71;
-            break;
-        default:
-            ERR("Unhandled channel count (%d), using Stereo\n", streamFormat.mChannelsPerFrame);
-            mDevice->FmtChans = DevFmtStereo;
-            streamFormat.mChannelsPerFrame = 2;
-            break;
-    }
-    setDefaultWFXChannelOrder();
+     * to specify what we're giving? e.g. 6.0 vs 5.1
+     */
+    streamFormat.mChannelsPerFrame = mDevice->channelsFromFmt();
 
-    /* use channel count and sample rate from the default output unit's current
-     * parameters, but reset everything else */
     streamFormat.mFramesPerPacket = 1;
-    streamFormat.mFormatFlags = 0;
+    streamFormat.mFormatFlags = kAudioFormatFlagsNativeEndian | kLinearPCMFormatFlagIsPacked;
+    streamFormat.mFormatID = kAudioFormatLinearPCM;
     switch(mDevice->FmtType)
     {
         case DevFmtUByte:
             mDevice->FmtType = DevFmtByte;
             /* fall-through */
         case DevFmtByte:
-            streamFormat.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger;
+            streamFormat.mFormatFlags |= kLinearPCMFormatFlagIsSignedInteger;
             streamFormat.mBitsPerChannel = 8;
             break;
         case DevFmtUShort:
             mDevice->FmtType = DevFmtShort;
             /* fall-through */
         case DevFmtShort:
-            streamFormat.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger;
+            streamFormat.mFormatFlags |= kLinearPCMFormatFlagIsSignedInteger;
             streamFormat.mBitsPerChannel = 16;
             break;
         case DevFmtUInt:
             mDevice->FmtType = DevFmtInt;
             /* fall-through */
         case DevFmtInt:
-            streamFormat.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger;
+            streamFormat.mFormatFlags |= kLinearPCMFormatFlagIsSignedInteger;
             streamFormat.mBitsPerChannel = 32;
             break;
         case DevFmtFloat:
-            streamFormat.mFormatFlags = kLinearPCMFormatFlagIsFloat;
+            streamFormat.mFormatFlags |= kLinearPCMFormatFlagIsFloat;
             streamFormat.mBitsPerChannel = 32;
             break;
     }
-    streamFormat.mBytesPerFrame = streamFormat.mChannelsPerFrame *
-                                  streamFormat.mBitsPerChannel / 8;
-    streamFormat.mBytesPerPacket = streamFormat.mBytesPerFrame;
-    streamFormat.mFormatID = kAudioFormatLinearPCM;
-    streamFormat.mFormatFlags |= kAudioFormatFlagsNativeEndian |
-                                 kLinearPCMFormatFlagIsPacked;
+    streamFormat.mBytesPerFrame = streamFormat.mChannelsPerFrame*streamFormat.mBitsPerChannel/8;
+    streamFormat.mBytesPerPacket = streamFormat.mBytesPerFrame*streamFormat.mFramesPerPacket;
 
     err = AudioUnitSetProperty(mAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
-        0, &streamFormat, sizeof(AudioStreamBasicDescription));
+        0, &streamFormat, sizeof(streamFormat));
     if(err != noErr)
     {
         ERR("AudioUnitSetProperty failed\n");
         return false;
     }
+
+    setDefaultWFXChannelOrder();
 
     /* setup callback */
     mFrameSize = mDevice->frameSizeFromFmt();
@@ -626,45 +606,64 @@ OSStatus CoreAudioCapture::RecordProc(AudioUnitRenderActionFlags*,
 
 void CoreAudioCapture::open(const char *name)
 {
-    AudioStreamBasicDescription requestedFormat;  // The application requested format
-    AudioStreamBasicDescription hardwareFormat;   // The hardware format
-    AudioStreamBasicDescription outputFormat;     // The AudioUnit output format
-    AURenderCallbackStruct input;
-    AudioComponentDescription desc;
-    UInt32 propertySize;
-    UInt32 enableIO;
-    AudioComponent comp;
-    OSStatus err;
+#if CAN_ENUMERATE
+    AudioDeviceID audioDevice{kAudioDeviceUnknown};
+    if(!name)
+        GetHwProperty(kAudioHardwarePropertyDefaultInputDevice, sizeof(audioDevice),
+            &audioDevice);
+    else
+    {
+        if(CaptureList.empty())
+            EnumerateDevices(CaptureList, true);
 
+        auto find_name = [name](const DeviceEntry &entry) -> bool
+        { return entry.mName == name; };
+        auto devmatch = std::find_if(CaptureList.cbegin(), CaptureList.cend(), find_name);
+        if(devmatch == CaptureList.cend())
+            throw al::backend_exception{al::backend_error::NoDevice,
+                "Device name \"%s\" not found", name};
+
+        audioDevice = devmatch->mId;
+    }
+#else
     if(!name)
         name = ca_device;
     else if(strcmp(name, ca_device) != 0)
         throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%s\" not found",
             name};
+#endif
 
+    AudioComponentDescription desc{};
     desc.componentType = kAudioUnitType_Output;
-#if TARGET_OS_IOS || TARGET_OS_TV
-    desc.componentSubType = kAudioUnitSubType_RemoteIO;
+#if CAN_ENUMERATE
+    desc.componentSubType = (audioDevice == kAudioDeviceUnknown) ?
+        kAudioUnitSubType_DefaultOutput : kAudioUnitSubType_HALOutput;
 #else
-    desc.componentSubType = kAudioUnitSubType_HALOutput;
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
 #endif
     desc.componentManufacturer = kAudioUnitManufacturer_Apple;
     desc.componentFlags = 0;
     desc.componentFlagsMask = 0;
 
     // Search for component with given description
-    comp = AudioComponentFindNext(NULL, &desc);
+    AudioComponent comp{AudioComponentFindNext(NULL, &desc)};
     if(comp == NULL)
         throw al::backend_exception{al::backend_error::NoDevice, "Could not find audio component"};
 
     // Open the component
-    err = AudioComponentInstanceNew(comp, &mAudioUnit);
+    OSStatus err{AudioComponentInstanceNew(comp, &mAudioUnit)};
     if(err != noErr)
         throw al::backend_exception{al::backend_error::NoDevice,
             "Could not create component instance: %u", err};
 
+#if CAN_ENUMERATE
+    if(audioDevice != kAudioDeviceUnknown)
+        AudioUnitSetProperty(mAudioUnit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &audioDevice, sizeof(AudioDeviceID));
+#endif
+
     // Turn off AudioUnit output
-    enableIO = 0;
+    UInt32 enableIO{0};
     err = AudioUnitSetProperty(mAudioUnit, kAudioOutputUnitProperty_EnableIO,
         kAudioUnitScope_Output, 0, &enableIO, sizeof(enableIO));
     if(err != noErr)
@@ -679,28 +678,8 @@ void CoreAudioCapture::open(const char *name)
         throw al::backend_exception{al::backend_error::DeviceError,
             "Could not enable audio unit input property: %u", err};
 
-#if !TARGET_OS_IOS && !TARGET_OS_TV
-    {
-        // Get the default input device
-        AudioDeviceID defaultId{kAudioDeviceUnknown};
-        err = GetHwProperty(kAudioHardwarePropertyDefaultInputDevice, sizeof(defaultId),
-            &defaultId);
-        if(err != noErr)
-            throw al::backend_exception{al::backend_error::NoDevice,
-                "Could not get input device: %u", err};
-        if(defaultId == kAudioDeviceUnknown)
-            throw al::backend_exception{al::backend_error::NoDevice, "Unknown input device"};
-
-        // Track the input device
-        err = AudioUnitSetProperty(mAudioUnit, kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global, 0, &defaultId, sizeof(AudioDeviceID));
-        if(err != noErr)
-            throw al::backend_exception{al::backend_error::NoDevice,
-                "Could not set input device: %u", err};
-    }
-#endif
-
     // set capture callback
+    AURenderCallbackStruct input{};
     input.inputProc = CoreAudioCapture::RecordProcC;
     input.inputProcRefCon = this;
 
@@ -725,14 +704,16 @@ void CoreAudioCapture::open(const char *name)
             "Could not initialize audio unit: %u", err};
 
     // Get the hardware format
-    propertySize = sizeof(AudioStreamBasicDescription);
+    AudioStreamBasicDescription hardwareFormat{};
+    UInt32 propertySize{sizeof(hardwareFormat)};
     err = AudioUnitGetProperty(mAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
         1, &hardwareFormat, &propertySize);
-    if(err != noErr || propertySize != sizeof(AudioStreamBasicDescription))
+    if(err != noErr || propertySize != sizeof(hardwareFormat))
         throw al::backend_exception{al::backend_error::DeviceError,
             "Could not get input format: %u", err};
 
     // Set up the requested format description
+    AudioStreamBasicDescription requestedFormat{};
     switch(mDevice->FmtType)
     {
     case DevFmtByte:
@@ -745,7 +726,8 @@ void CoreAudioCapture::open(const char *name)
         break;
     case DevFmtShort:
         requestedFormat.mBitsPerChannel = 16;
-        requestedFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
+        requestedFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger
+            | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
         break;
     case DevFmtUShort:
         requestedFormat.mBitsPerChannel = 16;
@@ -753,7 +735,8 @@ void CoreAudioCapture::open(const char *name)
         break;
     case DevFmtInt:
         requestedFormat.mBitsPerChannel = 32;
-        requestedFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
+        requestedFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger
+            | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
         break;
     case DevFmtUInt:
         requestedFormat.mBitsPerChannel = 32;
@@ -761,7 +744,8 @@ void CoreAudioCapture::open(const char *name)
         break;
     case DevFmtFloat:
         requestedFormat.mBitsPerChannel = 32;
-        requestedFormat.mFormatFlags = kLinearPCMFormatFlagIsFloat | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked;
+        requestedFormat.mFormatFlags = kLinearPCMFormatFlagIsFloat | kAudioFormatFlagsNativeEndian
+            | kAudioFormatFlagIsPacked;
         break;
     }
 
@@ -776,7 +760,6 @@ void CoreAudioCapture::open(const char *name)
 
     case DevFmtQuad:
     case DevFmtX51:
-    case DevFmtX51Rear:
     case DevFmtX61:
     case DevFmtX71:
     case DevFmtAmbi3D:
@@ -797,7 +780,7 @@ void CoreAudioCapture::open(const char *name)
 
     // Use intermediate format for sample rate conversion (outputFormat)
     // Set sample rate to the same as hardware for resampling later
-    outputFormat = requestedFormat;
+    AudioStreamBasicDescription outputFormat{requestedFormat};
     outputFormat.mSampleRate = hardwareFormat.mSampleRate;
 
     // The output format should be the requested format, but using the hardware sample rate
@@ -836,7 +819,23 @@ void CoreAudioCapture::open(const char *name)
             mFormat.mChannelsPerFrame, static_cast<uint>(hardwareFormat.mSampleRate),
             mDevice->Frequency, Resampler::FastBSinc24);
 
+#if CAN_ENUMERATE
+    if(name)
+        mDevice->DeviceName = name;
+    else
+    {
+        UInt32 propSize{sizeof(audioDevice)};
+        audioDevice = kAudioDeviceUnknown;
+        AudioUnitGetProperty(mAudioUnit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &audioDevice, &propSize);
+
+        std::string devname{GetDeviceName(audioDevice)};
+        if(!devname.empty()) mDevice->DeviceName = std::move(devname);
+        else mDevice->DeviceName = "Unknown Device Name";
+    }
+#else
     mDevice->DeviceName = name;
+#endif
 }
 
 
@@ -901,27 +900,35 @@ bool CoreAudioBackendFactory::querySupport(BackendType type)
 std::string CoreAudioBackendFactory::probe(BackendType type)
 {
     std::string outnames;
+#if CAN_ENUMERATE
     auto append_name = [&outnames](const DeviceEntry &entry) -> void
     {
         /* Includes null char. */
         outnames.append(entry.mName.c_str(), entry.mName.length()+1);
     };
+    switch(type)
+    {
+    case BackendType::Playback:
+        EnumerateDevices(PlaybackList, false);
+        std::for_each(PlaybackList.cbegin(), PlaybackList.cend(), append_name);
+        break;
+    case BackendType::Capture:
+        EnumerateDevices(CaptureList, true);
+        std::for_each(CaptureList.cbegin(), CaptureList.cend(), append_name);
+        break;
+    }
+
+#else
 
     switch(type)
     {
     case BackendType::Playback:
-#if !TARGET_OS_IOS && !TARGET_OS_TV
-        EnumerateDevices(PlaybackList, false);
-        std::for_each(PlaybackList.cbegin(), PlaybackList.cend(), append_name);
-        break;
-#else
-        /*fall-through*/
-#endif
     case BackendType::Capture:
         /* Includes null char. */
         outnames.append(ca_device, sizeof(ca_device));
         break;
     }
+#endif
     return outnames;
 }
 

@@ -106,6 +106,9 @@
 #include "backends/base.h"
 #include "backends/null.h"
 #include "backends/loopback.h"
+#ifdef HAVE_PIPEWIRE
+#include "backends/pipewire.h"
+#endif
 #ifdef HAVE_JACK
 #include "backends/jack.h"
 #endif
@@ -197,14 +200,8 @@ struct BackendInfo {
 };
 
 BackendInfo BackendList[] = {
-#ifdef HAVE_JACK
-    { "jack", JackBackendFactory::getFactory },
-#endif
 #ifdef HAVE_PULSEAUDIO
     { "pulse", PulseBackendFactory::getFactory },
-#endif
-#ifdef HAVE_ALSA
-    { "alsa", AlsaBackendFactory::getFactory },
 #endif
 #ifdef HAVE_WASAPI
     { "wasapi", WasapiBackendFactory::getFactory },
@@ -224,6 +221,12 @@ BackendInfo BackendList[] = {
 #ifdef HAVE_SNDIO
     { "sndio", SndIOBackendFactory::getFactory },
 #endif
+#ifdef HAVE_JACK
+    { "jack", JackBackendFactory::getFactory },
+#endif
+#ifdef HAVE_ALSA
+    { "alsa", AlsaBackendFactory::getFactory },
+#endif
 #ifdef HAVE_OSS
     { "oss", OSSBackendFactory::getFactory },
 #endif
@@ -241,6 +244,9 @@ BackendInfo BackendList[] = {
 #endif
 
     { "null", NullBackendFactory::getFactory },
+#ifdef HAVE_PIPEWIRE
+    { "pipewire", PipeWireBackendFactory::getFactory },
+#endif
 #ifdef HAVE_WAVE
     { "wave", WaveBackendFactory::getFactory },
 #endif
@@ -1359,8 +1365,7 @@ ALCenum EnumFromDevFmt(DevFmtChannels channels)
     case DevFmtMono: return ALC_MONO_SOFT;
     case DevFmtStereo: return ALC_STEREO_SOFT;
     case DevFmtQuad: return ALC_QUAD_SOFT;
-    case DevFmtX51: /* fall-through */
-    case DevFmtX51Rear: return ALC_5POINT1_SOFT;
+    case DevFmtX51: return ALC_5POINT1_SOFT;
     case DevFmtX61: return ALC_6POINT1_SOFT;
     case DevFmtX71: return ALC_7POINT1_SOFT;
     case DevFmtAmbi3D: return ALC_BFORMAT3D_SOFT;
@@ -1443,11 +1448,6 @@ const std::array<InputRemixMap,3> X51Downmix{{
     { BackRight,  {{{SideLeft, 0.0f}, {SideRight, 1.0f}}} },
     { BackCenter, {{{SideLeft, 0.5f}, {SideRight, 0.5f}}} },
 }};
-const std::array<InputRemixMap,3> X51RearDownmix{{
-    { SideLeft,   {{{BackLeft, 1.0f}, {BackRight, 0.0f}}} },
-    { SideRight,  {{{BackLeft, 0.0f}, {BackRight, 1.0f}}} },
-    { BackCenter, {{{BackLeft, 0.5f}, {BackRight, 0.5f}}} },
-}};
 const std::array<InputRemixMap,2> X61Downmix{{
     { BackLeft,  {{{BackCenter, 0.5f}, {SideLeft,  0.5f}}} },
     { BackRight, {{{BackCenter, 0.5f}, {SideRight, 0.5f}}} },
@@ -1520,10 +1520,9 @@ static inline void UpdateClockBase(ALCdevice *device)
  */
 ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 {
-    HrtfRequestMode hrtf_userreq{Hrtf_Default};
-    HrtfRequestMode hrtf_appreq{Hrtf_Default};
     ALCenum gainLimiter{device->LimiterState};
     uint new_sends{device->NumAuxSends};
+    al::optional<bool> hrtfreq{};
     DevFmtChannels oldChans;
     DevFmtType oldType;
     int hrtf_id{-1};
@@ -1608,11 +1607,11 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             case ALC_HRTF_SOFT:
                 TRACE_ATTR(ALC_HRTF_SOFT, attrList[attrIdx + 1]);
                 if(attrList[attrIdx + 1] == ALC_FALSE)
-                    hrtf_appreq = Hrtf_Disable;
+                    hrtfreq = al::make_optional(false);
                 else if(attrList[attrIdx + 1] == ALC_TRUE)
-                    hrtf_appreq = Hrtf_Enable;
+                    hrtfreq = al::make_optional(true);
                 else
-                    hrtf_appreq = Hrtf_Default;
+                    hrtfreq = al::nullopt;
                 break;
 
             case ALC_HRTF_ID_SOFT:
@@ -1767,14 +1766,15 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         {
             const char *hrtf{hrtfopt->c_str()};
             if(al::strcasecmp(hrtf, "true") == 0)
-                hrtf_userreq = Hrtf_Enable;
+                hrtfreq = al::make_optional(true);
             else if(al::strcasecmp(hrtf, "false") == 0)
-                hrtf_userreq = Hrtf_Disable;
+                hrtfreq = al::make_optional(false);
             else if(al::strcasecmp(hrtf, "auto") != 0)
                 ERR("Unexpected hrtf value: %s\n", hrtf);
         }
 
-        if(hrtf_userreq == Hrtf_Enable || (hrtf_userreq != Hrtf_Disable && hrtf_appreq == Hrtf_Enable))
+        /* If the app or user wants HRTF, try to set stereo playback. */
+        if(hrtfreq && hrtfreq.value())
         {
             device->FmtChans = DevFmtStereo;
             device->Flags.set(ChannelsRequest);
@@ -1830,13 +1830,12 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
     case DevFmtStereo: device->RealOut.RemixMap = StereoDownmix; break;
     case DevFmtQuad: device->RealOut.RemixMap = QuadDownmix; break;
     case DevFmtX51: device->RealOut.RemixMap = X51Downmix; break;
-    case DevFmtX51Rear: device->RealOut.RemixMap = X51RearDownmix; break;
     case DevFmtX61: device->RealOut.RemixMap = X61Downmix; break;
     case DevFmtX71: device->RealOut.RemixMap = X71Downmix; break;
     case DevFmtAmbi3D: break;
     }
 
-    aluInitRenderer(device, hrtf_id, hrtf_appreq, hrtf_userreq);
+    aluInitRenderer(device, hrtf_id, hrtfreq);
 
     device->NumAuxSends = new_sends;
     TRACE("Max sources: %d (%d + %d), effect slots: %d, sends: %d\n",
@@ -3180,7 +3179,7 @@ START_API_FUNC
             { "surround51", DevFmtX51,    0 },
             { "surround61", DevFmtX61,    0 },
             { "surround71", DevFmtX71,    0 },
-            { "surround51rear", DevFmtX51Rear, 0 },
+            { "surround51rear", DevFmtX51, 0 },
             { "ambi1", DevFmtAmbi3D, 1 },
             { "ambi2", DevFmtAmbi3D, 2 },
             { "ambi3", DevFmtAmbi3D, 3 },

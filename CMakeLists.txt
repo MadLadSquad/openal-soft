@@ -72,7 +72,10 @@ include(CheckCXXCompilerFlag)
 include(CheckCSourceCompiles)
 include(CheckCXXSourceCompiles)
 include(CheckStructHasMember)
+include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
+
+find_package(PkgConfig)
 
 
 option(ALSOFT_DLOPEN  "Check for the dlopen API for loading optional libs"  ON)
@@ -118,7 +121,7 @@ set(LINKER_FLAGS )
 set(EXTRA_LIBS )
 
 if(WIN32)
-    set(CPP_DEFS ${CPP_DEFS} _WIN32)
+    set(CPP_DEFS ${CPP_DEFS} _WIN32 NOMINMAX)
     if(MINGW)
         set(CPP_DEFS ${CPP_DEFS} __USE_MINGW_ANSI_STDIO)
     endif()
@@ -207,7 +210,7 @@ if(HAVE_LIBLOG)
 endif()
 
 if(MSVC)
-    set(CPP_DEFS ${CPP_DEFS} _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    set(CPP_DEFS ${CPP_DEFS} _CRT_SECURE_NO_WARNINGS)
     check_cxx_compiler_flag(/permissive- HAVE_PERMISSIVE_SWITCH)
     if(HAVE_PERMISSIVE_SWITCH)
         set(C_FLAGS ${C_FLAGS} $<$<COMPILE_LANGUAGE:CXX>:/permissive->)
@@ -708,7 +711,7 @@ set(CORE_OBJS
 
 set(HAVE_RTKIT 0)
 option(ALSOFT_REQUIRE_RTKIT "Require RTKit/D-Bus support" FALSE)
-find_package(DBus1)
+find_package(DBus1 QUIET)
 if(DBus1_FOUND)
     option(ALSOFT_RTKIT "Enable RTKit support" ON)
     if(ALSOFT_RTKIT)
@@ -721,6 +724,16 @@ if(DBus1_FOUND)
             set(EXTRA_LIBS ${EXTRA_LIBS} ${DBus1_LIBRARIES})
         endif()
     endif()
+else()
+    set(MISSING_VARS "")
+    if(NOT DBus1_INCLUDE_DIRS)
+        set(MISSING_VARS "${MISSING_VARS} DBus1_INCLUDE_DIRS")
+    endif()
+    if(NOT DBus1_LIBRARIES)
+        set(MISSING_VARS "${MISSING_VARS} DBus1_LIBRARIES")
+    endif()
+    message(STATUS "Could NOT find DBus1 (missing:${MISSING_VARS})")
+    unset(MISSING_VARS)
 endif()
 if(ALSOFT_REQUIRE_RTKIT AND NOT HAVE_RTKIT)
     message(FATAL_ERROR "Failed to enabled required RTKit support")
@@ -825,6 +838,7 @@ endif()
 
 set(HAVE_ALSA       0)
 set(HAVE_OSS        0)
+set(HAVE_PIPEWIRE   0)
 set(HAVE_SOLARIS    0)
 set(HAVE_SNDIO      0)
 set(HAVE_DSOUND     0)
@@ -894,6 +908,24 @@ if(OSS_FOUND)
 endif()
 if(ALSOFT_REQUIRE_OSS AND NOT HAVE_OSS)
     message(FATAL_ERROR "Failed to enabled required OSS backend")
+endif()
+
+# Check PipeWire backend
+option(ALSOFT_REQUIRE_PIPEWIRE "Require PipeWire backend" OFF)
+if(PkgConfig_FOUND)
+    pkg_check_modules(PIPEWIRE libpipewire-0.3)
+    if(PIPEWIRE_FOUND)
+        option(ALSOFT_BACKEND_PIPEWIRE "Enable PipeWire backend" ON)
+        if(ALSOFT_BACKEND_PIPEWIRE)
+            set(HAVE_PIPEWIRE 1)
+            set(BACKENDS  "${BACKENDS} PipeWire,")
+            set(ALC_OBJS  ${ALC_OBJS} alc/backends/pipewire.cpp alc/backends/pipewire.h)
+            set(INC_PATHS ${INC_PATHS} ${PIPEWIRE_INCLUDE_DIRS})
+        endif()
+    endif()
+endif()
+if(ALSOFT_REQUIRE_PIPEWIRE AND NOT HAVE_PIPEWIRE)
+    message(FATAL_ERROR "Failed to enabled required PipeWire backend")
 endif()
 
 # Check Solaris backend
@@ -1198,7 +1230,10 @@ endif()
 if(ALSOFT_UTILS)
     find_package(MySOFA)
     if(NOT ALSOFT_NO_CONFIG_UTIL)
-        find_package(Qt5Widgets)
+        find_package(Qt5Widgets QUIET)
+        if(NOT Qt5Widgets_FOUND)
+            message(STATUS "Could NOT find Qt5Widgets")
+        endif()
     endif()
 endif()
 if(ALSOFT_UTILS OR ALSOFT_EXAMPLES)
@@ -1289,7 +1324,7 @@ else()
         target_include_directories(OpenAL
           PUBLIC
             $<BUILD_INTERFACE:${OpenAL_SOURCE_DIR}/include>
-            $<INSTALL_INTERFACE:include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
           PRIVATE
             ${OpenAL_SOURCE_DIR}/common
             ${OpenAL_BINARY_DIR}
@@ -1354,7 +1389,10 @@ endif()
 target_include_directories(${IMPL_TARGET}
   PUBLIC
     $<BUILD_INTERFACE:${OpenAL_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+  INTERFACE
+    $<BUILD_INTERFACE:${OpenAL_SOURCE_DIR}/include/AL>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/AL>
   PRIVATE
     ${INC_PATHS}
     ${OpenAL_BINARY_DIR}
@@ -1421,6 +1459,8 @@ endif()
 
 # Install main library
 if(ALSOFT_INSTALL)
+    configure_package_config_file(OpenALConfig.cmake.in OpenALConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenAL)
     install(TARGETS OpenAL EXPORT OpenAL
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -1429,15 +1469,17 @@ if(ALSOFT_INSTALL)
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} ${CMAKE_INSTALL_INCLUDEDIR}/AL)
     export(TARGETS OpenAL
         NAMESPACE OpenAL::
-        FILE OpenALConfig.cmake)
+        FILE OpenALTargets.cmake)
     install(EXPORT OpenAL
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenAL
         NAMESPACE OpenAL::
-        FILE OpenALConfig.cmake)
+        FILE OpenALTargets.cmake)
     install(DIRECTORY include/AL
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES "${OpenAL_BINARY_DIR}/openal.pc"
         DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+    install(FILES "${OpenAL_BINARY_DIR}/OpenALConfig.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/OpenAL")
     if(TARGET soft_oal)
         install(TARGETS soft_oal
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -1487,6 +1529,14 @@ if(ALSOFT_UTILS)
             PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
         target_compile_options(uhjdecoder PRIVATE ${C_FLAGS})
         target_link_libraries(uhjdecoder PUBLIC common
+            PRIVATE ${LINKER_FLAGS} SndFile::SndFile ${UNICODE_FLAG})
+
+        add_executable(uhjencoder utils/uhjencoder.cpp)
+        target_compile_definitions(uhjencoder PRIVATE ${CPP_DEFS})
+        target_include_directories(uhjencoder
+            PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
+        target_compile_options(uhjencoder PRIVATE ${C_FLAGS})
+        target_link_libraries(uhjencoder PUBLIC common
             PRIVATE ${LINKER_FLAGS} SndFile::SndFile ${UNICODE_FLAG})
     endif()
 

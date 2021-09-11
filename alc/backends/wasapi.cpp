@@ -47,6 +47,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <future>
@@ -119,7 +120,8 @@ constexpr DWORD X51RearMask{MaskFromTopBits(X5DOT1REAR)};
 constexpr DWORD X61Mask{MaskFromTopBits(X6DOT1)};
 constexpr DWORD X71Mask{MaskFromTopBits(X7DOT1)};
 
-#define DEVNAME_HEAD "OpenAL Soft on "
+constexpr char DevNameHead[] = "OpenAL Soft on ";
+constexpr size_t DevNameHeadLen{al::size(DevNameHead) - 1};
 
 
 /* Scales the given reftime value, rounding the result. */
@@ -190,8 +192,7 @@ NameGUIDPair get_device_name_and_guid(IMMDevice *device)
 {
     static constexpr char UnknownName[]{"Unknown Device Name"};
     static constexpr char UnknownGuid[]{"Unknown Device GUID"};
-    std::string name{DEVNAME_HEAD};
-    std::string guid;
+    std::string name, guid;
 
     ComPtr<IPropertyStore> ps;
     HRESULT hr = device->OpenPropertyStore(STGM_READ, ps.getPtr());
@@ -751,8 +752,17 @@ void WasapiPlayback::open(const char *name)
 
     if(SUCCEEDED(hr))
     {
-        if(name && PlaybackDevices.empty())
-            pushMessage(MsgType::EnumeratePlayback).wait();
+        if(name)
+        {
+            if(PlaybackDevices.empty())
+                pushMessage(MsgType::EnumeratePlayback);
+            if(std::strncmp(name, DevNameHead, DevNameHeadLen) == 0)
+            {
+                name += DevNameHeadLen;
+                if(*name == '\0')
+                    name = nullptr;
+            }
+        }
 
         if(SUCCEEDED(mOpenStatus))
             hr = pushMessage(MsgType::ReopenDevice, name).get();
@@ -812,8 +822,8 @@ HRESULT WasapiPlayback::openProxy(const char *name)
 
     mClient = nullptr;
     mMMDev = std::move(mmdev);
-    if(name) mDevice->DeviceName = name;
-    else mDevice->DeviceName = get_device_name_and_guid(mMMDev.get()).first;
+    if(name) mDevice->DeviceName = std::string{DevNameHead} + name;
+    else mDevice->DeviceName = DevNameHead + get_device_name_and_guid(mMMDev.get()).first;
 
     return hr;
 }
@@ -876,10 +886,9 @@ HRESULT WasapiPlayback::resetProxy()
             mDevice->FmtChans = DevFmtX71;
         else if(chancount >= 7 && (chanmask&X61Mask) == X6DOT1)
             mDevice->FmtChans = DevFmtX61;
-        else if(chancount >= 6 && (chanmask&X51Mask) == X5DOT1)
+        else if(chancount >= 6 && ((chanmask&X51Mask) == X5DOT1
+            || (chanmask&X51RearMask) == X5DOT1REAR))
             mDevice->FmtChans = DevFmtX51;
-        else if(chancount >= 6 && (chanmask&X51RearMask) == X5DOT1REAR)
-            mDevice->FmtChans = DevFmtX51Rear;
         else if(chancount >= 4 && (chanmask&QuadMask) == QUAD)
             mDevice->FmtChans = DevFmtQuad;
         else if(chancount >= 2 && (chanmask&StereoMask) == STEREO)
@@ -911,10 +920,6 @@ HRESULT WasapiPlayback::resetProxy()
     case DevFmtX51:
         OutputType.Format.nChannels = 6;
         OutputType.dwChannelMask = X5DOT1;
-        break;
-    case DevFmtX51Rear:
-        OutputType.Format.nChannels = 6;
-        OutputType.dwChannelMask = X5DOT1REAR;
         break;
     case DevFmtX61:
         OutputType.Format.nChannels = 7;
@@ -995,10 +1000,9 @@ HRESULT WasapiPlayback::resetProxy()
             mDevice->FmtChans = DevFmtX71;
         else if(chancount >= 7 && (chanmask&X61Mask) == X6DOT1)
             mDevice->FmtChans = DevFmtX61;
-        else if(chancount >= 6 && (chanmask&X51Mask) == X5DOT1)
+        else if(chancount >= 6 && ((chanmask&X51Mask) == X5DOT1
+            || (chanmask&X51RearMask) == X5DOT1REAR))
             mDevice->FmtChans = DevFmtX51;
-        else if(chancount >= 6 && (chanmask&X51RearMask) == X5DOT1REAR)
-            mDevice->FmtChans = DevFmtX51Rear;
         else if(chancount >= 4 && (chanmask&QuadMask) == QUAD)
             mDevice->FmtChans = DevFmtQuad;
         else if(chancount >= 2 && (chanmask&StereoMask) == STEREO)
@@ -1311,8 +1315,17 @@ void WasapiCapture::open(const char *name)
 
     if(SUCCEEDED(hr))
     {
-        if(name && CaptureDevices.empty())
-            pushMessage(MsgType::EnumerateCapture).wait();
+        if(name)
+        {
+            if(CaptureDevices.empty())
+                pushMessage(MsgType::EnumerateCapture);
+            if(std::strncmp(name, DevNameHead, DevNameHeadLen) == 0)
+            {
+                name += DevNameHeadLen;
+                if(*name == '\0')
+                    name = nullptr;
+            }
+        }
         hr = pushMessage(MsgType::OpenDevice, name).get();
     }
     mOpenStatus = hr;
@@ -1372,8 +1385,8 @@ HRESULT WasapiCapture::openProxy(const char *name)
     }
 
     mClient = nullptr;
-    if(name) mDevice->DeviceName = name;
-    else mDevice->DeviceName = get_device_name_and_guid(mMMDev.get()).first;
+    if(name) mDevice->DeviceName = std::string{DevNameHead} + name;
+    else mDevice->DeviceName = DevNameHead + get_device_name_and_guid(mMMDev.get()).first;
 
     return hr;
 }
@@ -1420,10 +1433,6 @@ HRESULT WasapiCapture::resetProxy()
     case DevFmtX51:
         InputType.Format.nChannels = 6;
         InputType.dwChannelMask = X5DOT1;
-        break;
-    case DevFmtX51Rear:
-        InputType.Format.nChannels = 6;
-        InputType.dwChannelMask = X5DOT1REAR;
         break;
     case DevFmtX61:
         InputType.Format.nChannels = 7;
@@ -1509,14 +1518,14 @@ HRESULT WasapiCapture::resetProxy()
                 return (chancount == 4 && (chanmask == 0 || (chanmask&QuadMask) == QUAD));
             /* 5.1 (Side) and 5.1 (Rear) are interchangeable here. */
             case DevFmtX51:
-            case DevFmtX51Rear:
                 return (chancount == 6 && (chanmask == 0 || (chanmask&X51Mask) == X5DOT1
                         || (chanmask&X51RearMask) == X5DOT1REAR));
             case DevFmtX61:
                 return (chancount == 7 && (chanmask == 0 || (chanmask&X61Mask) == X6DOT1));
             case DevFmtX71:
                 return (chancount == 8 && (chanmask == 0 || (chanmask&X71Mask) == X7DOT1));
-            case DevFmtAmbi3D: return (chanmask == 0 && device->channelsFromFmt());
+            case DevFmtAmbi3D:
+                return (chanmask == 0 && chancount == device->channelsFromFmt());
             }
             return false;
         };
@@ -1733,24 +1742,23 @@ bool WasapiBackendFactory::querySupport(BackendType type)
 std::string WasapiBackendFactory::probe(BackendType type)
 {
     std::string outnames;
-    auto add_device = [&outnames](const DevMap &entry) -> void
-    {
-        /* +1 to also append the null char (to ensure a null-separated list and
-         * double-null terminated list).
-         */
-        outnames.append(entry.name.c_str(), entry.name.length()+1);
-    };
-
     switch(type)
     {
     case BackendType::Playback:
         WasapiProxy::pushMessageStatic(MsgType::EnumeratePlayback).wait();
-        std::for_each(PlaybackDevices.cbegin(), PlaybackDevices.cend(), add_device);
+        for(const DevMap &entry : PlaybackDevices)
+        {
+            /* +1 to also append the null char (to ensure a null-separated list
+             * and double-null terminated list).
+             */
+            outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
+        }
         break;
 
     case BackendType::Capture:
         WasapiProxy::pushMessageStatic(MsgType::EnumerateCapture).wait();
-        std::for_each(CaptureDevices.cbegin(), CaptureDevices.cend(), add_device);
+        for(const DevMap &entry : CaptureDevices)
+            outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
         break;
     }
 

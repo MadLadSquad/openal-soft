@@ -306,6 +306,8 @@ inline auto& GetAmbiLayout(DevAmbiLayout layouttype) noexcept
 DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
     DecoderConfig<DualBand, MAX_OUTPUT_CHANNELS> &decoder)
 {
+    DecoderView ret{};
+
     decoder.mOrder = (conf->ChanMask > Ambi2OrderMask) ? uint8_t{3} :
         (conf->ChanMask > Ambi1OrderMask) ? uint8_t{2} : uint8_t{1};
     decoder.mIs3D = (conf->ChanMask&AmbiPeriphonicMask) != 0;
@@ -324,11 +326,9 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
         std::min(al::size(conf->LFOrderGain), al::size(decoder.mOrderGainLF)),
         std::begin(decoder.mOrderGainLF));
 
-    const uint8_t *acnmap{};
     std::array<uint8_t,MaxAmbiChannels> idx_map{};
     if(decoder.mIs3D)
     {
-        acnmap = AmbiIndex::FromACN().data();
         uint flags{conf->ChanMask};
         auto elem = idx_map.begin();
         while(flags)
@@ -342,7 +342,6 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
     }
     else
     {
-        acnmap = AmbiIndex::FromACN2D().data();
         uint flags{conf->ChanMask};
         auto elem = idx_map.begin();
         while(flags)
@@ -359,7 +358,7 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
             case 8: *elem = 4; break;
             case 9: *elem = 5; break;
             case 15: *elem = 6; break;
-            default: return DecoderView{};
+            default: return ret;
             }
             ++elem;
         }
@@ -400,9 +399,9 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
         else if(speaker.Name == "CE")
             ch = FrontCenter;
         else if(speaker.Name == "LS")
-            ch = (device->FmtChans == DevFmtX51Rear) ? BackLeft : SideLeft;
+            ch = SideLeft;
         else if(speaker.Name == "RS")
-            ch = (device->FmtChans == DevFmtX51Rear) ? BackRight : SideRight;
+            ch = SideRight;
         else if(speaker.Name == "LB")
             ch = (device->FmtChans == DevFmtX51) ? SideLeft : BackLeft;
         else if(speaker.Name == "RB")
@@ -432,7 +431,6 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
         ++chan_count;
     }
 
-    DecoderView ret{};
     if(chan_count > 0)
     {
         ret.mOrder = decoder.mOrder;
@@ -502,26 +500,6 @@ constexpr DecoderConfig<DualBand, 5> X51Config{
         {{4.90109850e-1f, -3.77305010e-1f, -3.73106990e-1f,  1.25914530e-1f,  1.45133000e-2f}},
     }}
 };
-constexpr DecoderConfig<DualBand, 5> X51RearConfig{
-    2, false, {{BackLeft, FrontLeft, FrontCenter, FrontRight, BackRight}},
-    DevAmbiScaling::FuMa,
-    /*HF*/{{1.00000000e+0f, 1.00000000e+0f, 1.00000000e+0f}},
-    {{
-        {{5.67316000e-1f,  4.22920000e-1f, -3.15495000e-1f, -6.34490000e-2f, -2.92380000e-2f}},
-        {{3.68584000e-1f,  2.72349000e-1f,  3.21616000e-1f,  1.92645000e-1f,  4.82600000e-2f}},
-        {{1.83579000e-1f,  0.00000000e+0f,  1.99588000e-1f,  0.00000000e+0f,  9.62820000e-2f}},
-        {{3.68584000e-1f, -2.72349000e-1f,  3.21616000e-1f, -1.92645000e-1f,  4.82600000e-2f}},
-        {{5.67316000e-1f, -4.22920000e-1f, -3.15495000e-1f,  6.34490000e-2f, -2.92380000e-2f}},
-    }},
-    /*LF*/{{1.00000000e+0f, 1.00000000e+0f, 1.00000000e+0f}},
-    {{
-        {{4.90109850e-1f,  3.77305010e-1f, -3.73106990e-1f, -1.25914530e-1f,  1.45133000e-2f}},
-        {{1.49085730e-1f,  3.03561680e-1f,  1.53290060e-1f,  2.45112480e-1f, -1.50753130e-1f}},
-        {{1.37654920e-1f,  0.00000000e+0f,  4.49417940e-1f,  0.00000000e+0f,  2.57844070e-1f}},
-        {{1.49085730e-1f, -3.03561680e-1f,  1.53290060e-1f, -2.45112480e-1f, -1.50753130e-1f}},
-        {{4.90109850e-1f, -3.77305010e-1f, -3.73106990e-1f,  1.25914530e-1f,  1.45133000e-2f}},
-    }}
-};
 constexpr DecoderConfig<SingleBand, 5> X61Config{
     2, false, {{SideLeft, FrontLeft, FrontRight, SideRight, BackCenter}},
     DevAmbiScaling::N3D,
@@ -568,7 +546,6 @@ void InitPanning(ALCdevice *device, const bool hqdec=false, const bool stablize=
         case DevFmtStereo: decoder = StereoConfig; break;
         case DevFmtQuad: decoder = QuadConfig; break;
         case DevFmtX51: decoder = X51Config; break;
-        case DevFmtX51Rear: decoder = X51RearConfig; break;
         case DevFmtX61: decoder = X61Config; break;
         case DevFmtX71: decoder = X71Config; break;
         case DevFmtAmbi3D:
@@ -844,14 +821,13 @@ void InitUhjPanning(ALCdevice *device)
     auto acnmap_begin = AmbiIndex::FromFuMa().begin();
     std::transform(acnmap_begin, acnmap_begin + count, std::begin(device->Dry.AmbiMap),
         [](const uint8_t &acn) noexcept -> BFChannelConfig
-        { return BFChannelConfig{1.0f/AmbiScale::FromFuMa()[acn], acn}; });
+        { return BFChannelConfig{1.0f/AmbiScale::FromUHJ()[acn], acn}; });
     AllocChannels(device, count, device->channelsFromFmt());
 }
 
 } // namespace
 
-void aluInitRenderer(ALCdevice *device, int hrtf_id, HrtfRequestMode hrtf_appreq,
-    HrtfRequestMode hrtf_userreq)
+void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
 {
     /* Hold the HRTF the device last used, in case it's used again. */
     HrtfStorePtr old_hrtf{std::move(device->mHrtf)};
@@ -866,15 +842,14 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, HrtfRequestMode hrtf_appreq
     if(device->FmtChans != DevFmtStereo)
     {
         old_hrtf = nullptr;
-        if(hrtf_appreq == Hrtf_Enable)
+        if(hrtfreq && hrtfreq.value())
             device->mHrtfStatus = ALC_HRTF_UNSUPPORTED_FORMAT_SOFT;
 
         const char *layout{nullptr};
         switch(device->FmtChans)
         {
         case DevFmtQuad: layout = "quad"; break;
-        case DevFmtX51: /* fall-through */
-        case DevFmtX51Rear: layout = "surround51"; break;
+        case DevFmtX51: layout = "surround51"; break;
         case DevFmtX61: layout = "surround61"; break;
         case DevFmtX71: layout = "surround71"; break;
         /* Mono, Stereo, and Ambisonics output don't use custom decoders. */
@@ -966,76 +941,58 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, HrtfRequestMode hrtf_appreq
         }
     }
 
-    if(hrtf_userreq == Hrtf_Default)
+    /* If there's no request for HRTF and the device is headphones, or if HRTF
+     * is explicitly requested, try to enable it.
+     */
+    if((!hrtfreq && headphones) || (hrtfreq && hrtfreq.value()))
     {
-        bool usehrtf = (headphones && hrtf_appreq != Hrtf_Disable) ||
-                       (hrtf_appreq == Hrtf_Enable);
-        if(!usehrtf) goto no_hrtf;
+        if(device->mHrtfList.empty())
+            device->enumerateHrtfs();
 
-        device->mHrtfStatus = ALC_HRTF_ENABLED_SOFT;
-        if(headphones && hrtf_appreq != Hrtf_Disable)
-            device->mHrtfStatus = ALC_HRTF_HEADPHONES_DETECTED_SOFT;
-    }
-    else
-    {
-        if(hrtf_userreq != Hrtf_Enable)
+        if(hrtf_id >= 0 && static_cast<uint>(hrtf_id) < device->mHrtfList.size())
         {
-            if(hrtf_appreq == Hrtf_Enable)
-                device->mHrtfStatus = ALC_HRTF_DENIED_SOFT;
-            goto no_hrtf;
-        }
-        device->mHrtfStatus = ALC_HRTF_REQUIRED_SOFT;
-    }
-
-    if(device->mHrtfList.empty())
-        device->enumerateHrtfs();
-
-    if(hrtf_id >= 0 && static_cast<uint>(hrtf_id) < device->mHrtfList.size())
-    {
-        const std::string &hrtfname = device->mHrtfList[static_cast<uint>(hrtf_id)];
-        if(HrtfStorePtr hrtf{GetLoadedHrtf(hrtfname, device->Frequency)})
-        {
-            device->mHrtf = std::move(hrtf);
-            device->mHrtfName = hrtfname;
-        }
-    }
-
-    if(!device->mHrtf)
-    {
-        for(const auto &hrtfname : device->mHrtfList)
-        {
+            const std::string &hrtfname = device->mHrtfList[static_cast<uint>(hrtf_id)];
             if(HrtfStorePtr hrtf{GetLoadedHrtf(hrtfname, device->Frequency)})
             {
                 device->mHrtf = std::move(hrtf);
                 device->mHrtfName = hrtfname;
-                break;
             }
         }
-    }
 
-    if(device->mHrtf)
-    {
-        old_hrtf = nullptr;
-
-        HrtfStore *hrtf{device->mHrtf.get()};
-        device->mIrSize = hrtf->irSize;
-        if(auto hrtfsizeopt = device->configValue<uint>(nullptr, "hrtf-size"))
+        if(!device->mHrtf)
         {
-            if(*hrtfsizeopt > 0 && *hrtfsizeopt < device->mIrSize)
-                device->mIrSize = maxu(*hrtfsizeopt, MinIrLength);
+            for(const auto &hrtfname : device->mHrtfList)
+            {
+                if(HrtfStorePtr hrtf{GetLoadedHrtf(hrtfname, device->Frequency)})
+                {
+                    device->mHrtf = std::move(hrtf);
+                    device->mHrtfName = hrtfname;
+                    break;
+                }
+            }
         }
 
-        InitHrtfPanning(device);
-        device->PostProcess = &ALCdevice::ProcessHrtf;
-        return;
-    }
-    device->mHrtfStatus = ALC_HRTF_UNSUPPORTED_FORMAT_SOFT;
+        if(device->mHrtf)
+        {
+            old_hrtf = nullptr;
 
-no_hrtf:
+            HrtfStore *hrtf{device->mHrtf.get()};
+            device->mIrSize = hrtf->irSize;
+            if(auto hrtfsizeopt = device->configValue<uint>(nullptr, "hrtf-size"))
+            {
+                if(*hrtfsizeopt > 0 && *hrtfsizeopt < device->mIrSize)
+                    device->mIrSize = maxu(*hrtfsizeopt, MinIrLength);
+            }
+
+            InitHrtfPanning(device);
+            device->PostProcess = &ALCdevice::ProcessHrtf;
+            device->mHrtfStatus = ALC_HRTF_ENABLED_SOFT;
+            return;
+        }
+    }
     old_hrtf = nullptr;
 
     device->mRenderMode = RenderMode::Pairwise;
-
     if(device->Type != DeviceType::Loopback)
     {
         if(auto cflevopt = device->configValue<int>(nullptr, "cf_level"))
