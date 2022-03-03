@@ -46,6 +46,13 @@
 #include "opthelpers.h"
 #include "strutils.h"
 
+#ifdef ALSOFT_EAX
+#include "alc/device.h"
+
+#include "eax_globals.h"
+#include "eax_x_ram.h"
+#endif // ALSOFT_EAX
+
 
 namespace {
 
@@ -140,10 +147,10 @@ START_API_FUNC
 END_API_FUNC
 
 #define DO_UPDATEPROPS() do {                                                 \
-    if(!context->mDeferUpdates.load(std::memory_order_acquire))               \
+    if(!context->mDeferUpdates)                                               \
         UpdateContextProps(context.get());                                    \
     else                                                                      \
-        context->mPropsDirty.set(std::memory_order_release);                  \
+        context->mPropsDirty = true;                                          \
 } while(0)
 
 
@@ -256,7 +263,7 @@ START_API_FUNC
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates.load(std::memory_order_acquire))
+        if(context->mDeferUpdates)
             value = AL_TRUE;
         break;
 
@@ -309,7 +316,7 @@ START_API_FUNC
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates.load(std::memory_order_acquire))
+        if(context->mDeferUpdates)
             value = static_cast<ALdouble>(AL_TRUE);
         break;
 
@@ -360,7 +367,7 @@ START_API_FUNC
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates.load(std::memory_order_acquire))
+        if(context->mDeferUpdates)
             value = static_cast<ALfloat>(AL_TRUE);
         break;
 
@@ -411,7 +418,7 @@ START_API_FUNC
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates.load(std::memory_order_acquire))
+        if(context->mDeferUpdates)
             value = AL_TRUE;
         break;
 
@@ -426,6 +433,41 @@ START_API_FUNC
     case AL_DEFAULT_RESAMPLER_SOFT:
         value = static_cast<int>(ResamplerDefault);
         break;
+
+#ifdef ALSOFT_EAX
+
+#define EAX_ERROR "[alGetInteger] EAX not enabled."
+
+    case AL_EAX_RAM_SIZE:
+        if (eax_g_is_enabled)
+        {
+            value = eax_x_ram_max_size;
+        }
+        else
+        {
+            context->setError(AL_INVALID_VALUE, EAX_ERROR);
+        }
+
+        break;
+
+    case AL_EAX_RAM_FREE:
+        if (eax_g_is_enabled)
+        {
+            auto device = context->mALDevice.get();
+            std::lock_guard<std::mutex> device_lock{device->BufferLock};
+
+            value = device->eax_x_ram_free_size;
+        }
+        else
+        {
+            context->setError(AL_INVALID_VALUE, EAX_ERROR);
+        }
+
+        break;
+
+#undef EAX_ERROR
+
+#endif // ALSOFT_EAX
 
     default:
         context->setError(AL_INVALID_VALUE, "Invalid integer property 0x%04x", pname);
@@ -462,7 +504,7 @@ START_API_FUNC
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates.load(std::memory_order_acquire))
+        if(context->mDeferUpdates)
             value = AL_TRUE;
         break;
 
@@ -836,6 +878,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
+    std::lock_guard<std::mutex> _{context->mPropLock};
     context->deferUpdates();
 }
 END_API_FUNC
@@ -846,6 +889,7 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if UNLIKELY(!context) return;
 
+    std::lock_guard<std::mutex> _{context->mPropLock};
     context->processUpdates();
 }
 END_API_FUNC
@@ -891,6 +935,14 @@ void UpdateContextProps(ALCcontext *context)
     }
 
     /* Copy in current property values. */
+    ALlistener &listener = context->mListener;
+    props->Position = listener.Position;
+    props->Velocity = listener.Velocity;
+    props->OrientAt = listener.OrientAt;
+    props->OrientUp = listener.OrientUp;
+    props->Gain = listener.Gain;
+    props->MetersPerUnit = listener.mMetersPerUnit;
+
     props->DopplerFactor = context->mDopplerFactor;
     props->DopplerVelocity = context->mDopplerVelocity;
     props->SpeedOfSound = context->mSpeedOfSound;

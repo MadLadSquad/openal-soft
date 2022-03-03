@@ -95,6 +95,8 @@ option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)
 option(ALSOFT_INSTALL_UTILS "Install utility programs (openal-info, alsoft-config, ...)" OFF)
 option(ALSOFT_UPDATE_BUILD_VERSION "Update git build version info" ON)
 
+option(ALSOFT_EAX "Enable legacy EAX extensions" ${WIN32})
+
 if(DEFINED SHARE_INSTALL_DIR)
     message(WARNING "SHARE_INSTALL_DIR is deprecated.  Use the variables provided by the GNUInstallDirs module instead")
     set(CMAKE_INSTALL_DATADIR "${SHARE_INSTALL_DIR}")
@@ -202,11 +204,13 @@ else()
 endif()
 unset(OLD_REQUIRED_LIBRARIES)
 
-# Include liblog for Android logging
-check_library_exists(log __android_log_print "" HAVE_LIBLOG)
-if(HAVE_LIBLOG)
-    set(EXTRA_LIBS log ${EXTRA_LIBS})
-    set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} log)
+if(ANDROID)
+    # Include liblog for Android logging
+    check_library_exists(log __android_log_print "" HAVE_LIBLOG)
+    if(HAVE_LIBLOG)
+        set(EXTRA_LIBS log ${EXTRA_LIBS})
+        set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} log)
+    endif()
 endif()
 
 if(MSVC)
@@ -215,7 +219,7 @@ if(MSVC)
     if(HAVE_PERMISSIVE_SWITCH)
         set(C_FLAGS ${C_FLAGS} $<$<COMPILE_LANGUAGE:CXX>:/permissive->)
     endif()
-    set(C_FLAGS ${C_FLAGS} /W4 /w14640 /wd4065 /wd4268 /wd4324 /wd5030)
+    set(C_FLAGS ${C_FLAGS} /W4 /w14640 /wd4065 /wd4127 /wd4268 /wd4324 /wd5030)
     # Remove /W3, which is added by default, since we set /W4. Some build
     # generators with MSVC complain about both /W3 and /W4 being specified.
     foreach(flag_var  CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
@@ -562,51 +566,11 @@ if(NOT WIN32)
         check_symbol_exists(pthread_setname_np "pthread.h;pthread_np.h" HAVE_PTHREAD_SETNAME_NP)
         if(NOT HAVE_PTHREAD_SETNAME_NP)
             check_symbol_exists(pthread_set_name_np "pthread.h;pthread_np.h" HAVE_PTHREAD_SET_NAME_NP)
-        else()
-            check_c_source_compiles("
-#include <pthread.h>
-#include <pthread_np.h>
-int main()
-{
-    pthread_setname_np(\"testname\");
-    return 0;
-}"
-                PTHREAD_SETNAME_NP_ONE_PARAM
-            )
-            check_c_source_compiles("
-#include <pthread.h>
-#include <pthread_np.h>
-int main()
-{
-    pthread_setname_np(pthread_self(), \"%s\", \"testname\");
-    return 0;
-}"
-                PTHREAD_SETNAME_NP_THREE_PARAMS
-            )
         endif()
     else()
         check_symbol_exists(pthread_setname_np pthread.h HAVE_PTHREAD_SETNAME_NP)
         if(NOT HAVE_PTHREAD_SETNAME_NP)
             check_symbol_exists(pthread_set_name_np pthread.h HAVE_PTHREAD_SET_NAME_NP)
-        else()
-            check_c_source_compiles("
-#include <pthread.h>
-int main()
-{
-    pthread_setname_np(\"testname\");
-    return 0;
-}"
-                PTHREAD_SETNAME_NP_ONE_PARAM
-            )
-            check_c_source_compiles("
-#include <pthread.h>
-int main()
-{
-    pthread_setname_np(pthread_self(), \"%s\", \"testname\");
-    return 0;
-}"
-                PTHREAD_SETNAME_NP_THREE_PARAMS
-            )
         endif()
     endif()
 endif()
@@ -626,6 +590,7 @@ set(COMMON_OBJS
     common/alfstream.h
     common/almalloc.cpp
     common/almalloc.h
+    common/alnumbers.h
     common/alnumeric.h
     common/aloptional.h
     common/alspan.h
@@ -636,7 +601,6 @@ set(COMMON_OBJS
     common/dynload.cpp
     common/dynload.h
     common/intrusive_ptr.h
-    common/math_defs.h
     common/opthelpers.h
     common/phase_shifter.h
     common/polyphase_resampler.cpp
@@ -678,6 +642,9 @@ set(CORE_OBJS
     core/devformat.h
     core/device.cpp
     core/device.h
+    core/effects/base.h
+    core/effectslot.cpp
+    core/effectslot.h
     core/except.cpp
     core/except.h
     core/filters/biquad.h
@@ -761,6 +728,7 @@ set(OPENAL_OBJS
     al/effects/dedicated.cpp
     al/effects/distortion.cpp
     al/effects/echo.cpp
+	al/effects/effects.cpp
     al/effects/effects.h
     al/effects/equalizer.cpp
     al/effects/fshifter.cpp
@@ -792,8 +760,6 @@ set(ALC_OBJS
     alc/context.h
     alc/device.cpp
     alc/device.h
-    alc/effectslot.cpp
-    alc/effectslot.h
     alc/effects/base.h
     alc/effects/autowah.cpp
     alc/effects/chorus.cpp
@@ -811,6 +777,30 @@ set(ALC_OBJS
     alc/effects/vmorpher.cpp
     alc/inprogext.h
     alc/panning.cpp)
+
+if (ALSOFT_EAX)
+    set(OPENAL_OBJS
+        ${OPENAL_OBJS}
+        al/eax_api.cpp
+        al/eax_api.h
+        al/eax_eax_call.cpp
+        al/eax_eax_call.h
+        al/eax_effect.cpp
+        al/eax_effect.h
+        al/eax_exception.cpp
+        al/eax_exception.h
+        al/eax_fx_slot_index.cpp
+        al/eax_fx_slot_index.h
+        al/eax_fx_slots.cpp
+        al/eax_fx_slots.h
+        al/eax_globals.cpp
+        al/eax_globals.h
+        al/eax_utils.cpp
+        al/eax_utils.h
+        al/eax_x_ram.cpp
+        al/eax_x_ram.h
+)
+endif ()
 
 # Include SIMD mixers
 set(CPU_EXTS "Default")
@@ -918,8 +908,9 @@ if(PkgConfig_FOUND)
         option(ALSOFT_BACKEND_PIPEWIRE "Enable PipeWire backend" ON)
         if(ALSOFT_BACKEND_PIPEWIRE)
             set(HAVE_PIPEWIRE 1)
-            set(BACKENDS  "${BACKENDS} PipeWire,")
+            set(BACKENDS  "${BACKENDS} PipeWire${IS_LINKED},")
             set(ALC_OBJS  ${ALC_OBJS} alc/backends/pipewire.cpp alc/backends/pipewire.h)
+            add_backend_libs(${PIPEWIRE_LIBRARIES})
             set(INC_PATHS ${INC_PATHS} ${PIPEWIRE_INCLUDE_DIRS})
         endif()
     endif()
@@ -1297,6 +1288,7 @@ if(LIBTYPE STREQUAL "STATIC")
     add_library(${IMPL_TARGET} STATIC ${COMMON_OBJS} ${OPENAL_OBJS} ${ALC_OBJS} ${CORE_OBJS})
     target_compile_definitions(${IMPL_TARGET} PUBLIC AL_LIBTYPE_STATIC)
     target_link_libraries(${IMPL_TARGET} PRIVATE ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
+
     if(WIN32)
         # This option is for static linking OpenAL Soft into another project
         # that already defines the IDs. It is up to that project to ensure all
@@ -1440,22 +1432,30 @@ if(HAS_ROUTER)
     message(STATUS "Building DLL router")
 endif()
 
-message(STATUS "
-Building OpenAL with support for the following backends:
-    ${BACKENDS}
-
-Building with support for CPU extensions:
-    ${CPU_EXTS}
-")
+message(STATUS "")
+message(STATUS "Building OpenAL with support for the following backends:")
+message(STATUS "   ${BACKENDS}")
+message(STATUS "")
+message(STATUS "Building with support for CPU extensions:")
+message(STATUS "    ${CPU_EXTS}")
+message(STATUS "")
 if(FPMATH_SET)
-    message(STATUS "Building with SSE${FPMATH_SET} codegen
-")
+    message(STATUS "Building with SSE${FPMATH_SET} codegen")
+    message(STATUS "")
+endif()
+
+if(ALSOFT_EAX)
+    message(STATUS "Building with legacy EAX extension support")
+    message(STATUS "")
 endif()
 
 if(ALSOFT_EMBED_HRTF_DATA)
-    message(STATUS "Embedding HRTF datasets
-")
+    message(STATUS "Embedding HRTF datasets")
+    message(STATUS "")
 endif()
+
+# An alias for sub-project builds
+add_library(OpenAL::OpenAL ALIAS OpenAL)
 
 # Install main library
 if(ALSOFT_INSTALL)

@@ -1,6 +1,9 @@
 #ifndef OPTHELPERS_H
 #define OPTHELPERS_H
 
+#include <utility>
+
+
 #ifdef __has_builtin
 #define HAS_BUILTIN __has_builtin
 #else
@@ -8,19 +11,29 @@
 #endif
 
 #if defined(__GNUC__) || HAS_BUILTIN(__builtin_expect)
-/* LIKELY optimizes the case where the condition is true. The condition is not
- * required to be true, but it can result in more optimal code for the true
- * path at the expense of a less optimal false path.
+/* likely() optimizes for the case where the condition is true. The condition
+ * is not required to be true, but it can result in more optimal code for the
+ * true path at the expense of a less optimal false path.
  */
-#define LIKELY(x) (__builtin_expect(!!(x), !false))
-/* The opposite of LIKELY, optimizing the case where the condition is false. */
-#define UNLIKELY(x) (__builtin_expect(!!(x), false))
+template<typename T>
+constexpr bool likely(T&& expr) noexcept
+{ return __builtin_expect(static_cast<bool>(std::forward<T>(expr)), true); }
+/* The opposite of likely(), optimizing for the case where the condition is
+ * false.
+ */
+template<typename T>
+constexpr bool unlikely(T&& expr) noexcept
+{ return __builtin_expect(static_cast<bool>(std::forward<T>(expr)), false); }
 
 #else
 
-#define LIKELY(x) (!!(x))
-#define UNLIKELY(x) (!!(x))
+template<typename T>
+constexpr bool likely(T&& expr) noexcept { return static_cast<bool>(std::forward<T>(expr)); }
+template<typename T>
+constexpr bool unlikely(T&& expr) noexcept { return static_cast<bool>(std::forward<T>(expr)); }
 #endif
+#define LIKELY(x) (likely(x))
+#define UNLIKELY(x) (unlikely(x))
 
 #if HAS_BUILTIN(__builtin_assume)
 /* Unlike LIKELY, ASSUME requires the condition to be true or else it invokes
@@ -34,12 +47,6 @@
 #define ASSUME(x) do { if(!(x)) __builtin_unreachable(); } while(0)
 #else
 #define ASSUME(x) ((void)0)
-#endif
-
-#if __cplusplus >= 201703L || defined(__cpp_if_constexpr)
-#define if_constexpr if constexpr
-#else
-#define if_constexpr if
 #endif
 
 #endif /* OPTHELPERS_H */
