@@ -1,6 +1,8 @@
 #ifndef AL_NUMERIC_H
 #define AL_NUMERIC_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #ifdef HAVE_INTRIN_H
@@ -269,6 +271,29 @@ inline float fast_roundf(float f) noexcept
     f += ilim[sign];
     return f - ilim[sign];
 #endif
+}
+
+
+template<typename T>
+constexpr const T& clamp(const T& value, const T& min_value, const T& max_value) noexcept
+{
+    return std::min(std::max(value, min_value), max_value);
+}
+
+// Converts level (mB) to gain.
+inline float level_mb_to_gain(float x)
+{
+    if(x <= -10'000.0f)
+        return 0.0f;
+    return std::pow(10.0f, x / 2'000.0f);
+}
+
+// Converts gain to level (mB).
+inline float gain_to_level_mb(float x)
+{
+    if (x <= 0.0f)
+        return -10'000.0f;
+    return maxf(std::log10(x) * 2'000.0f, -10'000.0f);
 }
 
 #endif /* AL_NUMERIC_H */

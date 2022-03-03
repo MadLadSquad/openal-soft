@@ -42,6 +42,7 @@
 #include "alconfig.h"
 #include "alc/context.h"
 #include "almalloc.h"
+#include "alnumbers.h"
 #include "alnumeric.h"
 #include "aloptional.h"
 #include "alspan.h"
@@ -57,7 +58,6 @@
 #include "core/logging.h"
 #include "core/uhjfilter.h"
 #include "device.h"
-#include "math_defs.h"
 #include "opthelpers.h"
 
 
@@ -218,12 +218,16 @@ void InitNearFieldCtrl(ALCdevice *device, float ctrl_dist, uint order, bool is3d
     device->AvgSpeakerDist = clampf(ctrl_dist, 0.1f, 10.0f);
     TRACE("Using near-field reference distance: %.2f meters\n", device->AvgSpeakerDist);
 
+    const float w1{SpeedOfSoundMetersPerSec /
+        (device->AvgSpeakerDist * static_cast<float>(device->Frequency))};
+    device->mNFCtrlFilter.init(w1);
+
     auto iter = std::copy_n(is3d ? chans_per_order3d : chans_per_order2d, order+1u,
         std::begin(device->NumChannelsPerOrder));
     std::fill(iter, std::end(device->NumChannelsPerOrder), 0u);
 }
 
-void InitDistanceComp(ALCdevice *device, DecoderView decoder,
+void InitDistanceComp(ALCdevice *device, const al::span<const Channel> channels,
     const al::span<const float,MAX_OUTPUT_CHANNELS> dists)
 {
     const float maxdist{std::accumulate(std::begin(dists), std::end(dists), 0.0f, maxf)};
@@ -235,9 +239,9 @@ void InitDistanceComp(ALCdevice *device, DecoderView decoder,
     std::vector<DistanceComp::ChanData> ChanDelay;
     ChanDelay.reserve(device->RealOut.Buffer.size());
     size_t total{0u};
-    for(size_t chidx{0};chidx < decoder.mChannels.size();++chidx)
+    for(size_t chidx{0};chidx < channels.size();++chidx)
     {
-        const Channel ch{decoder.mChannels[chidx]};
+        const Channel ch{channels[chidx]};
         const uint idx{device->RealOut.ChannelIndex[ch]};
         if(idx == INVALID_CHANNEL_INDEX)
             continue;
@@ -386,10 +390,8 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
          * CB = Back center
          *
          * Additionally, surround51 will acknowledge back speakers for side
-         * channels, and surround51rear will acknowledge side speakers for
-         * back channels, to avoid issues with an ambdec expecting 5.1 to
-         * use the side channels when the device is configured for back,
-         * and vice-versa.
+         * channels, to avoid issues with an ambdec expecting 5.1 to use the
+         * back channels.
          */
         Channel ch{};
         if(speaker.Name == "LF")
@@ -435,6 +437,7 @@ DecoderView MakeDecoderView(ALCdevice *device, const AmbDecConf *conf,
     {
         ret.mOrder = decoder.mOrder;
         ret.mIs3D = decoder.mIs3D;
+        ret.mScaling = decoder.mScaling;
         ret.mChannels = {decoder.mChannels.data(), chan_count};
         ret.mOrderGain = decoder.mOrderGain;
         ret.mCoeffs = {decoder.mCoeffs.data(), chan_count};
@@ -606,12 +609,8 @@ void InitPanning(ALCdevice *device, const bool hqdec=false, const bool stablize=
         }
     }
 
-    /* For non-DevFmtAmbi3D, set the ambisonic order and reset the layout and
-     * scale.
-     */
+    /* For non-DevFmtAmbi3D, set the ambisonic order. */
     device->mAmbiOrder = decoder.mOrder;
-    device->mAmbiLayout = DevAmbiLayout::ACN;
-    device->mAmbiScale = DevAmbiScaling::N3D;
 
     const size_t ambicount{decoder.mIs3D ? AmbiChannelsFromOrder(decoder.mOrder) :
         Ambi2DChannelsFromOrder(decoder.mOrder)};
@@ -659,11 +658,11 @@ void InitPanning(ALCdevice *device, const bool hqdec=false, const bool stablize=
 
 void InitHrtfPanning(ALCdevice *device)
 {
-    constexpr float Deg180{al::MathDefs<float>::Pi()};
+    constexpr float Deg180{al::numbers::pi_v<float>};
     constexpr float Deg_90{Deg180 / 2.0f /* 90 degrees*/};
     constexpr float Deg_45{Deg_90 / 2.0f /* 45 degrees*/};
     constexpr float Deg135{Deg_45 * 3.0f /*135 degrees*/};
-    constexpr float Deg_35{6.154797086e-01f /* 35~ 36 degrees*/};
+    constexpr float Deg_35{6.154797087e-01f /* 35~ 36 degrees*/};
     constexpr float Deg_69{1.205932499e+00f /* 69~ 70 degrees*/};
     constexpr float Deg111{1.935660155e+00f /*110~111 degrees*/};
     constexpr float Deg_21{3.648638281e-01f /* 20~ 21 degrees*/};
@@ -677,26 +676,41 @@ void InitHrtfPanning(ALCdevice *device)
         { EvRadians{-Deg_35}, AzRadians{ Deg_45} },
         { EvRadians{-Deg_35}, AzRadians{ Deg135} },
     }, AmbiPoints2O[]{
+        { EvRadians{   0.0f}, AzRadians{   0.0f} },
+        { EvRadians{   0.0f}, AzRadians{ Deg180} },
+        { EvRadians{   0.0f}, AzRadians{-Deg_90} },
+        { EvRadians{   0.0f}, AzRadians{ Deg_90} },
+        { EvRadians{ Deg_90}, AzRadians{   0.0f} },
+        { EvRadians{-Deg_90}, AzRadians{   0.0f} },
+        { EvRadians{ Deg_35}, AzRadians{-Deg_45} },
+        { EvRadians{ Deg_35}, AzRadians{-Deg135} },
+        { EvRadians{ Deg_35}, AzRadians{ Deg_45} },
+        { EvRadians{ Deg_35}, AzRadians{ Deg135} },
         { EvRadians{-Deg_35}, AzRadians{-Deg_45} },
         { EvRadians{-Deg_35}, AzRadians{-Deg135} },
-        { EvRadians{ Deg_35}, AzRadians{-Deg135} },
-        { EvRadians{ Deg_35}, AzRadians{ Deg135} },
-        { EvRadians{ Deg_35}, AzRadians{ Deg_45} },
         { EvRadians{-Deg_35}, AzRadians{ Deg_45} },
         { EvRadians{-Deg_35}, AzRadians{ Deg135} },
-        { EvRadians{ Deg_35}, AzRadians{-Deg_45} },
-        { EvRadians{-Deg_69}, AzRadians{-Deg_90} },
-        { EvRadians{ Deg_69}, AzRadians{ Deg_90} },
-        { EvRadians{-Deg_69}, AzRadians{ Deg_90} },
+    }, AmbiPoints3O[]{
         { EvRadians{ Deg_69}, AzRadians{-Deg_90} },
+        { EvRadians{ Deg_69}, AzRadians{ Deg_90} },
+        { EvRadians{-Deg_69}, AzRadians{-Deg_90} },
+        { EvRadians{-Deg_69}, AzRadians{ Deg_90} },
         { EvRadians{   0.0f}, AzRadians{-Deg_69} },
         { EvRadians{   0.0f}, AzRadians{-Deg111} },
         { EvRadians{   0.0f}, AzRadians{ Deg_69} },
         { EvRadians{   0.0f}, AzRadians{ Deg111} },
-        { EvRadians{-Deg_21}, AzRadians{ Deg180} },
-        { EvRadians{ Deg_21}, AzRadians{ Deg180} },
         { EvRadians{ Deg_21}, AzRadians{   0.0f} },
+        { EvRadians{ Deg_21}, AzRadians{ Deg180} },
         { EvRadians{-Deg_21}, AzRadians{   0.0f} },
+        { EvRadians{-Deg_21}, AzRadians{ Deg180} },
+        { EvRadians{ Deg_35}, AzRadians{-Deg_45} },
+        { EvRadians{ Deg_35}, AzRadians{-Deg135} },
+        { EvRadians{ Deg_35}, AzRadians{ Deg_45} },
+        { EvRadians{ Deg_35}, AzRadians{ Deg135} },
+        { EvRadians{-Deg_35}, AzRadians{-Deg_45} },
+        { EvRadians{-Deg_35}, AzRadians{-Deg135} },
+        { EvRadians{-Deg_35}, AzRadians{ Deg_45} },
+        { EvRadians{-Deg_35}, AzRadians{ Deg135} },
     };
     static const float AmbiMatrix1O[][MaxAmbiChannels]{
         { 1.250000000e-01f,  1.250000000e-01f,  1.250000000e-01f,  1.250000000e-01f },
@@ -708,37 +722,70 @@ void InitHrtfPanning(ALCdevice *device)
         { 1.250000000e-01f, -1.250000000e-01f, -1.250000000e-01f,  1.250000000e-01f },
         { 1.250000000e-01f, -1.250000000e-01f, -1.250000000e-01f, -1.250000000e-01f },
     }, AmbiMatrix2O[][MaxAmbiChannels]{
-        { 5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f,  6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f, -6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f, -6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f,  6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f, -6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f, -6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f,  6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f,  6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f },
-        { 5.000000000e-02f,  3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f },
-        { 5.000000000e-02f, -3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f },
-        { 5.000000000e-02f, -3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f,  6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f },
-        { 5.000000000e-02f,  3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f,  6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f },
-        { 5.000000000e-02f,  8.090169944e-02f,  0.000000000e+00f,  3.090169944e-02f,  6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f },
-        { 5.000000000e-02f,  8.090169944e-02f,  0.000000000e+00f, -3.090169944e-02f, -6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f },
-        { 5.000000000e-02f, -8.090169944e-02f,  0.000000000e+00f,  3.090169944e-02f, -6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f },
-        { 5.000000000e-02f, -8.090169944e-02f,  0.000000000e+00f, -3.090169944e-02f,  6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f },
-        { 5.000000000e-02f,  0.000000000e+00f, -3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f,  6.454972244e-02f,  8.449668365e-02f },
-        { 5.000000000e-02f,  0.000000000e+00f,  3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f, -6.454972244e-02f,  8.449668365e-02f },
-        { 5.000000000e-02f,  0.000000000e+00f,  3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f,  6.454972244e-02f,  8.449668365e-02f },
-        { 5.000000000e-02f,  0.000000000e+00f, -3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f, -6.454972244e-02f,  8.449668365e-02f },
+        { 7.142857143e-02f,  0.000000000e+00f,  0.000000000e+00f,  1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f, -7.453559925e-02f,  0.000000000e+00f,  1.290994449e-01f, },
+        { 7.142857143e-02f,  0.000000000e+00f,  0.000000000e+00f, -1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f, -7.453559925e-02f,  0.000000000e+00f,  1.290994449e-01f, },
+        { 7.142857143e-02f,  1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f, -7.453559925e-02f,  0.000000000e+00f, -1.290994449e-01f, },
+        { 7.142857143e-02f, -1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f, -7.453559925e-02f,  0.000000000e+00f, -1.290994449e-01f, },
+        { 7.142857143e-02f,  0.000000000e+00f,  1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  1.490711985e-01f,  0.000000000e+00f,  0.000000000e+00f, },
+        { 7.142857143e-02f,  0.000000000e+00f, -1.237179148e-01f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  1.490711985e-01f,  0.000000000e+00f,  0.000000000e+00f, },
+        { 7.142857143e-02f,  7.142857143e-02f,  7.142857143e-02f,  7.142857143e-02f,  9.682458366e-02f,  9.682458366e-02f,  0.000000000e+00f,  9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f,  7.142857143e-02f,  7.142857143e-02f, -7.142857143e-02f, -9.682458366e-02f,  9.682458366e-02f,  0.000000000e+00f, -9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f, -7.142857143e-02f,  7.142857143e-02f,  7.142857143e-02f, -9.682458366e-02f, -9.682458366e-02f,  0.000000000e+00f,  9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f, -7.142857143e-02f,  7.142857143e-02f, -7.142857143e-02f,  9.682458366e-02f, -9.682458366e-02f,  0.000000000e+00f, -9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f,  7.142857143e-02f, -7.142857143e-02f,  7.142857143e-02f,  9.682458366e-02f, -9.682458366e-02f,  0.000000000e+00f, -9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f,  7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f, -9.682458366e-02f, -9.682458366e-02f,  0.000000000e+00f,  9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f,  7.142857143e-02f, -9.682458366e-02f,  9.682458366e-02f,  0.000000000e+00f, -9.682458366e-02f,  0.000000000e+00f, },
+        { 7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f,  9.682458366e-02f,  9.682458366e-02f,  0.000000000e+00f,  9.682458366e-02f,  0.000000000e+00f, },
+    }, AmbiMatrix3O[][MaxAmbiChannels]{
+        { 5.000000000e-02f,  3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f,  6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f, -1.256118221e-01f,  0.000000000e+00f,  1.126112056e-01f,  7.944389175e-02f,  0.000000000e+00f,  2.421151497e-02f,  0.000000000e+00f, },
+        { 5.000000000e-02f, -3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f,  1.256118221e-01f,  0.000000000e+00f, -1.126112056e-01f,  7.944389175e-02f,  0.000000000e+00f,  2.421151497e-02f,  0.000000000e+00f, },
+        { 5.000000000e-02f,  3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f, -1.256118221e-01f,  0.000000000e+00f,  1.126112056e-01f, -7.944389175e-02f,  0.000000000e+00f, -2.421151497e-02f,  0.000000000e+00f, },
+        { 5.000000000e-02f, -3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f,  6.454972244e-02f,  9.045084972e-02f,  0.000000000e+00f, -1.232790000e-02f,  1.256118221e-01f,  0.000000000e+00f, -1.126112056e-01f, -7.944389175e-02f,  0.000000000e+00f, -2.421151497e-02f,  0.000000000e+00f, },
+        { 5.000000000e-02f,  8.090169944e-02f,  0.000000000e+00f,  3.090169944e-02f,  6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f, -7.763237543e-02f,  0.000000000e+00f, -2.950836627e-02f,  0.000000000e+00f, -1.497759251e-01f,  0.000000000e+00f, -7.763237543e-02f, },
+        { 5.000000000e-02f,  8.090169944e-02f,  0.000000000e+00f, -3.090169944e-02f, -6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f, -7.763237543e-02f,  0.000000000e+00f, -2.950836627e-02f,  0.000000000e+00f,  1.497759251e-01f,  0.000000000e+00f,  7.763237543e-02f, },
+        { 5.000000000e-02f, -8.090169944e-02f,  0.000000000e+00f,  3.090169944e-02f, -6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f,  7.763237543e-02f,  0.000000000e+00f,  2.950836627e-02f,  0.000000000e+00f, -1.497759251e-01f,  0.000000000e+00f, -7.763237543e-02f, },
+        { 5.000000000e-02f, -8.090169944e-02f,  0.000000000e+00f, -3.090169944e-02f,  6.454972244e-02f,  0.000000000e+00f, -5.590169944e-02f,  0.000000000e+00f, -7.216878365e-02f,  7.763237543e-02f,  0.000000000e+00f,  2.950836627e-02f,  0.000000000e+00f,  1.497759251e-01f,  0.000000000e+00f,  7.763237543e-02f, },
+        { 5.000000000e-02f,  0.000000000e+00f,  3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f,  6.454972244e-02f,  8.449668365e-02f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  3.034486645e-02f, -6.779013272e-02f,  1.659481923e-01f,  4.797944664e-02f, },
+        { 5.000000000e-02f,  0.000000000e+00f,  3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f, -6.454972244e-02f,  8.449668365e-02f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f,  3.034486645e-02f,  6.779013272e-02f,  1.659481923e-01f, -4.797944664e-02f, },
+        { 5.000000000e-02f,  0.000000000e+00f, -3.090169944e-02f,  8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f, -6.454972244e-02f,  8.449668365e-02f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f, -3.034486645e-02f, -6.779013272e-02f, -1.659481923e-01f,  4.797944664e-02f, },
+        { 5.000000000e-02f,  0.000000000e+00f, -3.090169944e-02f, -8.090169944e-02f,  0.000000000e+00f,  0.000000000e+00f, -3.454915028e-02f,  6.454972244e-02f,  8.449668365e-02f,  0.000000000e+00f,  0.000000000e+00f,  0.000000000e+00f, -3.034486645e-02f,  6.779013272e-02f, -1.659481923e-01f, -4.797944664e-02f, },
+        { 5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f,  6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f,  1.016220987e-01f,  6.338656910e-02f, -1.092600649e-02f, -7.364853795e-02f,  1.011266756e-01f, -7.086833869e-02f, -1.482646439e-02f, },
+        { 5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f, -6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f,  1.016220987e-01f, -6.338656910e-02f, -1.092600649e-02f, -7.364853795e-02f, -1.011266756e-01f, -7.086833869e-02f,  1.482646439e-02f, },
+        { 5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f,  5.000000000e-02f, -6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f, -1.016220987e-01f, -6.338656910e-02f,  1.092600649e-02f, -7.364853795e-02f,  1.011266756e-01f, -7.086833869e-02f, -1.482646439e-02f, },
+        { 5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f,  6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f, -1.016220987e-01f,  6.338656910e-02f,  1.092600649e-02f, -7.364853795e-02f, -1.011266756e-01f, -7.086833869e-02f,  1.482646439e-02f, },
+        { 5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f,  6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f,  1.016220987e-01f, -6.338656910e-02f, -1.092600649e-02f,  7.364853795e-02f,  1.011266756e-01f,  7.086833869e-02f, -1.482646439e-02f, },
+        { 5.000000000e-02f,  5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f, -6.454972244e-02f, -6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f,  1.016220987e-01f,  6.338656910e-02f, -1.092600649e-02f,  7.364853795e-02f, -1.011266756e-01f,  7.086833869e-02f,  1.482646439e-02f, },
+        { 5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f,  5.000000000e-02f, -6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f, -6.454972244e-02f,  0.000000000e+00f, -1.016220987e-01f,  6.338656910e-02f,  1.092600649e-02f,  7.364853795e-02f,  1.011266756e-01f,  7.086833869e-02f, -1.482646439e-02f, },
+        { 5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f, -5.000000000e-02f,  6.454972244e-02f,  6.454972244e-02f,  0.000000000e+00f,  6.454972244e-02f,  0.000000000e+00f, -1.016220987e-01f, -6.338656910e-02f,  1.092600649e-02f,  7.364853795e-02f, -1.011266756e-01f,  7.086833869e-02f,  1.482646439e-02f, },
     };
     static const float AmbiOrderHFGain1O[MaxAmbiOrder+1]{
-        2.000000000e+00f, 1.154700538e+00f
+        /*ENRGY*/ 2.000000000e+00f, 1.154700538e+00f
     }, AmbiOrderHFGain2O[MaxAmbiOrder+1]{
+        /*ENRGY 2.357022604e+00f, 1.825741858e+00f, 9.428090416e-01f*/
         /*AMP   1.000000000e+00f, 7.745966692e-01f, 4.000000000e-01f*/
         /*RMS*/ 9.128709292e-01f, 7.071067812e-01f, 3.651483717e-01f
-        /*ENRGY 2.357022604e+00f, 1.825741858e+00f, 9.428090416e-01f*/
+    }, AmbiOrderHFGain3O[MaxAmbiOrder+1]{
+        /*ENRGY 1.865086714e+00f, 1.606093894e+00f, 1.142055301e+00f, 5.683795528e-01f*/
+        /*AMP   1.000000000e+00f, 8.611363116e-01f, 6.123336207e-01f, 3.047469850e-01f*/
+        /*RMS*/ 8.340921354e-01f, 7.182670250e-01f, 5.107426573e-01f, 2.541870634e-01f
     };
 
     static_assert(al::size(AmbiPoints1O) == al::size(AmbiMatrix1O), "First-Order Ambisonic HRTF mismatch");
     static_assert(al::size(AmbiPoints2O) == al::size(AmbiMatrix2O), "Second-Order Ambisonic HRTF mismatch");
+    static_assert(al::size(AmbiPoints3O) == al::size(AmbiMatrix3O), "Third-Order Ambisonic HRTF mismatch");
+
+    /* A 700hz crossover frequency provides tighter sound imaging at the sweet
+     * spot with ambisonic decoding, as the distance between the ears is closer
+     * to half this frequency wavelength, which is the optimal point where the
+     * response should change between optimizing phase vs volume. Normally this
+     * tighter imaging is at the cost of a smaller sweet spot, but since the
+     * listener is fixed in the center of the HRTF responses for the decoder,
+     * we don't have to worry about ever being out of the sweet spot.
+     *
+     * A better option here may be to have the head radius as part of the HRTF
+     * data set and calculate the optimal crossover frequency from that.
+     */
+    device->mXOverFreq = 700.0f;
 
     /* Don't bother with HOA when using full HRTF rendering. Nothing needs it,
      * and it eases the CPU/memory load.
@@ -756,10 +803,11 @@ void InitHrtfPanning(ALCdevice *device)
             { "full", RenderMode::Hrtf, 1 },
             { "ambi1", RenderMode::Normal, 1 },
             { "ambi2", RenderMode::Normal, 2 },
+            { "ambi3", RenderMode::Normal, 3 },
         };
 
         const char *mode{modeopt->c_str()};
-        if(al::strcasecmp(mode, "basic") == 0 || al::strcasecmp(mode, "ambi3") == 0)
+        if(al::strcasecmp(mode, "basic") == 0)
         {
             ERR("HRTF mode \"%s\" deprecated, substituting \"%s\"\n", mode, "ambi2");
             mode = "ambi2";
@@ -787,7 +835,13 @@ void InitHrtfPanning(ALCdevice *device)
     al::span<const AngularPoint> AmbiPoints{AmbiPoints1O};
     const float (*AmbiMatrix)[MaxAmbiChannels]{AmbiMatrix1O};
     al::span<const float,MaxAmbiOrder+1> AmbiOrderHFGain{AmbiOrderHFGain1O};
-    if(ambi_order >= 2)
+    if(ambi_order >= 3)
+    {
+        AmbiPoints = AmbiPoints3O;
+        AmbiMatrix = AmbiMatrix3O;
+        AmbiOrderHFGain = AmbiOrderHFGain3O;
+    }
+    else if(ambi_order == 2)
     {
         AmbiPoints = AmbiPoints2O;
         AmbiMatrix = AmbiMatrix2O;
@@ -827,7 +881,7 @@ void InitUhjPanning(ALCdevice *device)
 
 } // namespace
 
-void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
+void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<StereoEncoding> stereomode)
 {
     /* Hold the HRTF the device last used, in case it's used again. */
     HrtfStorePtr old_hrtf{std::move(device->mHrtf)};
@@ -842,7 +896,7 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
     if(device->FmtChans != DevFmtStereo)
     {
         old_hrtf = nullptr;
-        if(hrtfreq && hrtfreq.value())
+        if(stereomode && *stereomode == StereoEncoding::Hrtf)
             device->mHrtfStatus = ALC_HRTF_UNSUPPORTED_FORMAT_SOFT;
 
         const char *layout{nullptr};
@@ -915,7 +969,7 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
             if(spkr_count > 0)
             {
                 InitNearFieldCtrl(device, accum_dist / spkr_count, decoder.mOrder, decoder.mIs3D);
-                InitDistanceComp(device, decoder, speakerdists);
+                InitDistanceComp(device, decoder.mChannels, speakerdists);
             }
         }
         if(auto *ambidec{device->AmbiDecoder.get()})
@@ -926,25 +980,12 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
         return;
     }
 
-    bool headphones{device->IsHeadphones};
-    if(device->Type != DeviceType::Loopback)
-    {
-        if(auto modeopt = device->configValue<std::string>(nullptr, "stereo-mode"))
-        {
-            const char *mode{modeopt->c_str()};
-            if(al::strcasecmp(mode, "headphones") == 0)
-                headphones = true;
-            else if(al::strcasecmp(mode, "speakers") == 0)
-                headphones = false;
-            else if(al::strcasecmp(mode, "auto") != 0)
-                ERR("Unexpected stereo-mode: %s\n", mode);
-        }
-    }
 
-    /* If there's no request for HRTF and the device is headphones, or if HRTF
-     * is explicitly requested, try to enable it.
+    /* If there's no request for HRTF or UHJ and the device is headphones, or
+     * if HRTF is explicitly requested, try to enable it.
      */
-    if((!hrtfreq && headphones) || (hrtfreq && hrtfreq.value()))
+    if((!stereomode && device->Flags.test(DirectEar))
+        || (stereomode && *stereomode == StereoEncoding::Hrtf))
     {
         if(device->mHrtfList.empty())
             device->enumerateHrtfs();
@@ -992,6 +1033,15 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
     }
     old_hrtf = nullptr;
 
+    if(stereomode && *stereomode == StereoEncoding::Uhj)
+    {
+        device->mUhjEncoder = std::make_unique<UhjEncoder>();
+        TRACE("UHJ enabled\n");
+        InitUhjPanning(device);
+        device->PostProcess = &ALCdevice::ProcessUhj;
+        return;
+    }
+
     device->mRenderMode = RenderMode::Pairwise;
     if(device->Type != DeviceType::Loopback)
     {
@@ -1008,23 +1058,6 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<bool> hrtfreq)
                 return;
             }
         }
-    }
-
-    if(auto encopt = device->configValue<std::string>(nullptr, "stereo-encoding"))
-    {
-        const char *mode{encopt->c_str()};
-        if(al::strcasecmp(mode, "uhj") == 0)
-            device->mRenderMode = RenderMode::Normal;
-        else if(al::strcasecmp(mode, "panpot") != 0)
-            ERR("Unexpected stereo-encoding: %s\n", mode);
-    }
-    if(device->mRenderMode == RenderMode::Normal)
-    {
-        device->mUhjEncoder = std::make_unique<UhjEncoder>();
-        TRACE("UHJ enabled\n");
-        InitUhjPanning(device);
-        device->PostProcess = &ALCdevice::ProcessUhj;
-        return;
     }
 
     TRACE("Stereo rendering\n");

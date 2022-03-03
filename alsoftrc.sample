@@ -48,10 +48,10 @@
 ## channels:
 #  Sets the output channel configuration. If left unspecified, one will try to
 #  be detected from the system, and defaulting to stereo. The available values
-#  are: mono, stereo, quad, surround51, surround51rear, surround61, surround71,
-#  ambi1, ambi2, ambi3. Note that the ambi* configurations provide ambisonic
-#  channels of the given order (using ACN ordering and SN3D normalization by
-#  default), which need to be decoded to play correctly on speakers.
+#  are: mono, stereo, quad, surround51, surround61, surround71, ambi1, ambi2,
+#  ambi3. Note that the ambi* configurations provide ambisonic channels of the
+#  given order (using ACN ordering and SN3D normalization by default), which
+#  need to be decoded to play correctly on speakers.
 #channels =
 
 ## sample-type:
@@ -102,7 +102,8 @@
 
 ## ambi-format:
 #  Specifies the channel order and normalization for the "ambi*" set of channel
-#  configurations. Valid settings are: fuma, ambix (or acn+sn3d), acn+n3d
+#  configurations. Valid settings are: fuma, acn+fuma, ambix (or acn+sn3d), or
+#  acn+n3d
 #ambi-format = ambix
 
 ## hrtf:
@@ -182,12 +183,12 @@
 #resampler = linear
 
 ## rt-prio: (global)
-#  Sets real-time priority for the mixing thread. Not all drivers may use this
-#  (eg. PortAudio) as they already control the priority of the mixing thread.
-#  0 and negative values will disable it. Note that this may constitute a
-#  security risk since a real-time priority thread can indefinitely block
-#  normal-priority threads if it fails to wait. Disable this if it turns out to
-#  be a problem.
+#  Sets the real-time priority value for the mixing thread. Not all drivers may
+#  use this (eg. PortAudio) as those APIs already control the priority of the
+#  mixing thread. 0 and negative values will disable real-time priority. Note
+#  that this may constitute a security risk since a real-time priority thread
+#  can indefinitely block normal-priority threads if it fails to wait. Disable
+#  this if it turns out to be a problem.
 #rt-prio = 1
 
 ## rt-time-limit: (global)
@@ -350,6 +351,21 @@
 #  scale of 4x, etc. Similarly, -6 will be about half, and -12 about 1/4th. A
 #  value of 0 means no change.
 #boost = 0
+
+##
+## PipeWire backend stuff
+##
+[pipewire]
+
+## assume-audio: (global)
+#  Causes the backend to succeed initialization even if PipeWire reports no
+#  audio support. Currently, audio support is detected by the presence of audio
+#  source or sink nodes, although this can cause false negatives in cases where
+#  device availability during library initialization is spotty. Future versions
+#  of PipeWire are expected to have a more robust method to test audio support,
+#  but in the mean time this can be set to true to assume PipeWire has audio
+#  support even when no nodes may be reported at initialization time.
+#assume-audio = false
 
 ##
 ## PulseAudio backend stuff
@@ -562,3 +578,11 @@
 #  Creates AMB format files using first-order ambisonics instead of a standard
 #  single- or multi-channel .wav file.
 #bformat = false
+
+##
+## EAX extensions stuff
+##
+[eax]
+##enable:
+#  Sets whether to enable EAX extensions or not.
+#enable = true

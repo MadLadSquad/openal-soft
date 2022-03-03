@@ -37,6 +37,7 @@
 #include "albyte.h"
 #include "alcomplex.h"
 #include "almalloc.h"
+#include "alnumbers.h"
 #include "alspan.h"
 #include "vector.h"
 #include "opthelpers.h"
@@ -141,9 +142,9 @@ const PhaseShifterT<UhjDecoder::sFilterDelay*2> PShift{};
  * S = Left + Right
  * D = Left - Right
  *
- * W = 0.981530*S + 0.197484*j(0.828347*D + 0.767835*T)
- * X = 0.418504*S - j(0.828347*D + 0.767835*T)
- * Y = 0.795954*D - 0.676406*T + j(0.186626*S)
+ * W = 0.981532*S + 0.197484*j(0.828331*D + 0.767820*T)
+ * X = 0.418496*S - j(0.828331*D + 0.767820*T)
+ * Y = 0.795968*D - 0.676392*T + j(0.186633*S)
  * Z = 1.023332*Q
  *
  * where j is a +90 degree phase shift. 3-channel UHJ excludes Q, while 2-
@@ -162,49 +163,49 @@ const PhaseShifterT<UhjDecoder::sFilterDelay*2> PShift{};
  * Gerzon's original paper for deriving Sigma (S) or Delta (D) from the L and R
  * signals. As proof, taking Y for example:
  *
- * Y = 0.795954*D - 0.676406*T + j(0.186626*S)
+ * Y = 0.795968*D - 0.676392*T + j(0.186633*S)
  *
  * * Plug in the encoding parameters, using ? as a placeholder for whether S
  *   and D should receive an extra 0.5 factor
- * Y = 0.795954*(j(-0.3420201*W + 0.5098604*X) + 0.6554516*Y)*? -
- *     0.676406*(j(-0.1432*W + 0.6511746*X) - 0.7071068*Y) +
- *     0.186626*j(0.9396926*W + 0.1855740*X)*?
+ * Y = 0.795968*(j(-0.3420201*W + 0.5098604*X) + 0.6554516*Y)*? -
+ *     0.676392*(j(-0.1432*W + 0.6512*X) - 0.7071068*Y) +
+ *     0.186633*j(0.9396926*W + 0.1855740*X)*?
  *
  * * Move common factors in
- * Y = (j(-0.3420201*0.795954*?*W + 0.5098604*0.795954*?*X) + 0.6554516*0.795954*?*Y) -
- *     (j(-0.1432*0.676406*W + 0.6511746*0.676406*X) - 0.7071068*0.676406*Y) +
- *     j(0.9396926*0.186626*?*W + 0.1855740*0.186626*?*X)
+ * Y = (j(-0.3420201*0.795968*?*W + 0.5098604*0.795968*?*X) + 0.6554516*0.795968*?*Y) -
+ *     (j(-0.1432*0.676392*W + 0.6512*0.676392*X) - 0.7071068*0.676392*Y) +
+ *     j(0.9396926*0.186633*?*W + 0.1855740*0.186633*?*X)
  *
  * * Clean up extraneous groupings
- * Y = j(-0.3420201*0.795954*?*W + 0.5098604*0.795954*?*X) + 0.6554516*0.795954*?*Y -
- *     j(-0.1432*0.676406*W + 0.6511746*0.676406*X) + 0.7071068*0.676406*Y +
- *     j*(0.9396926*0.186626*?*W + 0.1855740*0.186626*?*X)
+ * Y = j(-0.3420201*0.795968*?*W + 0.5098604*0.795968*?*X) + 0.6554516*0.795968*?*Y -
+ *     j(-0.1432*0.676392*W + 0.6512*0.676392*X) + 0.7071068*0.676392*Y +
+ *     j*(0.9396926*0.186633*?*W + 0.1855740*0.186633*?*X)
  *
  * * Move phase shifts together and combine them
- * Y = j(-0.3420201*0.795954*?*W + 0.5098604*0.795954*?*X - -0.1432*0.676406*W -
- *        0.6511746*0.676406*X + 0.9396926*0.186626*?*W + 0.1855740*0.186626*?*X) +
- *     0.6554516*0.795954*?*Y + 0.7071068*0.676406*Y
+ * Y = j(-0.3420201*0.795968*?*W + 0.5098604*0.795968*?*X - -0.1432*0.676392*W -
+ *        0.6512*0.676392*X + 0.9396926*0.186633*?*W + 0.1855740*0.186633*?*X) +
+ *     0.6554516*0.795968*?*Y + 0.7071068*0.676392*Y
  *
  * * Reorder terms
- * Y = j(-0.3420201*0.795954*?*W +  0.1432*0.676406*W + 0.9396926*0.186626*?*W +
- *        0.5098604*0.795954*?*X + -0.6511746*0.676406*X + 0.1855740*0.186626*?*X) +
- *     0.7071068*0.676406*Y + 0.6554516*0.795954*?*Y
+ * Y = j(-0.3420201*0.795968*?*W +  0.1432*0.676392*W + 0.9396926*0.186633*?*W +
+ *        0.5098604*0.795968*?*X + -0.6512*0.676392*X + 0.1855740*0.186633*?*X) +
+ *     0.7071068*0.676392*Y + 0.6554516*0.795968*?*Y
  *
  * * Move common factors out
- * Y = j((-0.3420201*0.795954*? +  0.1432*0.676406 + 0.9396926*0.186626*?)*W +
- *       ( 0.5098604*0.795954*? + -0.6511746*0.676406 + 0.1855740*0.186626*?)*X) +
- *     (0.7071068*0.676406 + 0.6554516*0.795954*?)*Y
+ * Y = j((-0.3420201*0.795968*? +  0.1432*0.676392 + 0.9396926*0.186633*?)*W +
+ *       ( 0.5098604*0.795968*? + -0.6512*0.676392 + 0.1855740*0.186633*?)*X) +
+ *     (0.7071068*0.676392 + 0.6554516*0.795968*?)*Y
  *
  * * Result w/ 0.5 factor:
- * -0.3420201*0.795954*0.5 + 0.1432*0.676406 + 0.9396926*0.186626*0.5 = 0.04843*W
- * 0.5098604*0.795954*0.5 + -0.6511746*0.676406 + 0.1855740*0.186626*0.5 = -0.22023*X
- * 0.7071068*0.676406 + 0.6554516*0.795954*0.5 = 0.73915*Y
- * -> Y = j(0.04843*W + -0.22023*X) + 0.73915*Y
+ * -0.3420201*0.795968*0.5 +  0.1432*0.676392 + 0.9396926*0.186633*0.5 =  0.04843*W
+ *  0.5098604*0.795968*0.5 + -0.6512*0.676392 + 0.1855740*0.186633*0.5 = -0.22023*X
+ *  0.7071068*0.676392                        + 0.6554516*0.795968*0.5 =  0.73914*Y
+ * -> Y = j(0.04843*W + -0.22023*X) + 0.73914*Y
  *
  * * Result w/o 0.5 factor:
- * -0.3420201*0.795954 + 0.1432*0.676406 + 0.9396926*0.186626 = 0.00000*W
- * 0.5098604*0.795954 + -0.6511746*0.676406 + 0.1855740*0.186626 = 0.00000*X
- * 0.7071068*0.676406 + 0.6554516*0.795954 = 1.00000*Y
+ * -0.3420201*0.795968 +  0.1432*0.676392 + 0.9396926*0.186633 = 0.00000*W
+ *  0.5098604*0.795968 + -0.6512*0.676392 + 0.1855740*0.186633 = 0.00000*X
+ *  0.7071068*0.676392                    + 0.6554516*0.795968 = 1.00000*Y
  * -> Y = j(0.00000*W + 0.00000*X) + 1.00000*Y
  *
  * Not halving produces a result matching the original input.
@@ -243,19 +244,19 @@ void UhjDecoder::decode(const float *RESTRICT InSamples, const size_t InChannels
             mQ[sFilterDelay+i] = InSamples[i*InChannels + 3];
     }
 
-    /* Precompute j(0.828347*D + 0.767835*T) and store in xoutput. */
+    /* Precompute j(0.828331*D + 0.767820*T) and store in xoutput. */
     auto tmpiter = std::copy(mDTHistory.cbegin(), mDTHistory.cend(), mTemp.begin());
     std::transform(mD.cbegin(), mD.cbegin()+SamplesToDo+sFilterDelay, mT.cbegin(), tmpiter,
-        [](const float d, const float t) noexcept { return 0.828347f*d + 0.767835f*t; });
+        [](const float d, const float t) noexcept { return 0.828331f*d + 0.767820f*t; });
     std::copy_n(mTemp.cbegin()+SamplesToDo, mDTHistory.size(), mDTHistory.begin());
     PShift.process({xoutput, SamplesToDo}, mTemp.data());
 
     for(size_t i{0};i < SamplesToDo;++i)
     {
-        /* W = 0.981530*S + 0.197484*j(0.828347*D + 0.767835*T) */
-        woutput[i] = 0.981530f*mS[i] + 0.197484f*xoutput[i];
-        /* X = 0.418504*S - j(0.828347*D + 0.767835*T) */
-        xoutput[i] = 0.418504f*mS[i] - xoutput[i];
+        /* W = 0.981532*S + 0.197484*j(0.828331*D + 0.767820*T) */
+        woutput[i] = 0.981532f*mS[i] + 0.197484f*xoutput[i];
+        /* X = 0.418496*S - j(0.828331*D + 0.767820*T) */
+        xoutput[i] = 0.418496f*mS[i] - xoutput[i];
     }
 
     /* Precompute j*S and store in youtput. */
@@ -266,8 +267,8 @@ void UhjDecoder::decode(const float *RESTRICT InSamples, const size_t InChannels
 
     for(size_t i{0};i < SamplesToDo;++i)
     {
-        /* Y = 0.795954*D - 0.676406*T + j(0.186626*S) */
-        youtput[i] = 0.795954f*mD[i] - 0.676406f*mT[i] + 0.186626f*youtput[i];
+        /* Y = 0.795968*D - 0.676392*T + j(0.186633*S) */
+        youtput[i] = 0.795968f*mD[i] - 0.676392f*mT[i] + 0.186633f*youtput[i];
     }
 
     if(OutSamples.size() > 3)
@@ -501,9 +502,9 @@ int main(int argc, char **argv)
             for(size_t i{0};i < got;++i)
             {
                 /* Attenuate by -3dB for FuMa output levels. */
-                constexpr float sqrt1_2{0.707106781187f};
+                constexpr auto inv_sqrt2 = static_cast<float>(1.0/al::numbers::sqrt2);
                 for(size_t j{0};j < outchans;++j)
-                    outmem[i*outchans + j] = f32AsLEBytes(decmem[j][LeadIn+i] * sqrt1_2);
+                    outmem[i*outchans + j] = f32AsLEBytes(decmem[j][LeadIn+i] * inv_sqrt2);
             }
             LeadIn = 0;
 
