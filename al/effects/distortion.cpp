@@ -143,102 +143,49 @@ class EaxDistortionEffect final :
 public:
     EaxDistortionEffect();
 
+    void dispatch(const EaxEaxCall& eax_call) override;
 
     // [[nodiscard]]
-    bool dispatch(
-        const EaxEaxCall& eax_call) override;
-
+    bool apply_deferred() override;
 
 private:
     EAXDISTORTIONPROPERTIES eax_{};
     EAXDISTORTIONPROPERTIES eax_d_{};
     EaxDistortionEffectDirtyFlags eax_dirty_flags_{};
 
-
     void set_eax_defaults();
 
-
     void set_efx_edge();
-
     void set_efx_gain();
-
     void set_efx_lowpass_cutoff();
-
     void set_efx_eq_center();
-
     void set_efx_eq_bandwidth();
-
     void set_efx_defaults();
 
+    void get(const EaxEaxCall& eax_call);
 
-    // [[nodiscard]]
-    bool get(
-        const EaxEaxCall& eax_call);
+    void validate_edge(float flEdge);
+    void validate_gain(long lGain);
+    void validate_lowpass_cutoff(float flLowPassCutOff);
+    void validate_eq_center(float flEQCenter);
+    void validate_eq_bandwidth(float flEQBandwidth);
+    void validate_all(const EAXDISTORTIONPROPERTIES& eax_all);
 
+    void defer_edge(float flEdge);
+    void defer_gain(long lGain);
+    void defer_low_pass_cutoff(float flLowPassCutOff);
+    void defer_eq_center(float flEQCenter);
+    void defer_eq_bandwidth(float flEQBandwidth);
+    void defer_all(const EAXDISTORTIONPROPERTIES& eax_all);
 
-    void validate_edge(
-        float flEdge);
+    void defer_edge(const EaxEaxCall& eax_call);
+    void defer_gain(const EaxEaxCall& eax_call);
+    void defer_low_pass_cutoff(const EaxEaxCall& eax_call);
+    void defer_eq_center(const EaxEaxCall& eax_call);
+    void defer_eq_bandwidth(const EaxEaxCall& eax_call);
+    void defer_all(const EaxEaxCall& eax_call);
 
-    void validate_gain(
-        long lGain);
-
-    void validate_lowpass_cutoff(
-        float flLowPassCutOff);
-
-    void validate_eq_center(
-        float flEQCenter);
-
-    void validate_eq_bandwidth(
-        float flEQBandwidth);
-
-    void validate_all(
-        const EAXDISTORTIONPROPERTIES& eax_all);
-
-
-    void defer_edge(
-        float flEdge);
-
-    void defer_gain(
-        long lGain);
-
-    void defer_low_pass_cutoff(
-        float flLowPassCutOff);
-
-    void defer_eq_center(
-        float flEQCenter);
-
-    void defer_eq_bandwidth(
-        float flEQBandwidth);
-
-    void defer_all(
-        const EAXDISTORTIONPROPERTIES& eax_all);
-
-
-    void defer_edge(
-        const EaxEaxCall& eax_call);
-
-    void defer_gain(
-        const EaxEaxCall& eax_call);
-
-    void defer_low_pass_cutoff(
-        const EaxEaxCall& eax_call);
-
-    void defer_eq_center(
-        const EaxEaxCall& eax_call);
-
-    void defer_eq_bandwidth(
-        const EaxEaxCall& eax_call);
-
-    void defer_all(
-        const EaxEaxCall& eax_call);
-
-
-    // [[nodiscard]]
-    bool apply_deferred();
-
-    // [[nodiscard]]
-    bool set(
-        const EaxEaxCall& eax_call);
+    void set(const EaxEaxCall& eax_call);
 }; // EaxDistortionEffect
 
 
@@ -262,11 +209,9 @@ EaxDistortionEffect::EaxDistortionEffect()
     set_efx_defaults();
 }
 
-// [[nodiscard]]
-bool EaxDistortionEffect::dispatch(
-    const EaxEaxCall& eax_call)
+void EaxDistortionEffect::dispatch(const EaxEaxCall& eax_call)
 {
-    return eax_call.is_get() ? get(eax_call) : set(eax_call);
+    eax_call.is_get() ? get(eax_call) : set(eax_call);
 }
 
 void EaxDistortionEffect::set_eax_defaults()
@@ -339,11 +284,9 @@ void EaxDistortionEffect::set_efx_defaults()
     set_efx_eq_bandwidth();
 }
 
-// [[nodiscard]]
-bool EaxDistortionEffect::get(
-    const EaxEaxCall& eax_call)
+void EaxDistortionEffect::get(const EaxEaxCall& eax_call)
 {
-    switch (eax_call.get_property_id())
+    switch(eax_call.get_property_id())
     {
         case EAXDISTORTION_NONE:
             break;
@@ -375,8 +318,6 @@ bool EaxDistortionEffect::get(
         default:
             throw EaxDistortionEffectException{"Unsupported property id."};
     }
-
-    return false;
 }
 
 void EaxDistortionEffect::validate_edge(
@@ -584,11 +525,9 @@ bool EaxDistortionEffect::apply_deferred()
     return true;
 }
 
-// [[nodiscard]]
-bool EaxDistortionEffect::set(
-    const EaxEaxCall& eax_call)
+void EaxDistortionEffect::set(const EaxEaxCall& eax_call)
 {
-    switch (eax_call.get_property_id())
+    switch(eax_call.get_property_id())
     {
         case EAXDISTORTION_NONE:
             break;
@@ -620,13 +559,6 @@ bool EaxDistortionEffect::set(
         default:
             throw EaxDistortionEffectException{"Unsupported property id."};
     }
-
-    if (!eax_call.is_deferred())
-    {
-        return apply_deferred();
-    }
-
-    return false;
 }
 
 } // namespace

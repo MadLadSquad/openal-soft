@@ -121,7 +121,11 @@ void UpdateSourceProps(const ALsource *source, Voice *voice, ALCcontext *context
     props->OuterAngle = source->OuterAngle;
     props->RefDistance = source->RefDistance;
     props->MaxDistance = source->MaxDistance;
-    props->RolloffFactor = source->RolloffFactor;
+    props->RolloffFactor = source->RolloffFactor
+#ifdef ALSOFT_EAX
+        + source->RolloffFactor2
+#endif
+    ;
     props->Position = source->Position;
     props->Velocity = source->Velocity;
     props->Direction = source->Direction;
@@ -3809,6 +3813,7 @@ void ALsource::eax_set_source_defaults() noexcept
     eax_.source.flRoomRolloffFactor = EAXSOURCE_DEFAULTROOMROLLOFFFACTOR;
     eax_.source.flAirAbsorptionFactor = EAXSOURCE_DEFAULTAIRABSORPTIONFACTOR;
     eax_.source.ulFlags = EAXSOURCE_DEFAULTFLAGS;
+    eax_.source.flMacroFXFactor = EAXSOURCE_DEFAULTMACROFXFACTOR;
 }
 
 void ALsource::eax_set_active_fx_slots_defaults() noexcept
@@ -3961,14 +3966,13 @@ void ALsource::eax_set_fx_slots()
 {
     eax_uses_primary_id_ = false;
     eax_has_active_fx_slots_ = false;
+    eax_active_fx_slots_.fill(false);
 
-    for (auto i = 0; i < EAX_MAX_FXSLOTS; ++i)
+    for(const auto& eax_active_fx_slot_id : eax_.active_fx_slots.guidActiveFXSlots)
     {
-        const auto& eax_active_fx_slot_id = eax_.active_fx_slots.guidActiveFXSlots[i];
-
         auto fx_slot_index = EaxFxSlotIndex{};
 
-        if (eax_active_fx_slot_id == EAX_PrimaryFXSlotID)
+        if(eax_active_fx_slot_id == EAX_PrimaryFXSlotID)
         {
             eax_uses_primary_id_ = true;
             fx_slot_index = eax_al_context_->eax_get_primary_fx_slot_index();
@@ -3978,19 +3982,17 @@ void ALsource::eax_set_fx_slots()
             fx_slot_index = eax_active_fx_slot_id;
         }
 
-        if (fx_slot_index.has_value())
+        if(fx_slot_index.has_value())
         {
             eax_has_active_fx_slots_ = true;
             eax_active_fx_slots_[*fx_slot_index] = true;
         }
     }
 
-    for (auto i = 0u; i < EAX_MAX_FXSLOTS; ++i)
+    for(auto i = 0u;i < eax_active_fx_slots_.size();++i)
     {
-        if (!eax_active_fx_slots_[i])
-        {
+        if(!eax_active_fx_slots_[i])
             eax_set_al_source_send(nullptr, i, EaxAlLowPassParam{1.0f, 1.0f});
-        }
     }
 }
 
@@ -5392,7 +5394,7 @@ void ALsource::eax_set_doppler_factor()
 
 void ALsource::eax_set_rolloff_factor()
 {
-    RolloffFactor = eax_.source.flRolloffFactor;
+    RolloffFactor2 = eax_.source.flRolloffFactor;
 }
 
 void ALsource::eax_set_room_rolloff_factor()
@@ -5680,12 +5682,6 @@ void ALsource::eax_set(
 
         default:
             eax_fail("Unsupported property id.");
-    }
-
-    if(!eax_call.is_deferred())
-    {
-        eax_apply_deferred();
-        EaxUpdateSourceVoice(this, eax_al_context_);
     }
 }
 

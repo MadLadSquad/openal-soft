@@ -77,7 +77,6 @@ public:
         ALCcontext& al_context,
         EaxFxSlotIndexValue index);
 
-
     const EAX50FXSLOTPROPERTIES& eax_get_eax_fx_slot() const noexcept;
 
 
@@ -87,6 +86,7 @@ public:
 
     void eax_unlock_legacy() noexcept;
 
+    void eax_commit() { eax_apply_deferred(); }
 
 private:
     ALCcontext* eax_al_context_{};
@@ -230,6 +230,8 @@ private:
     bool eax_set_fx_slot(
         const EaxEaxCall& eax_call);
 
+    void eax_apply_deferred();
+
     // [[nodiscard]]
     bool eax_set(
         const EaxEaxCall& eax_call);
@@ -247,29 +249,20 @@ private:
 
     // `alAuxiliaryEffectSlotf(effect_slot, AL_EFFECTSLOT_GAIN, gain)`
     void eax_set_effect_slot_gain(ALfloat gain);
+
+public:
+    class EaxDeleter {
+    public:
+        void operator()(ALeffectslot *effect_slot);
+    }; // EaxAlEffectSlotDeleter
 #endif // ALSOFT_EAX
 };
 
 void UpdateAllEffectSlotProps(ALCcontext *context);
 
 #ifdef ALSOFT_EAX
-class EaxAlEffectSlotDeleter
-{
-public:
-    EaxAlEffectSlotDeleter() noexcept = default;
 
-    EaxAlEffectSlotDeleter(
-        ALCcontext& context) noexcept;
-
-    void operator()(
-        ALeffectslot* effect_slot);
-
-
-private:
-    ALCcontext* context_{};
-}; // EaxAlEffectSlotDeleter
-
-using EaxAlEffectSlotUPtr = std::unique_ptr<ALeffectslot, EaxAlEffectSlotDeleter>;
+using EaxAlEffectSlotUPtr = std::unique_ptr<ALeffectslot, ALeffectslot::EaxDeleter>;
 
 
 EaxAlEffectSlotUPtr eax_create_al_effect_slot(
