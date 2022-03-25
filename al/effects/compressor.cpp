@@ -98,10 +98,10 @@ public:
     EaxCompressorEffect();
 
 
-    // [[nodiscard]]
-    bool dispatch(
-        const EaxEaxCall& eax_call) override;
+    void dispatch(const EaxEaxCall& eax_call) override;
 
+    // [[nodiscard]]
+    bool apply_deferred() override;
 
 private:
     EAXAGCCOMPRESSORPROPERTIES eax_{};
@@ -111,44 +111,21 @@ private:
 
     void set_eax_defaults();
 
-
     void set_efx_on_off();
-
     void set_efx_defaults();
 
+    void get(const EaxEaxCall& eax_call);
 
-    // [[nodiscard]]
-    bool get(
-        const EaxEaxCall& eax_call);
+    void validate_on_off(unsigned long ulOnOff);
+    void validate_all(const EAXAGCCOMPRESSORPROPERTIES& eax_all);
 
+    void defer_on_off(unsigned long ulOnOff);
+    void defer_all(const EAXAGCCOMPRESSORPROPERTIES& eax_all);
 
-    void validate_on_off(
-        unsigned long ulOnOff);
+    void defer_on_off(const EaxEaxCall& eax_call);
+    void defer_all(const EaxEaxCall& eax_call);
 
-    void validate_all(
-        const EAXAGCCOMPRESSORPROPERTIES& eax_all);
-
-
-    void defer_on_off(
-        unsigned long ulOnOff);
-
-    void defer_all(
-        const EAXAGCCOMPRESSORPROPERTIES& eax_all);
-
-
-    void defer_on_off(
-        const EaxEaxCall& eax_call);
-
-    void defer_all(
-        const EaxEaxCall& eax_call);
-
-
-    // [[nodiscard]]
-    bool apply_deferred();
-
-    // [[nodiscard]]
-    bool set(
-        const EaxEaxCall& eax_call);
+    void set(const EaxEaxCall& eax_call);
 }; // EaxCompressorEffect
 
 
@@ -173,10 +150,9 @@ EaxCompressorEffect::EaxCompressorEffect()
 }
 
 // [[nodiscard]]
-bool EaxCompressorEffect::dispatch(
-    const EaxEaxCall& eax_call)
+void EaxCompressorEffect::dispatch(const EaxEaxCall& eax_call)
 {
-    return eax_call.is_get() ? get(eax_call) : set(eax_call);
+    eax_call.is_get() ? get(eax_call) : set(eax_call);
 }
 
 void EaxCompressorEffect::set_eax_defaults()
@@ -201,11 +177,9 @@ void EaxCompressorEffect::set_efx_defaults()
     set_efx_on_off();
 }
 
-// [[nodiscard]]
-bool EaxCompressorEffect::get(
-    const EaxEaxCall& eax_call)
+void EaxCompressorEffect::get(const EaxEaxCall& eax_call)
 {
-    switch (eax_call.get_property_id())
+    switch(eax_call.get_property_id())
     {
         case EAXAGCCOMPRESSOR_NONE:
             break;
@@ -221,8 +195,6 @@ bool EaxCompressorEffect::get(
         default:
             throw EaxCompressorEffectException{"Unsupported property id."};
     }
-
-    return false;
 }
 
 void EaxCompressorEffect::validate_on_off(
@@ -294,11 +266,9 @@ bool EaxCompressorEffect::apply_deferred()
     return true;
 }
 
-// [[nodiscard]]
-bool EaxCompressorEffect::set(
-    const EaxEaxCall& eax_call)
+void EaxCompressorEffect::set(const EaxEaxCall& eax_call)
 {
-    switch (eax_call.get_property_id())
+    switch(eax_call.get_property_id())
     {
         case EAXAGCCOMPRESSOR_NONE:
             break;
@@ -314,13 +284,6 @@ bool EaxCompressorEffect::set(
         default:
             throw EaxCompressorEffectException{"Unsupported property id."};
     }
-
-    if (!eax_call.is_deferred())
-    {
-        return apply_deferred();
-    }
-
-    return false;
 }
 
 } // namespace

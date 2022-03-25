@@ -17,10 +17,11 @@ public:
     const ALenum al_effect_type_;
     EffectProps al_effect_props_{};
 
+    virtual void dispatch(const EaxEaxCall& eax_call) = 0;
+
     // Returns "true" if any immediated property was changed.
     // [[nodiscard]]
-    virtual bool dispatch(
-        const EaxEaxCall& eax_call) = 0;
+    virtual bool apply_deferred() = 0;
 }; // EaxEffect
 
 
