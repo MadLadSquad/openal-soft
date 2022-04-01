@@ -50,8 +50,8 @@ enum FamCount : size_t { };
 #define DEF_FAM_NEWDEL(T, FamMem)                                             \
     static constexpr size_t Sizeof(size_t count) noexcept                     \
     {                                                                         \
-        return std::max<size_t>(sizeof(T),                                    \
-            decltype(FamMem)::Sizeof(count, offsetof(T, FamMem)));            \
+        return std::max(decltype(FamMem)::Sizeof(count, offsetof(T, FamMem)), \
+            sizeof(T));                                                       \
     }                                                                         \
                                                                               \
     void *operator new(size_t /*size*/, FamCount count)                       \
@@ -100,9 +100,6 @@ template<typename T, std::size_t N, typename U, std::size_t M>
 constexpr bool operator==(const allocator<T,N>&, const allocator<U,M>&) noexcept { return true; }
 template<typename T, std::size_t N, typename U, std::size_t M>
 constexpr bool operator!=(const allocator<T,N>&, const allocator<U,M>&) noexcept { return false; }
-
-template<size_t alignment, typename T>
-[[gnu::assume_aligned(alignment)]] constexpr T* assume_aligned(T *ptr) noexcept { return ptr; }
 
 
 template<typename T, typename ...Args>
@@ -189,8 +186,8 @@ struct FlexArrayStorage {
 
     static constexpr size_t Sizeof(size_t count, size_t base=0u) noexcept
     {
-        return std::max<size_t>(offsetof(FlexArrayStorage, mArray) + sizeof(T)*count,
-            sizeof(FlexArrayStorage)) + base;
+        const size_t len{sizeof(T)*count};
+        return std::max(offsetof(FlexArrayStorage,mArray)+len, sizeof(FlexArrayStorage)) + base;
     }
 
     FlexArrayStorage(size_t size) : mSize{size}
@@ -211,8 +208,8 @@ struct FlexArrayStorage<T,alignment,false> {
 
     static constexpr size_t Sizeof(size_t count, size_t base) noexcept
     {
-        return std::max<size_t>(offsetof(FlexArrayStorage, mArray) + sizeof(T)*count,
-            sizeof(FlexArrayStorage)) + base;
+        const size_t len{sizeof(T)*count};
+        return std::max(offsetof(FlexArrayStorage,mArray)+len, sizeof(FlexArrayStorage)) + base;
     }
 
     FlexArrayStorage(size_t size) : mSize{size}

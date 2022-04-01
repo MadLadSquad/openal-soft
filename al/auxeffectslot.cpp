@@ -915,7 +915,7 @@ END_API_FUNC
 ALeffectslot::ALeffectslot()
 {
     EffectStateFactory *factory{getFactoryByType(EffectSlotType::None)};
-    assert(factory != nullptr);
+    if(!factory) throw std::runtime_error{"Failed to get null effect factory"};
 
     al::intrusive_ptr<EffectState> state{factory->create()};
     Effect.State = state;
@@ -1297,13 +1297,6 @@ bool ALeffectslot::eax_set_fx_slot_all(
     const auto is_occlusion_lf_ratio_modified = eax_set_fx_slot_occlusion_lf_ratio(eax_fx_slot.flOcclusionLFRatio);
 
     return is_occlusion_modified || is_occlusion_lf_ratio_modified;
-}
-
-// [[nodiscard]]
-bool ALeffectslot::eax_dispatch(
-    const EaxEaxCall& eax_call)
-{
-    return eax_call.is_get() ? eax_get(eax_call) : eax_set(eax_call);
 }
 
 void ALeffectslot::eax_unlock_legacy() noexcept
