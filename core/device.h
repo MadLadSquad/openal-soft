@@ -57,9 +57,11 @@ enum class RenderMode : unsigned char {
 };
 
 enum class StereoEncoding : unsigned char {
-    Normal,
+    Basic,
     Uhj,
-    Hrtf
+    Hrtf,
+
+    Default = Basic
 };
 
 
@@ -195,7 +197,7 @@ struct DeviceBase {
     };
 
     /* Persistent storage for HRTF mixing. */
-    alignas(16) float2 HrtfAccumData[BufferLineSize + HrirLength + HrtfDirectDelay];
+    alignas(16) float2 HrtfAccumData[BufferLineSize + HrirLength];
 
     /* Mixing buffer used by the Dry mix and Real output. */
     al::vector<FloatBufferLine, 16> MixBuffer;

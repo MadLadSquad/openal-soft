@@ -105,14 +105,26 @@ ALCboolean ALC_APIENTRY alcReopenDeviceSOFT(ALCdevice *device, const ALCchar *de
 #define ALC_ANY_SOFT                             0x19AD
 /*#define ALC_MONO_SOFT                            0x1500*/
 /*#define ALC_STEREO_SOFT                          0x1501*/
-#define ALC_STEREO_PLAIN_SOFT                    0x19AE
+#define ALC_STEREO_BASIC_SOFT                    0x19AE
 #define ALC_STEREO_UHJ_SOFT                      0x19AF
-#define ALC_STEREO_HRTF_SOFT                     0x1992 /* =ALC_HRTF_SOFT */
+#define ALC_STEREO_HRTF_SOFT                     0x19B2
 /*#define ALC_QUAD_SOFT                            0x1503*/
 /*#define ALC_5POINT1_SOFT                         0x1504*/
 /*#define ALC_6POINT1_SOFT                         0x1505*/
 /*#define ALC_7POINT1_SOFT                         0x1506*/
 #endif
+
+
+/* Non-standard export. Not part of any extension. */
+AL_API const ALchar* AL_APIENTRY alsoft_get_version(void);
+
+
+/* Functions from abandoned extenions. */
+AL_API void AL_APIENTRY alSourceQueueBufferLayersSOFT(ALuint src, ALsizei nb,
+    const ALuint *buffers);
+
+AL_API ALint64SOFT AL_APIENTRY alGetInteger64SOFT(ALenum pname);
+AL_API void AL_APIENTRY alGetInteger64vSOFT(ALenum pname, ALint64SOFT *values);
 
 #ifdef __cplusplus
 } /* extern "C" */
