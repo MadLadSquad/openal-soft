@@ -82,17 +82,17 @@ option(ALSOFT_DLOPEN  "Check for the dlopen API for loading optional libs"  ON)
 
 option(ALSOFT_WERROR  "Treat compile warnings as errors"      OFF)
 
-option(ALSOFT_UTILS "Build utility programs"  OFF)
+option(ALSOFT_UTILS "Build utility programs"  ON)
 option(ALSOFT_NO_CONFIG_UTIL "Disable building the alsoft-config utility" OFF)
 
-option(ALSOFT_EXAMPLES  "Build example programs"  OFF)
+option(ALSOFT_EXAMPLES  "Build example programs"  ON)
 
 option(ALSOFT_INSTALL "Install main library" ON)
-option(ALSOFT_INSTALL_CONFIG "Install alsoft.conf sample configuration file" OFF)
+option(ALSOFT_INSTALL_CONFIG "Install alsoft.conf sample configuration file" ON)
 option(ALSOFT_INSTALL_HRTF_DATA "Install HRTF data files" ON)
 option(ALSOFT_INSTALL_AMBDEC_PRESETS "Install AmbDec preset files" ON)
-option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)" OFF)
-option(ALSOFT_INSTALL_UTILS "Install utility programs (openal-info, alsoft-config, ...)" OFF)
+option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)" ON)
+option(ALSOFT_INSTALL_UTILS "Install utility programs (openal-info, alsoft-config, ...)" ON)
 option(ALSOFT_UPDATE_BUILD_VERSION "Update git build version info" ON)
 
 option(ALSOFT_EAX "Enable legacy EAX extensions" ${WIN32})
@@ -150,8 +150,8 @@ if(NOT LIBTYPE)
 endif()
 
 set(LIB_MAJOR_VERSION "1")
-set(LIB_MINOR_VERSION "21")
-set(LIB_REVISION "1")
+set(LIB_MINOR_VERSION "22")
+set(LIB_REVISION "0")
 set(LIB_VERSION "${LIB_MAJOR_VERSION}.${LIB_MINOR_VERSION}.${LIB_REVISION}")
 set(LIB_VERSION_NUM ${LIB_MAJOR_VERSION},${LIB_MINOR_VERSION},${LIB_REVISION},0)
 
@@ -1581,6 +1581,122 @@ if(ALSOFT_UTILS)
 
     if(NOT ALSOFT_NO_CONFIG_UTIL)
         add_subdirectory(utils/alsoft-config)
+    endif()
+    message(STATUS "")
+endif()
+
+
+# Add a static library with common functions used by multiple example targets
+add_library(ex-common STATIC EXCLUDE_FROM_ALL
+    examples/common/alhelpers.c
+    examples/common/alhelpers.h)
+target_compile_definitions(ex-common PUBLIC ${CPP_DEFS})
+target_include_directories(ex-common PUBLIC ${OpenAL_SOURCE_DIR}/common)
+target_compile_options(ex-common PUBLIC ${C_FLAGS})
+target_link_libraries(ex-common PUBLIC OpenAL PRIVATE ${RT_LIB})
+
+if(ALSOFT_EXAMPLES)
+    add_executable(altonegen examples/altonegen.c)
+    target_link_libraries(altonegen PRIVATE ${LINKER_FLAGS} ${MATH_LIB} ex-common ${UNICODE_FLAG})
+
+    add_executable(alrecord examples/alrecord.c)
+    target_link_libraries(alrecord PRIVATE ${LINKER_FLAGS} ex-common ${UNICODE_FLAG})
+
+    if(ALSOFT_INSTALL_EXAMPLES)
+        set(EXTRA_INSTALLS ${EXTRA_INSTALLS} altonegen alrecord)
+    endif()
+
+    message(STATUS "Building example programs")
+
+    if(SNDFILE_FOUND)
+        add_executable(alplay examples/alplay.c)
+        target_link_libraries(alplay PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        add_executable(alstream examples/alstream.c)
+        target_link_libraries(alstream PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        add_executable(alreverb examples/alreverb.c)
+        target_link_libraries(alreverb PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        add_executable(almultireverb examples/almultireverb.c)
+        target_link_libraries(almultireverb
+            PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common ${MATH_LIB} ${UNICODE_FLAG})
+
+        add_executable(allatency examples/allatency.c)
+        target_link_libraries(allatency PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        add_executable(alhrtf examples/alhrtf.c)
+        target_link_libraries(alhrtf
+            PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common ${MATH_LIB} ${UNICODE_FLAG})
+
+        add_executable(alstreamcb examples/alstreamcb.cpp)
+        target_link_libraries(alstreamcb PRIVATE ${LINKER_FLAGS} SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        add_executable(alconvolve examples/alconvolve.c)
+        target_link_libraries(alconvolve PRIVATE ${LINKER_FLAGS} common SndFile::SndFile ex-common
+            ${UNICODE_FLAG})
+
+        if(ALSOFT_INSTALL_EXAMPLES)
+            set(EXTRA_INSTALLS ${EXTRA_INSTALLS} alplay alstream alreverb almultireverb allatency
+                alhrtf)
+        endif()
+
+        message(STATUS "Building SndFile example programs")
+    endif()
+
+    if(SDL2_FOUND)
+        add_executable(alloopback examples/alloopback.c)
+        target_include_directories(alloopback PRIVATE ${SDL2_INCLUDE_DIR})
+        target_link_libraries(alloopback
+            PRIVATE ${LINKER_FLAGS} ${SDL2_LIBRARY} ex-common ${MATH_LIB})
+
+        if(ALSOFT_INSTALL_EXAMPLES)
+            set(EXTRA_INSTALLS ${EXTRA_INSTALLS} alloopback)
+        endif()
+
+        message(STATUS "Building SDL example programs")
+
+        set(FFVER_OK FALSE)
+        if(FFMPEG_FOUND)
+            set(FFVER_OK TRUE)
+            if(AVFORMAT_VERSION VERSION_LESS "57.56.101")
+                message(STATUS "libavformat is too old! (${AVFORMAT_VERSION}, wanted 57.56.101)")
+                set(FFVER_OK FALSE)
+            endif()
+            if(AVCODEC_VERSION VERSION_LESS "57.64.101")
+                message(STATUS "libavcodec is too old! (${AVCODEC_VERSION}, wanted 57.64.101)")
+                set(FFVER_OK FALSE)
+            endif()
+            if(AVUTIL_VERSION VERSION_LESS "55.34.101")
+                message(STATUS "libavutil is too old! (${AVUTIL_VERSION}, wanted 55.34.101)")
+                set(FFVER_OK FALSE)
+            endif()
+            if(SWSCALE_VERSION VERSION_LESS "4.2.100")
+                message(STATUS "libswscale is too old! (${SWSCALE_VERSION}, wanted 4.2.100)")
+                set(FFVER_OK FALSE)
+            endif()
+            if(SWRESAMPLE_VERSION VERSION_LESS "2.3.100")
+                message(STATUS "libswresample is too old! (${SWRESAMPLE_VERSION}, wanted 2.3.100)")
+                set(FFVER_OK FALSE)
+            endif()
+        endif()
+        if(FFVER_OK)
+            add_executable(alffplay examples/alffplay.cpp)
+            target_include_directories(alffplay
+                PRIVATE ${SDL2_INCLUDE_DIR} ${FFMPEG_INCLUDE_DIRS})
+            target_link_libraries(alffplay
+                PRIVATE ${LINKER_FLAGS} ${SDL2_LIBRARY} ${FFMPEG_LIBRARIES} ex-common)
+
+            if(ALSOFT_INSTALL_EXAMPLES)
+                set(EXTRA_INSTALLS ${EXTRA_INSTALLS} alffplay)
+            endif()
+            message(STATUS "Building SDL+FFmpeg example programs")
+        endif()
     endif()
     message(STATUS "")
 endif()
