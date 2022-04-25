@@ -3,10 +3,14 @@ name: Create automatic pr
 env:
   REPO_NAME: "kcat/openal-soft"
   BRANCH: "master"
+  UPSTREAM_BRANCH: "master"
   NAME: "openal-soft"
+  
 on:
   schedule:
     - cron:  "0 0 * * *"
+  push:
+    branches: [master]
 
 jobs:
   Update-Fork:
@@ -16,16 +20,23 @@ jobs:
         uses: actions/checkout@v2
       - name: extract git commit data
         uses: rlespinasse/git-commit-data-action@v1.x
-      - name: Update data
-        run: git clone https://github.com/${{ env.REPO_NAME }}.git --recursive -b ${{ env.BRANCH }} && cp -r ${{ env.NAME }}/* . && rm -rf ${{ env.NAME }}
-      - name: Create PR
-        uses: peter-evans/create-pull-request@v4
+      - name: Check if branches are different
+        shell: bash
+        id: check
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/${{ env.REPO_NAME }}.git
+          git fetch
+          git fetch upstream
+          ahead=$(git rev-list --count origin/${{ env.BRANCH }}..upstream/${{ env.UPSTREAM_BRANCH }})
+          echo "::set-output name=ahead::${ahead}"
+      - name: Issue
+        if: steps.check.outputs.ahead != '0'
+        uses: JasonEtco/create-an-issue@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          branch: "auto"
-          base: "master"
-          title: "Daily update PR"
-          committer: ${{ env.GIT_COMMIT_AUTHOR_NAME }} <${{ env.GIT_COMMIT_AUTHOR_EMAIL }}">
-          author: ${{ env.GIT_COMMIT_AUTHOR_NAME }} <${{ env.GIT_COMMIT_AUTHOR_EMAIL }}">
-          body: "Daily PR to update your dependencies"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          delete-branch: true
+          filename: .github/auto-issue-template.md
+          update_existing: true
+          search_existing: all
