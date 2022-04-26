@@ -28,7 +28,7 @@ jobs:
           first-branch: ${{ env.BRANCH }}
           second-branch: ${{ env.UPSTREAM_BRANCH }}
       - name: Test
-        run: "echo '${{ steps.check.outputs.behind }} / steps.check.outputs.ahead'"
+        run: "echo '${{ steps.check.outputs.behind }} / ${{ steps.check.outputs.ahead }}'"
       - name: Issue
         if: steps.check.outputs.behind != 0
         uses: JasonEtco/create-an-issue@v2
