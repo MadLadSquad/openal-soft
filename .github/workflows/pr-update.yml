@@ -28,7 +28,7 @@ jobs:
           first-branch: master
           second-branch: master
       - name: Issue
-        if: steps.check.outputs.ahead > 0
+        if: steps.check.outputs.behind > 0
         uses: JasonEtco/create-an-issue@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
