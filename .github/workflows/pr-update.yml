@@ -22,7 +22,7 @@ jobs:
         uses: rlespinasse/git-commit-data-action@v1.x
       - name: Check for synced branches action
         id: check
-        uses: MadLadSquad/check-for-synced-branches-action@v0.1.0.5
+        uses: MadLadSquad/check-for-synced-branches-action@master
         with:
           upstream-url: "https://github.com/${{ env.REPO_NAME }}"
           first-branch: master
