@@ -21,7 +21,7 @@ jobs:
       - name: extract git commit data
         uses: rlespinasse/git-commit-data-action@v1.x
       - name: Check for synced branches action
-        uses: MadLadSquad/check-for-synced-branches-action@v0.1.0.3
+        uses: MadLadSquad/check-for-synced-branches-action@v0.1.0.4
         id: check
         with:
           upstream-url: "https://github.com/${{ env.REPO_NAME }}"
