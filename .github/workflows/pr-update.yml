@@ -24,7 +24,7 @@ jobs:
         id: check
         uses: MadLadSquad/check-for-synced-branches-action@master
         with:
-          upstream-url: "https://github.com/${{ env.REPO_NAME }}"
+          upstream-url: "https://github.com/${{ env.REPO_NAME }}.git"
           first-branch: ${{ env.BRANCH }}
           second-branch: ${{ env.UPSTREAM_BRANCH }}
       - name: Issue
