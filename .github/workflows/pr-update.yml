@@ -27,6 +27,8 @@ jobs:
           upstream-url: "https://github.com/${{ env.REPO_NAME }}"
           first-branch: master
           second-branch: master
+      - name: Check
+        run: "echo '${{ steps.check.outputs.behind }} / ${{ steps.check.outputs.ahead }}'"
       - name: Issue
         if: steps.check.outputs.behind > 0
         uses: JasonEtco/create-an-issue@v2
