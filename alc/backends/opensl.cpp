@@ -71,7 +71,8 @@ constexpr SLuint32 GetChannelMask(DevFmtChannels chans) noexcept
     case DevFmtX61: return SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT |
         SL_SPEAKER_FRONT_CENTER | SL_SPEAKER_LOW_FREQUENCY | SL_SPEAKER_BACK_CENTER |
         SL_SPEAKER_SIDE_LEFT | SL_SPEAKER_SIDE_RIGHT;
-    case DevFmtX71: return SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT |
+    case DevFmtX71:
+    case DevFmtX3D71: return SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT |
         SL_SPEAKER_FRONT_CENTER | SL_SPEAKER_LOW_FREQUENCY | SL_SPEAKER_BACK_LEFT |
         SL_SPEAKER_BACK_RIGHT | SL_SPEAKER_SIDE_LEFT | SL_SPEAKER_SIDE_RIGHT;
     case DevFmtAmbi3D:
@@ -612,6 +613,8 @@ void OpenSLPlayback::stop()
             result = VCALL(bufferQueue,GetState)(&state);
         } while(SL_RESULT_SUCCESS == result && state.count > 0);
         PRINTERR(result, "bufferQueue->GetState");
+
+        mRing.reset();
     }
 }
 
