@@ -115,12 +115,26 @@ constexpr char pwireDevice[] = "PipeWire Output";
 constexpr char pwireInput[] = "PipeWire Input";
 
 
+bool check_version(const char *version)
+{
+    /* There doesn't seem to be a function to get the version as an integer, so
+     * instead we have to parse the string, which hopefully won't break in the
+     * future.
+     */
+    int major{0}, minor{0}, revision{0};
+    int ret{sscanf(version, "%d.%d.%d", &major, &minor, &revision)};
+    if(ret == 3 && PW_CHECK_VERSION(major, minor, revision))
+        return true;
+    return false;
+}
+
 #ifdef HAVE_DYNLOAD
 #define PWIRE_FUNCS(MAGIC)                                                    \
     MAGIC(pw_context_connect)                                                 \
     MAGIC(pw_context_destroy)                                                 \
     MAGIC(pw_context_new)                                                     \
     MAGIC(pw_core_disconnect)                                                 \
+    MAGIC(pw_get_library_version)                                             \
     MAGIC(pw_init)                                                            \
     MAGIC(pw_properties_free)                                                 \
     MAGIC(pw_properties_new)                                                  \
@@ -134,7 +148,6 @@ constexpr char pwireInput[] = "PipeWire Input";
     MAGIC(pw_stream_dequeue_buffer)                                           \
     MAGIC(pw_stream_destroy)                                                  \
     MAGIC(pw_stream_get_state)                                                \
-    MAGIC(pw_stream_get_time)                                                 \
     MAGIC(pw_stream_new)                                                      \
     MAGIC(pw_stream_queue_buffer)                                             \
     MAGIC(pw_stream_set_active)                                               \
@@ -146,11 +159,19 @@ constexpr char pwireInput[] = "PipeWire Input";
     MAGIC(pw_thread_loop_lock)                                                \
     MAGIC(pw_thread_loop_wait)                                                \
     MAGIC(pw_thread_loop_signal)                                              \
-    MAGIC(pw_thread_loop_unlock)                                              \
+    MAGIC(pw_thread_loop_unlock)
+#if PW_CHECK_VERSION(0,3,50)
+#define PWIRE_FUNCS2(MAGIC)                                                   \
+    MAGIC(pw_stream_get_time_n)
+#else
+#define PWIRE_FUNCS2(MAGIC)                                                   \
+    MAGIC(pw_stream_get_time)
+#endif
 
 void *pwire_handle;
 #define MAKE_FUNC(f) decltype(f) * p##f;
 PWIRE_FUNCS(MAKE_FUNC)
+PWIRE_FUNCS2(MAKE_FUNC)
 #undef MAKE_FUNC
 
 bool pwire_load()
@@ -173,6 +194,7 @@ bool pwire_load()
     if(p##f == nullptr) missing_funcs += "\n" #f;                             \
 } while(0);
     PWIRE_FUNCS(LOAD_FUNC)
+    PWIRE_FUNCS2(LOAD_FUNC)
 #undef LOAD_FUNC
 
     if(!missing_funcs.empty())
@@ -191,6 +213,7 @@ bool pwire_load()
 #define pw_context_destroy ppw_context_destroy
 #define pw_context_new ppw_context_new
 #define pw_core_disconnect ppw_core_disconnect
+#define pw_get_library_version ppw_get_library_version
 #define pw_init ppw_init
 #define pw_properties_free ppw_properties_free
 #define pw_properties_new ppw_properties_new
@@ -204,7 +227,6 @@ bool pwire_load()
 #define pw_stream_dequeue_buffer ppw_stream_dequeue_buffer
 #define pw_stream_destroy ppw_stream_destroy
 #define pw_stream_get_state ppw_stream_get_state
-#define pw_stream_get_time ppw_stream_get_time
 #define pw_stream_new ppw_stream_new
 #define pw_stream_queue_buffer ppw_stream_queue_buffer
 #define pw_stream_set_active ppw_stream_set_active
@@ -217,6 +239,12 @@ bool pwire_load()
 #define pw_thread_loop_stop ppw_thread_loop_stop
 #define pw_thread_loop_unlock ppw_thread_loop_unlock
 #define pw_thread_loop_wait ppw_thread_loop_wait
+#if PW_CHECK_VERSION(0,3,50)
+#define pw_stream_get_time_n ppw_stream_get_time_n
+#else
+inline auto pw_stream_get_time_n(pw_stream *stream, pw_time *ptime, size_t /*size*/)
+{ return ppw_stream_get_time(stream, ptime); }
+#endif
 #endif
 
 #else
@@ -1561,7 +1589,7 @@ ClockLatency PipeWirePlayback::getClockLatency()
     if(mStream)
     {
         MainloopLockGuard _{mLoop};
-        if(int res{pw_stream_get_time(mStream.get(), &ptime)})
+        if(int res{pw_stream_get_time_n(mStream.get(), &ptime, sizeof(ptime))})
             ERR("Failed to get PipeWire stream time (res: %d)\n", res);
     }
 
@@ -1916,6 +1944,15 @@ bool PipeWireBackendFactory::init()
 {
     if(!pwire_load())
         return false;
+
+    const char *version{pw_get_library_version()};
+    if(!check_version(version))
+    {
+        WARN("PipeWire version \"%s\" too old (%s or newer required)\n", version,
+            pw_get_headers_version());
+        return false;
+    }
+    TRACE("Found PipeWire version \"%s\" (%s or newer)\n", version, pw_get_headers_version());
 
     pw_init(0, nullptr);
     if(!gEventHandler.init())
