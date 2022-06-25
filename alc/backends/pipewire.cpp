@@ -119,6 +119,11 @@ _Pragma("GCC diagnostic pop")
 
 namespace {
 
+/* Added in 0.3.33, but we currently only require 0.3.23. */
+#ifndef PW_KEY_NODE_RATE
+#define PW_KEY_NODE_RATE "node.rate"
+#endif
+
 using std::chrono::seconds;
 using std::chrono::nanoseconds;
 using uint = unsigned int;
@@ -135,7 +140,8 @@ bool check_version(const char *version)
      */
     int major{0}, minor{0}, revision{0};
     int ret{sscanf(version, "%d.%d.%d", &major, &minor, &revision)};
-    if(ret == 3 && PW_CHECK_VERSION(major, minor, revision))
+    if(ret == 3 && (major > PW_MAJOR || (major == PW_MAJOR && minor > PW_MINOR)
+        || (major == PW_MAJOR && minor == PW_MINOR && revision >= PW_MICRO)))
         return true;
     return false;
 }
