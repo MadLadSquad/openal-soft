@@ -143,7 +143,7 @@ void AddActiveEffectSlots(const al::span<ALeffectslot*> auxslots, ALCcontext *co
      */
     EffectSlotArray *newarray = EffectSlot::CreatePtrArray(newcount);
     auto slotiter = std::transform(auxslots.begin(), auxslots.end(), newarray->begin(),
-        [](ALeffectslot *auxslot) noexcept { return &auxslot->mSlot; });
+        [](ALeffectslot *auxslot) noexcept { return auxslot->mSlot; });
     std::copy(curarray->begin(), curarray->end(), slotiter);
 
     /* Remove any duplicates (first instance of each will be kept). */
@@ -191,7 +191,7 @@ void RemoveActiveEffectSlots(const al::span<ALeffectslot*> auxslots, ALCcontext 
     for(const ALeffectslot *auxslot : auxslots)
     {
         auto slot_match = [auxslot](EffectSlot *slot) noexcept -> bool
-        { return (slot == &auxslot->mSlot); };
+        { return (slot == auxslot->mSlot); };
         new_end = std::remove_if(newarray->begin(), new_end, slot_match);
     }
 
@@ -278,8 +278,8 @@ ALeffectslot *AllocEffectSlot(ALCcontext *context)
     auto slidx = static_cast<ALuint>(al::countr_zero(sublist->FreeMask));
     ASSUME(slidx < 64);
 
-    ALeffectslot *slot{al::construct_at(sublist->EffectSlots + slidx)};
-    aluInitEffectPanning(&slot->mSlot, context);
+    ALeffectslot *slot{al::construct_at(sublist->EffectSlots + slidx, context)};
+    aluInitEffectPanning(slot->mSlot, context);
 
     /* Add 1 to avoid source ID 0. */
     slot->id = ((lidx<<6) | slidx) + 1;
@@ -907,14 +907,16 @@ START_API_FUNC
 END_API_FUNC
 
 
-ALeffectslot::ALeffectslot()
+ALeffectslot::ALeffectslot(ALCcontext *context)
 {
     EffectStateFactory *factory{getFactoryByType(EffectSlotType::None)};
     if(!factory) throw std::runtime_error{"Failed to get null effect factory"};
 
     al::intrusive_ptr<EffectState> state{factory->create()};
     Effect.State = state;
-    mSlot.mEffectState = state.release();
+
+    mSlot = context->getEffectSlot();
+    mSlot->mEffectState = state.release();
 }
 
 ALeffectslot::~ALeffectslot()
@@ -926,7 +928,7 @@ ALeffectslot::~ALeffectslot()
         DecrementRef(Buffer->ref);
     Buffer = nullptr;
 
-    EffectSlotProps *props{mSlot.Update.exchange(nullptr)};
+    EffectSlotProps *props{mSlot->Update.exchange(nullptr)};
     if(props)
     {
         TRACE("Freed unapplied AuxiliaryEffectSlot update %p\n",
@@ -934,8 +936,9 @@ ALeffectslot::~ALeffectslot()
         delete props;
     }
 
-    if(mSlot.mEffectState)
-        mSlot.mEffectState->release();
+    if(mSlot->mEffectState)
+        mSlot->mEffectState->release();
+    mSlot->InUse = false;
 }
 
 ALenum ALeffectslot::initEffect(ALenum effectType, const EffectProps &effectProps,
@@ -997,14 +1000,14 @@ void ALeffectslot::updateProps(ALCcontext *context)
     /* Copy in current property values. */
     props->Gain = Gain;
     props->AuxSendAuto = AuxSendAuto;
-    props->Target = Target ? &Target->mSlot : nullptr;
+    props->Target = Target ? Target->mSlot : nullptr;
 
     props->Type = Effect.Type;
     props->Props = Effect.Props;
     props->State = Effect.State;
 
     /* Set the new container for updating internal parameters. */
-    props = mSlot.Update.exchange(props, std::memory_order_acq_rel);
+    props = mSlot->Update.exchange(props, std::memory_order_acq_rel);
     if(props)
     {
         /* If there was an unused update container, put it back in the
@@ -1052,10 +1055,7 @@ EffectSlotSubList::~EffectSlotSubList()
 }
 
 #ifdef ALSOFT_EAX
-void ALeffectslot::eax_initialize(
-    const EaxCall& call,
-    ALCcontext& al_context,
-    EaxFxSlotIndexValue index)
+void ALeffectslot::eax_initialize(ALCcontext& al_context, EaxFxSlotIndexValue index)
 {
     if(index >= EAX_MAX_FXSLOTS)
         eax_fail("Index out of range.");
@@ -1063,13 +1063,8 @@ void ALeffectslot::eax_initialize(
     mPropsDirty = true;
     eax_al_context_ = &al_context;
     eax_fx_slot_index_ = index;
-    eax_version_ = call.get_version();
+    eax_version_ = eax_al_context_->eax_get_version();
     eax_fx_slot_set_defaults();
-}
-
-const EAX50FXSLOTPROPERTIES& ALeffectslot::eax_get_eax_fx_slot() const noexcept
-{
-    return eax_;
 }
 
 void ALeffectslot::eax_commit()

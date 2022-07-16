@@ -63,12 +63,12 @@ struct ALeffectslot {
 
     RefCount ref{0u};
 
-    EffectSlot mSlot;
+    EffectSlot *mSlot{nullptr};
 
     /* Self ID */
     ALuint id{};
 
-    ALeffectslot();
+    ALeffectslot(ALCcontext *context);
     ALeffectslot(const ALeffectslot&) = delete;
     ALeffectslot& operator=(const ALeffectslot&) = delete;
     ~ALeffectslot();
@@ -82,12 +82,10 @@ struct ALeffectslot {
 
 #ifdef ALSOFT_EAX
 public:
-    void eax_initialize(
-        const EaxCall& call,
-        ALCcontext& al_context,
-        EaxFxSlotIndexValue index);
+    void eax_initialize(ALCcontext& al_context, EaxFxSlotIndexValue index);
 
-    const EAX50FXSLOTPROPERTIES& eax_get_eax_fx_slot() const noexcept;
+    const EAX50FXSLOTPROPERTIES& eax_get_eax_fx_slot() const noexcept
+    { return eax_; }
 
     // Returns `true` if all sources should be updated, or `false` otherwise.
     bool eax_dispatch(const EaxCall& call)
@@ -256,7 +254,7 @@ private:
     // sets a dirty flag only if the new value differs form the old one,
     // and assigns the new value.
     template<typename TValidator, EaxDirtyFlags TDirtyBit, typename TProperties>
-    void eax_fx_slot_set(const EaxCall& call, TProperties& dst, EaxDirtyFlags& dirty_flags)
+    static void eax_fx_slot_set(const EaxCall& call, TProperties& dst, EaxDirtyFlags& dirty_flags)
     {
         const auto& src = call.get_value<Exception, const TProperties>();
         TValidator{}(src);
