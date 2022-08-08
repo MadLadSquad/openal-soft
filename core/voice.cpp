@@ -854,13 +854,29 @@ void Voice::prepare(DeviceBase *device)
 
     if(mFmtChannels == FmtSuperStereo)
     {
-        mDecoder = std::make_unique<UhjStereoDecoder>();
-        mDecoderPadding = UhjStereoDecoder::sFilterDelay;
+        if(UhjQuality >= UhjLengthHq)
+        {
+            mDecoder = std::make_unique<UhjStereoDecoder<UhjLengthHq>>();
+            mDecoderPadding = UhjStereoDecoder<UhjLengthHq>::sFilterDelay;
+        }
+        else
+        {
+            mDecoder = std::make_unique<UhjStereoDecoder<UhjLengthLq>>();
+            mDecoderPadding = UhjStereoDecoder<UhjLengthLq>::sFilterDelay;
+        }
     }
     else if(IsUHJ(mFmtChannels))
     {
-        mDecoder = std::make_unique<UhjDecoder>();
-        mDecoderPadding = UhjDecoder::sFilterDelay;
+        if(UhjQuality >= UhjLengthHq)
+        {
+            mDecoder = std::make_unique<UhjDecoder<UhjLengthHq>>();
+            mDecoderPadding = UhjDecoder<UhjLengthHq>::sFilterDelay;
+        }
+        else
+        {
+            mDecoder = std::make_unique<UhjDecoder<UhjLengthLq>>();
+            mDecoderPadding = UhjDecoder<UhjLengthLq>::sFilterDelay;
+        }
     }
     else
     {
@@ -908,9 +924,9 @@ void Voice::prepare(DeviceBase *device)
          */
         if(mFmtChannels == FmtUHJ2)
         {
-            mChans[0].mAmbiLFScale = UhjDecoder::sWLFScale;
-            mChans[1].mAmbiLFScale = UhjDecoder::sXYLFScale;
-            mChans[2].mAmbiLFScale = UhjDecoder::sXYLFScale;
+            mChans[0].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sWLFScale;
+            mChans[1].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sXYLFScale;
+            mChans[2].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sXYLFScale;
         }
         mFlags.set(VoiceIsAmbisonic);
     }
@@ -930,9 +946,9 @@ void Voice::prepare(DeviceBase *device)
             chandata.mDryParams.NFCtrlFilter = device->mNFCtrlFilter;
             std::fill_n(chandata.mWetParams.begin(), device->NumAuxSends, SendParams{});
         }
-        mChans[0].mAmbiLFScale = UhjDecoder::sWLFScale;
-        mChans[1].mAmbiLFScale = UhjDecoder::sXYLFScale;
-        mChans[2].mAmbiLFScale = UhjDecoder::sXYLFScale;
+        mChans[0].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sWLFScale;
+        mChans[1].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sXYLFScale;
+        mChans[2].mAmbiLFScale = UhjDecoder<UhjLengthStd>::sXYLFScale;
         mFlags.set(VoiceIsAmbisonic);
     }
     else
