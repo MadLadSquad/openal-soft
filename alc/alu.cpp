@@ -906,7 +906,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
         auto calc_coeffs = [xpos,ypos,zpos](RenderMode mode)
         {
             if(mode != RenderMode::Pairwise)
-                return CalcDirectionCoeffs({xpos, ypos, zpos}, 0.0f);
+                return CalcDirectionCoeffs({xpos, ypos, zpos});
 
             /* Clamp Y, in case rounding errors caused it to end up outside
              * of -1...+1.
@@ -1044,6 +1044,10 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
          */
         for(size_t c{0};c < num_channels;c++)
         {
+            /* Skip LFE */
+            if(chans[c].channel == LFE)
+                continue;
+
             const auto coeffs = CalcAngleCoeffs(chans[c].angle, chans[c].elevation, 0.0f);
 
             for(uint i{0};i < NumSends;i++)
@@ -1147,7 +1151,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                 voice->mChans[c].mDryParams.Hrtf.Target.Gain = DryGain.Base;
 
                 /* Normal panning for auxiliary sends. */
-                const auto coeffs = CalcAngleCoeffs(chans[c].angle, chans[c].elevation, Spread);
+                const auto coeffs = CalcAngleCoeffs(chans[c].angle, chans[c].elevation, spread);
 
                 for(uint i{0};i < NumSends;i++)
                 {
