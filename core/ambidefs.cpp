@@ -11,6 +11,7 @@ namespace {
 using AmbiChannelFloatArray = std::array<float,MaxAmbiChannels>;
 
 constexpr auto inv_sqrt2f = static_cast<float>(1.0/al::numbers::sqrt2);
+constexpr auto inv_sqrt3f = static_cast<float>(1.0/al::numbers::sqrt3);
 
 
 constexpr std::array<std::array<float,4>,8> FirstOrderDecoder{{
@@ -24,14 +25,14 @@ constexpr std::array<std::array<float,4>,8> FirstOrderDecoder{{
     {{ 1.250000000e-01f, -1.250000000e-01f, -1.250000000e-01f, -1.250000000e-01f, }},
 }};
 constexpr std::array<AmbiChannelFloatArray,8> FirstOrderEncoder{{
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f, -0.57735026919f),
+    CalcAmbiCoeffs( inv_sqrt3f,  inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f,  inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f,  inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f,  inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f, -inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f, -inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f, -inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f, -inv_sqrt3f, -inv_sqrt3f),
 }};
 static_assert(FirstOrderDecoder.size() == FirstOrderEncoder.size(), "First-order mismatch");
 
@@ -115,20 +116,20 @@ constexpr std::array<std::array<float,9>,14> SecondOrderDecoder{{
     {{ 7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f, -7.142857143e-02f,  9.682458366e-02f,  9.682458366e-02f,  0.000000000e+00f,  9.682458366e-02f,  0.000000000e+00f, }},
 }};
 constexpr std::array<AmbiChannelFloatArray,14> SecondOrderEncoder{{
-    CalcAmbiCoeffs( 0.00000000000f,  0.00000000000f,  1.00000000000f),
-    CalcAmbiCoeffs( 0.00000000000f,  0.00000000000f, -1.00000000000f),
-    CalcAmbiCoeffs( 1.00000000000f,  0.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs(-1.00000000000f,  0.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs( 0.00000000000f,  1.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs( 0.00000000000f, -1.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f, -0.57735026919f),
+    CalcAmbiCoeffs( 0.0000000f,  0.0000000f,  1.0000000f),
+    CalcAmbiCoeffs( 0.0000000f,  0.0000000f, -1.0000000f),
+    CalcAmbiCoeffs( 1.0000000f,  0.0000000f,  0.0000000f),
+    CalcAmbiCoeffs(-1.0000000f,  0.0000000f,  0.0000000f),
+    CalcAmbiCoeffs( 0.0000000f,  1.0000000f,  0.0000000f),
+    CalcAmbiCoeffs( 0.0000000f, -1.0000000f,  0.0000000f),
+    CalcAmbiCoeffs( inv_sqrt3f,  inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f,  inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f,  inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f,  inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f, -inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs( inv_sqrt3f, -inv_sqrt3f, -inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f, -inv_sqrt3f,  inv_sqrt3f),
+    CalcAmbiCoeffs(-inv_sqrt3f, -inv_sqrt3f, -inv_sqrt3f),
 }};
 static_assert(SecondOrderDecoder.size() == SecondOrderEncoder.size(), "Second-order mismatch");
 
@@ -164,12 +165,12 @@ constexpr std::array<std::array<float,9>,6> SecondOrder2DDecoder{{
     {{ 1.666666667e-01f,  9.622504486e-02f, 0.0f,  1.666666667e-01f,  1.490711985e-01f, 0.0f, 0.0f, 0.0f,  8.606629658e-02f, }},
 }};
 constexpr std::array<AmbiChannelFloatArray,6> SecondOrder2DEncoder{{
-    CalcAmbiCoeffs(-0.50000000000f, 0.00000000000f,  0.86602540379f),
-    CalcAmbiCoeffs(-1.00000000000f, 0.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs(-0.50000000000f, 0.00000000000f, -0.86602540379f),
-    CalcAmbiCoeffs( 0.50000000000f, 0.00000000000f, -0.86602540379f),
-    CalcAmbiCoeffs( 1.00000000000f, 0.00000000000f,  0.00000000000f),
-    CalcAmbiCoeffs( 0.50000000000f, 0.00000000000f,  0.86602540379f),
+    CalcAmbiCoeffs(-0.50000000000f, 0.0f,  0.86602540379f),
+    CalcAmbiCoeffs(-1.00000000000f, 0.0f,  0.00000000000f),
+    CalcAmbiCoeffs(-0.50000000000f, 0.0f, -0.86602540379f),
+    CalcAmbiCoeffs( 0.50000000000f, 0.0f, -0.86602540379f),
+    CalcAmbiCoeffs( 1.00000000000f, 0.0f,  0.00000000000f),
+    CalcAmbiCoeffs( 0.50000000000f, 0.0f,  0.86602540379f),
 }};
 static_assert(SecondOrder2DDecoder.size() == SecondOrder2DEncoder.size(),
     "Second-order 2D mismatch");
@@ -232,14 +233,14 @@ constexpr std::array<AmbiChannelFloatArray,20> ThirdOrderEncoder{{
     CalcAmbiCoeffs( 0.00000000000f,  0.35682208976f, -0.93417235897f),
     CalcAmbiCoeffs( 0.00000000000f, -0.35682208976f,  0.93417235897f),
     CalcAmbiCoeffs( 0.00000000000f, -0.35682208976f, -0.93417235897f),
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f,  0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs( 0.57735026919f, -0.57735026919f, -0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f,  0.57735026919f),
-    CalcAmbiCoeffs(-0.57735026919f, -0.57735026919f, -0.57735026919f),
+    CalcAmbiCoeffs(     inv_sqrt3f,      inv_sqrt3f,      inv_sqrt3f),
+    CalcAmbiCoeffs(     inv_sqrt3f,      inv_sqrt3f,     -inv_sqrt3f),
+    CalcAmbiCoeffs(    -inv_sqrt3f,      inv_sqrt3f,      inv_sqrt3f),
+    CalcAmbiCoeffs(    -inv_sqrt3f,      inv_sqrt3f,     -inv_sqrt3f),
+    CalcAmbiCoeffs(     inv_sqrt3f,     -inv_sqrt3f,      inv_sqrt3f),
+    CalcAmbiCoeffs(     inv_sqrt3f,     -inv_sqrt3f,     -inv_sqrt3f),
+    CalcAmbiCoeffs(    -inv_sqrt3f,     -inv_sqrt3f,      inv_sqrt3f),
+    CalcAmbiCoeffs(    -inv_sqrt3f,     -inv_sqrt3f,     -inv_sqrt3f),
 }};
 static_assert(ThirdOrderDecoder.size() == ThirdOrderEncoder.size(), "Third-order mismatch");
 
@@ -277,14 +278,14 @@ constexpr std::array<std::array<float,16>,8> ThirdOrder2DDecoder{{
     {{ 1.250000000e-01f,  5.523559567e-02f, 0.0f,  1.333505242e-01f,  9.128709292e-02f, 0.0f, 0.0f, 0.0f,  9.128709292e-02f,  1.104247249e-01f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,  4.573941867e-02f, }},
 }};
 constexpr std::array<AmbiChannelFloatArray,8> ThirdOrder2DEncoder{{
-    CalcAmbiCoeffs(-0.38268343237f,  0.00000000000f,  0.92387953251f),
-    CalcAmbiCoeffs(-0.92387953251f,  0.00000000000f,  0.38268343237f),
-    CalcAmbiCoeffs(-0.92387953251f,  0.00000000000f, -0.38268343237f),
-    CalcAmbiCoeffs(-0.38268343237f,  0.00000000000f, -0.92387953251f),
-    CalcAmbiCoeffs( 0.38268343237f,  0.00000000000f, -0.92387953251f),
-    CalcAmbiCoeffs( 0.92387953251f,  0.00000000000f, -0.38268343237f),
-    CalcAmbiCoeffs( 0.92387953251f,  0.00000000000f,  0.38268343237f),
-    CalcAmbiCoeffs( 0.38268343237f,  0.00000000000f,  0.92387953251f),
+    CalcAmbiCoeffs(-0.38268343237f, 0.0f,  0.92387953251f),
+    CalcAmbiCoeffs(-0.92387953251f, 0.0f,  0.38268343237f),
+    CalcAmbiCoeffs(-0.92387953251f, 0.0f, -0.38268343237f),
+    CalcAmbiCoeffs(-0.38268343237f, 0.0f, -0.92387953251f),
+    CalcAmbiCoeffs( 0.38268343237f, 0.0f, -0.92387953251f),
+    CalcAmbiCoeffs( 0.92387953251f, 0.0f, -0.38268343237f),
+    CalcAmbiCoeffs( 0.92387953251f, 0.0f,  0.38268343237f),
+    CalcAmbiCoeffs( 0.38268343237f, 0.0f,  0.92387953251f),
 }};
 static_assert(ThirdOrder2DDecoder.size() == ThirdOrder2DEncoder.size(), "Third-order 2D mismatch");
 
@@ -369,22 +370,3 @@ const std::array<AmbiChannelFloatArray,9> AmbiScale::SecondOrder2DUp{CalcSecondO
 const std::array<AmbiChannelFloatArray,16> AmbiScale::ThirdOrderUp{CalcThirdOrderUp()};
 const std::array<AmbiChannelFloatArray,16> AmbiScale::ThirdOrder2DUp{CalcThirdOrder2DUp()};
 const std::array<AmbiChannelFloatArray,25> AmbiScale::FourthOrder2DUp{CalcFourthOrder2DUp()};
-
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale1O{{
-    2.000000000e+00f, 1.154700538e+00f
-}};
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale1O2D{{
-    1.414213562e+00f, 1.000000000e+00f
-}};
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale2O{{
-    1.972026594e+00f, 1.527525232e+00f, 7.888106377e-01f
-}};
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale2O2D{{
-    1.414213562e+00f, 1.224744871e+00f, 7.071067812e-01f
-}};
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale3O{{
-    1.865086714e+00f, 1.606093894e+00f, 1.142055301e+00f, 5.683795528e-01f
-}};
-const std::array<float,MaxAmbiOrder+1> AmbiScale::DecoderHFScale3O2D{{
-    1.414213562e+00f, 1.306562965e+00f, 1.000000000e+00f, 5.411961001e-01f
-}};
