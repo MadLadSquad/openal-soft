@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1060,10 +1061,20 @@ void aluInitRenderer(ALCdevice *device, int hrtf_id, al::optional<StereoEncoding
 
     if(stereomode.value_or(StereoEncoding::Default) == StereoEncoding::Uhj)
     {
-        if(UhjQuality != UhjQualityType::FIR256)
-            device->mUhjEncoder = std::make_unique<UhjEncoder<UhjLengthHq>>();
-        else
-            device->mUhjEncoder = std::make_unique<UhjEncoder<UhjLengthLq>>();
+        switch(UhjEncodeQuality)
+        {
+        case UhjQualityType::IIR:
+            device->mUhjEncoder = std::make_unique<UhjEncoderIIR>();
+            break;
+        case UhjQualityType::FIR256:
+            device->mUhjEncoder = std::make_unique<UhjEncoder<UhjLength256>>();
+            break;
+        case UhjQualityType::FIR512:
+            device->mUhjEncoder = std::make_unique<UhjEncoder<UhjLength512>>();
+            break;
+        }
+        assert(device->mUhjEncoder != nullptr);
+
         TRACE("UHJ enabled\n");
         InitUhjPanning(device);
         device->PostProcess = &ALCdevice::ProcessUhj;
