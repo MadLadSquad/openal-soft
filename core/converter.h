@@ -41,17 +41,16 @@ struct SampleConverter {
     using SampleOffset = std::chrono::duration<int64_t, std::ratio<1,MixerFracOne>>;
     SampleOffset currentInputDelay() const noexcept
     {
-        const int64_t prep{mSrcPrepCount - MaxResamplerEdge};
+        const int64_t prep{int64_t{mSrcPrepCount} - MaxResamplerEdge};
         return SampleOffset{(prep<<MixerFracBits) + mFracOffset};
     }
+
+    static std::unique_ptr<SampleConverter> Create(DevFmtType srcType, DevFmtType dstType,
+        size_t numchans, uint srcRate, uint dstRate, Resampler resampler);
 
     DEF_FAM_NEWDEL(SampleConverter, mChan)
 };
 using SampleConverterPtr = std::unique_ptr<SampleConverter>;
-
-SampleConverterPtr CreateSampleConverter(DevFmtType srcType, DevFmtType dstType, size_t numchans,
-    uint srcRate, uint dstRate, Resampler resampler);
-
 
 struct ChannelConverter {
     DevFmtType mSrcType{};

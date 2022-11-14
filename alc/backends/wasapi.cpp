@@ -698,7 +698,7 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     SetRTPriority();
     althrd_setname(MIXER_THREAD_NAME);
 
-    const uint frame_size{mDevice->frameSizeFromFmt()};
+    const uint frame_size{mFormat.Format.nChannels * mFormat.Format.wBitsPerSample / 8u};
     const uint update_size{mOrigUpdateSize};
     const UINT32 buffer_len{mOrigBufferSize};
     while(!mKillNow.load(std::memory_order_relaxed))
@@ -1200,11 +1200,11 @@ HRESULT WasapiPlayback::resetProxy()
     mBufferFilled = 0;
     if(mDevice->Frequency != mFormat.Format.nSamplesPerSec)
     {
-        mResampler = CreateSampleConverter(mDevice->FmtType, mDevice->FmtType,
+        mResampler = SampleConverter::Create(mDevice->FmtType, mDevice->FmtType,
             mFormat.Format.nChannels, mDevice->Frequency, mFormat.Format.nSamplesPerSec,
             Resampler::FastBSinc24);
         mResampleBuffer = std::make_unique<char[]>(size_t{mDevice->UpdateSize} *
-            mDevice->frameSizeFromFmt());
+            mFormat.Format.nChannels * mFormat.Format.wBitsPerSample / 8);
 
         TRACE("Created converter for %s/%s format, dst: %luhz (%u), src: %uhz (%u)\n",
             DevFmtChannelsString(mDevice->FmtChans), DevFmtTypeString(mDevice->FmtType),
@@ -1769,8 +1769,9 @@ HRESULT WasapiCapture::resetProxy()
 
     if(mDevice->Frequency != InputType.Format.nSamplesPerSec || mDevice->FmtType != srcType)
     {
-        mSampleConv = CreateSampleConverter(srcType, mDevice->FmtType, mDevice->channelsFromFmt(),
-            InputType.Format.nSamplesPerSec, mDevice->Frequency, Resampler::FastBSinc24);
+        mSampleConv = SampleConverter::Create(srcType, mDevice->FmtType,
+            mDevice->channelsFromFmt(), InputType.Format.nSamplesPerSec, mDevice->Frequency,
+            Resampler::FastBSinc24);
         if(!mSampleConv)
         {
             ERR("Failed to create converter for %s format, dst: %s %uhz, src: %s %luhz\n",
