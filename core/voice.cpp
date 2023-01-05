@@ -71,7 +71,20 @@ using HrtfMixerBlendFunc = void(*)(const float *InSamples, float2 *AccumSamples,
 HrtfMixerFunc MixHrtfSamples{MixHrtf_<CTag>};
 HrtfMixerBlendFunc MixHrtfBlendSamples{MixHrtfBlend_<CTag>};
 
-inline MixerFunc SelectMixer()
+inline MixerOutFunc SelectMixer()
+{
+#ifdef HAVE_NEON
+    if((CPUCapFlags&CPU_CAP_NEON))
+        return Mix_<NEONTag>;
+#endif
+#ifdef HAVE_SSE
+    if((CPUCapFlags&CPU_CAP_SSE))
+        return Mix_<SSETag>;
+#endif
+    return Mix_<CTag>;
+}
+
+inline MixerOneFunc SelectMixerOne()
 {
 #ifdef HAVE_NEON
     if((CPUCapFlags&CPU_CAP_NEON))
@@ -152,7 +165,8 @@ void Voice::InitMixer(al::optional<std::string> resampler)
             ResamplerDefault = iter->resampler;
     }
 
-    MixSamples = SelectMixer();
+    MixSamplesOut = SelectMixer();
+    MixSamplesOne = SelectMixerOne();
     MixHrtfBlendSamples = SelectHrtfBlendMixer();
     MixHrtfSamples = SelectHrtfMixer();
 }
@@ -297,14 +311,15 @@ void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *&bufferLoopItem,
 
 void LoadBufferCallback(VoiceBufferItem *buffer, const size_t numCallbackSamples,
     const FmtType sampleType, const FmtChannels sampleChannels, const size_t srcStep,
-    const size_t samplesToLoad, const al::span<float*> voiceSamples)
+    size_t samplesLoaded, const size_t samplesToLoad, const al::span<float*> voiceSamples)
 {
     /* Load what's left to play from the buffer */
-    const size_t remaining{minz(samplesToLoad, numCallbackSamples)};
-    LoadSamples(voiceSamples, 0, buffer->mSamples, 0, sampleType, sampleChannels, srcStep,
-        remaining);
+    const size_t remaining{minz(samplesToLoad-samplesLoaded, numCallbackSamples)};
+    LoadSamples(voiceSamples, samplesLoaded, buffer->mSamples, 0, sampleType, sampleChannels,
+        srcStep, remaining);
+    samplesLoaded += remaining;
 
-    if(const size_t toFill{samplesToLoad - remaining})
+    if(const size_t toFill{samplesToLoad - samplesLoaded})
     {
         for(auto *chanbuffer : voiceSamples)
         {
@@ -649,10 +664,11 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                     mFmtChannels, mFrameStep, samplesLoaded, SrcBufferSize, MixingSamples);
             else if(mFlags.test(VoiceIsCallback))
             {
-                if(!mFlags.test(VoiceCallbackStopped) && SrcBufferSize > mNumCallbackSamples)
+                const size_t remaining{SrcBufferSize - samplesLoaded};
+                if(!mFlags.test(VoiceCallbackStopped) && remaining > mNumCallbackSamples)
                 {
                     const size_t byteOffset{mNumCallbackSamples*mFrameSize};
-                    const size_t needBytes{SrcBufferSize*mFrameSize - byteOffset};
+                    const size_t needBytes{remaining*mFrameSize - byteOffset};
 
                     const int gotBytes{BufferListItem->mCallback(BufferListItem->mUserData,
                         &BufferListItem->mSamples[byteOffset], static_cast<int>(needBytes))};
@@ -664,10 +680,10 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                         mNumCallbackSamples += static_cast<uint>(gotBytes) / mFrameSize;
                     }
                     else
-                        mNumCallbackSamples = SrcBufferSize;
+                        mNumCallbackSamples = static_cast<uint>(remaining);
                 }
                 LoadBufferCallback(BufferListItem, mNumCallbackSamples, mFmtType, mFmtChannels,
-                    mFrameStep, SrcBufferSize, MixingSamples);
+                    mFrameStep, samplesLoaded, SrcBufferSize, MixingSamples);
             }
             else
                 LoadBufferQueue(BufferListItem, BufferLoopItem, DataPosUInt, mFmtType, mFmtChannels,
