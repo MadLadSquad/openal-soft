@@ -1775,19 +1775,19 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             else if(al::strcasecmp(hrtf, "auto") != 0)
                 ERR("Unexpected hrtf value: %s\n", hrtf);
         }
+    }
 
-        if(auto encopt = device->configValue<std::string>(nullptr, "stereo-encoding"))
-        {
-            const char *mode{encopt->c_str()};
-            if(al::strcasecmp(mode, "basic") == 0 || al::strcasecmp(mode, "panpot") == 0)
-                stereomode = StereoEncoding::Basic;
-            else if(al::strcasecmp(mode, "uhj") == 0)
-                stereomode = StereoEncoding::Uhj;
-            else if(al::strcasecmp(mode, "hrtf") == 0)
-                stereomode = StereoEncoding::Hrtf;
-            else
-                ERR("Unexpected stereo-encoding: %s\n", mode);
-        }
+    if(auto encopt = device->configValue<std::string>(nullptr, "stereo-encoding"))
+    {
+        const char *mode{encopt->c_str()};
+        if(al::strcasecmp(mode, "basic") == 0 || al::strcasecmp(mode, "panpot") == 0)
+            stereomode = StereoEncoding::Basic;
+        else if(al::strcasecmp(mode, "uhj") == 0)
+            stereomode = StereoEncoding::Uhj;
+        else if(al::strcasecmp(mode, "hrtf") == 0)
+            stereomode = StereoEncoding::Hrtf;
+        else
+            ERR("Unexpected stereo-encoding: %s\n", mode);
     }
 
     // Check for app-specified attributes
@@ -1903,7 +1903,15 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             else if(*optchans == DevFmtStereo)
             {
                 if(opthrtf)
-                    stereomode = *opthrtf ? StereoEncoding::Hrtf : StereoEncoding::Default;
+                {
+                    if(*opthrtf)
+                        stereomode = StereoEncoding::Hrtf;
+                    else
+                    {
+                        if(stereomode.value_or(StereoEncoding::Hrtf) == StereoEncoding::Hrtf)
+                            stereomode = StereoEncoding::Default;
+                    }
+                }
 
                 if(outmode == ALC_STEREO_BASIC_SOFT)
                     stereomode = StereoEncoding::Basic;
@@ -1917,6 +1925,17 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         }
         else
         {
+            if(opthrtf)
+            {
+                if(*opthrtf)
+                    stereomode = StereoEncoding::Hrtf;
+                else
+                {
+                    if(stereomode.value_or(StereoEncoding::Hrtf) == StereoEncoding::Hrtf)
+                        stereomode = StereoEncoding::Default;
+                }
+            }
+
             if(outmode != ALC_ANY_SOFT)
             {
                 using OutputMode = ALCdevice::OutputMode;
