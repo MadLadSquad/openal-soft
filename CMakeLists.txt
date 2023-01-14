@@ -108,7 +108,7 @@ option(ALSOFT_INSTALL_HRTF_DATA "Install HRTF data files" ON)
 option(ALSOFT_INSTALL_AMBDEC_PRESETS "Install AmbDec preset files" ON)
 option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)" OFF)
 option(ALSOFT_INSTALL_UTILS "Install utility programs (openal-info, alsoft-config, ...)" OFF)
-option(ALSOFT_UPDATE_BUILD_VERSION "Update git build version info" ON)
+option(ALSOFT_UPDATE_BUILD_VERSION "Update git build version info" OFF)
 
 option(ALSOFT_EAX "Enable legacy EAX extensions" ${WIN32})
 
