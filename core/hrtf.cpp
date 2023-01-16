@@ -257,7 +257,7 @@ void HrtfStore::getCoeffs(float elevation, float azimuth, float distance, float 
     delays[1] = fastf2u(d * float{1.0f/HrirDelayFracOne});
 
     /* Calculate the blended HRIR coefficients. */
-    float *coeffout{al::assume_aligned<16>(&coeffs[0][0])};
+    float *coeffout{al::assume_aligned<16>(coeffs[0].data())};
     coeffout[0] = PassthruCoeff * (1.0f-dirfact);
     coeffout[1] = PassthruCoeff * (1.0f-dirfact);
     std::fill_n(coeffout+2, size_t{HrirLength-1}*2, 0.0f);
@@ -373,7 +373,7 @@ void DirectHrtfState::build(const HrtfStore *Hrtf, const uint irSize, const bool
 
 namespace {
 
-std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, ushort irSize,
+std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, uint8_t irSize,
     const al::span<const HrtfStore::Field> fields,
     const al::span<const HrtfStore::Elevation> elevs, const HrirArray *coeffs,
     const ubyte2 *delays, const char *filename)
@@ -388,12 +388,10 @@ std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, ushort irSize,
     total += sizeof(std::declval<HrtfStore&>().mCoeffs[0])*irCount;
     total += sizeof(std::declval<HrtfStore&>().mDelays[0])*irCount;
 
-    void *ptr{al_calloc(16, total)};
-    std::unique_ptr<HrtfStore> Hrtf{al::construct_at(static_cast<HrtfStore*>(ptr))};
-    if(!Hrtf)
-        ERR("Out of memory allocating storage for %s.\n", filename);
-    else
+    std::unique_ptr<HrtfStore> Hrtf{};
+    if(void *ptr{al_calloc(16, total)})
     {
+        Hrtf.reset(al::construct_at(static_cast<HrtfStore*>(ptr)));
         InitRef(Hrtf->mRef, 1u);
         Hrtf->mSampleRate = rate;
         Hrtf->mIrSize = irSize;
@@ -432,6 +430,8 @@ std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, ushort irSize,
         Hrtf->mCoeffs = coeffs_;
         Hrtf->mDelays = delays_;
     }
+    else
+        ERR("Out of memory allocating storage for %s.\n", filename);
 
     return Hrtf;
 }
@@ -599,14 +599,14 @@ std::unique_ptr<HrtfStore> LoadHrtf00(std::istream &data, const char *filename)
     MirrorLeftHrirs({elevs.data(), elevs.size()}, coeffs.data(), delays.data());
 
     const HrtfStore::Field field[1]{{0.0f, evCount}};
-    return CreateHrtfStore(rate, irSize, field, {elevs.data(), elevs.size()}, coeffs.data(),
-        delays.data(), filename);
+    return CreateHrtfStore(rate, static_cast<uint8_t>(irSize), field, {elevs.data(), elevs.size()},
+        coeffs.data(), delays.data(), filename);
 }
 
 std::unique_ptr<HrtfStore> LoadHrtf01(std::istream &data, const char *filename)
 {
     uint rate{readle<uint32_t>(data)};
-    ushort irSize{readle<uint8_t>(data)};
+    uint8_t irSize{readle<uint8_t>(data)};
     ubyte evCount{readle<uint8_t>(data)};
     if(!data || data.eof())
     {
@@ -691,7 +691,7 @@ std::unique_ptr<HrtfStore> LoadHrtf02(std::istream &data, const char *filename)
     uint rate{readle<uint32_t>(data)};
     ubyte sampleType{readle<uint8_t>(data)};
     ubyte channelType{readle<uint8_t>(data)};
-    ushort irSize{readle<uint8_t>(data)};
+    uint8_t irSize{readle<uint8_t>(data)};
     ubyte fdCount{readle<uint8_t>(data)};
     if(!data || data.eof())
     {
@@ -957,7 +957,7 @@ std::unique_ptr<HrtfStore> LoadHrtf03(std::istream &data, const char *filename)
 
     uint rate{readle<uint32_t>(data)};
     ubyte channelType{readle<uint8_t>(data)};
-    ushort irSize{readle<uint8_t>(data)};
+    uint8_t irSize{readle<uint8_t>(data)};
     ubyte fdCount{readle<uint8_t>(data)};
     if(!data || data.eof())
     {
@@ -1429,7 +1429,7 @@ HrtfStorePtr GetLoadedHrtf(const std::string &name, const uint devrate)
          * sample rate.
          */
         const float newIrSize{std::round(static_cast<float>(hrtf->mIrSize) * rate_scale)};
-        hrtf->mIrSize = static_cast<uint>(minf(HrirLength, newIrSize));
+        hrtf->mIrSize = static_cast<uint8_t>(minf(HrirLength, newIrSize));
         hrtf->mSampleRate = devrate;
     }
 
