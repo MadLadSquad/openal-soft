@@ -72,8 +72,10 @@ enum FamCount : size_t { };
 
 namespace al {
 
-template<typename T, std::size_t alignment=alignof(T)>
+template<typename T, std::size_t Align=alignof(T)>
 struct allocator {
+    static constexpr std::size_t alignment{std::max(Align, alignof(T))};
+
     using value_type = T;
     using reference = T&;
     using const_reference = const T&;
@@ -85,7 +87,7 @@ struct allocator {
 
     template<typename U>
     struct rebind {
-        using other = allocator<U, (alignment<alignof(U))?alignof(U):alignment>;
+        using other = allocator<U, Align>;
     };
 
     constexpr explicit allocator() noexcept = default;
@@ -106,6 +108,17 @@ template<typename T, std::size_t N, typename U, std::size_t M>
 constexpr bool operator!=(const allocator<T,N>&, const allocator<U,M>&) noexcept { return false; }
 
 
+namespace detail_ {
+    template<typename... Ts>
+    using void_t = void;
+
+    template<typename T, typename = void>
+    constexpr bool has_to_address = false;
+    template<typename T>
+    constexpr bool has_to_address<T,
+        void_t<decltype(std::pointer_traits<T>::to_address(std::declval<const T&>()))>> = true;
+} // namespace detail_
+
 template<typename T>
 constexpr T *to_address(T *p) noexcept
 {
@@ -113,7 +126,11 @@ constexpr T *to_address(T *p) noexcept
     return p;
 }
 
-template<typename T>
+template<typename T, std::enable_if_t<detail_::has_to_address<T>,bool> = true>
+constexpr auto to_address(const T& p) noexcept
+{ return std::pointer_traits<T>::to_address(p); }
+
+template<typename T, std::enable_if_t<!detail_::has_to_address<T>,bool> = true>
 constexpr auto to_address(const T& p) noexcept
 { return to_address(p.operator->()); }
 
