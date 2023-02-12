@@ -48,7 +48,6 @@ struct SSETag;
 #ifdef HAVE_NEON
 struct NEONTag;
 #endif
-struct CopyTag;
 
 
 static_assert(!(sizeof(DeviceBase::MixerBufferLine)&15),
@@ -189,6 +188,11 @@ void SendSourceStoppedEvent(ContextBase *context, uint id)
 }
 
 
+void CopyResample(const InterpState*, const float *RESTRICT src, uint, const uint,
+    const al::span<float> dst)
+{ std::copy_n(src, dst.size(), dst.begin()); }
+
+
 const float *DoFilters(BiquadFilter &lpfilter, BiquadFilter &hpfilter, float *dst,
     const al::span<const float> src, int type)
 {
@@ -260,7 +264,7 @@ void LoadSamples(const al::span<float*> dstSamples, const size_t dstOffset, cons
 #undef HANDLE_FMT
 }
 
-void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *&bufferLoopItem,
+void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *bufferLoopItem,
     const size_t dataPosInt, const FmtType sampleType, const FmtChannels sampleChannels,
     const size_t srcStep, size_t samplesLoaded, const size_t samplesToLoad,
     const al::span<float*> voiceSamples)
@@ -268,11 +272,8 @@ void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *&bufferLoopItem,
     const size_t loopStart{buffer->mLoopStart};
     const size_t loopEnd{buffer->mLoopEnd};
 
-    /* If current pos is beyond the loop range, do not loop */
-    if(!bufferLoopItem || dataPosInt >= loopEnd)
+    if(!bufferLoopItem)
     {
-        bufferLoopItem = nullptr;
-
         /* Load what's left to play from the buffer */
         const size_t remaining{minz(samplesToLoad-samplesLoaded, buffer->mSampleLen-dataPosInt)};
         LoadSamples(voiceSamples, samplesLoaded, buffer->mSamples, dataPosInt, sampleType,
@@ -525,6 +526,15 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         OutPos = static_cast<uint>(sampleOffset);
     }
 
+    /* If the static voice's current position is beyond the buffer loop end
+     * position, disable looping.
+     */
+    if(mFlags.test(VoiceIsStatic) && BufferLoopItem)
+    {
+        if(DataPosInt >= 0 && static_cast<uint>(DataPosInt) >= BufferListItem->mLoopEnd)
+            BufferLoopItem = nullptr;
+    }
+
     if(!Counter)
     {
         /* No fading, just overwrite the old/current params. */
@@ -556,7 +566,7 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         MixingSamples.begin(), offset_bufferline);
 
     const ResamplerFunc Resample{(increment == MixerFracOne && DataPosFrac == 0) ?
-        Resample_<CopyTag,CTag> : mResampler};
+        CopyResample : mResampler};
     const uint PostPadding{MaxResamplerEdge + mDecoderPadding};
     uint buffers_done{0u};
     do {
@@ -714,8 +724,9 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         for(auto &chandata : mChans)
         {
             /* Resample, then apply ambisonic upsampling as needed. */
-            float *ResampledData{Resample(&mResampleState, *voiceSamples, DataPosFrac, increment,
-                {Device->ResampledData, DstBufferSize})};
+            float *ResampledData{Device->ResampledData};
+            Resample(&mResampleState, *voiceSamples, DataPosFrac, increment,
+                {ResampledData, DstBufferSize});
             ++voiceSamples;
 
             if(mFlags.test(VoiceIsAmbisonic))
