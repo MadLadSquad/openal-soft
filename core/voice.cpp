@@ -178,6 +178,49 @@ void Voice::InitMixer(al::optional<std::string> resampler)
 
 namespace {
 
+/* IMA ADPCM Stepsize table */
+constexpr int IMAStep_size[89] = {
+       7,    8,    9,   10,   11,   12,   13,   14,   16,   17,   19,
+      21,   23,   25,   28,   31,   34,   37,   41,   45,   50,   55,
+      60,   66,   73,   80,   88,   97,  107,  118,  130,  143,  157,
+     173,  190,  209,  230,  253,  279,  307,  337,  371,  408,  449,
+     494,  544,  598,  658,  724,  796,  876,  963, 1060, 1166, 1282,
+    1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660,
+    4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493,10442,
+   11487,12635,13899,15289,16818,18500,20350,22358,24633,27086,29794,
+   32767
+};
+
+/* IMA4 ADPCM Codeword decode table */
+constexpr int IMA4Codeword[16] = {
+    1, 3, 5, 7, 9, 11, 13, 15,
+   -1,-3,-5,-7,-9,-11,-13,-15,
+};
+
+/* IMA4 ADPCM Step index adjust decode table */
+constexpr int IMA4Index_adjust[16] = {
+   -1,-1,-1,-1, 2, 4, 6, 8,
+   -1,-1,-1,-1, 2, 4, 6, 8
+};
+
+/* MSADPCM Adaption table */
+constexpr int MSADPCMAdaption[16] = {
+    230, 230, 230, 230, 307, 409, 512, 614,
+    768, 614, 512, 409, 307, 230, 230, 230
+};
+
+/* MSADPCM Adaption Coefficient tables */
+constexpr int MSADPCMAdaptionCoeff[7][2] = {
+    { 256,    0 },
+    { 512, -256 },
+    {   0,    0 },
+    { 192,   64 },
+    { 240,    0 },
+    { 460, -208 },
+    { 392, -232 }
+};
+
+
 void SendSourceStoppedEvent(ContextBase *context, uint id)
 {
     RingBuffer *ring{context->mAsyncEvents.get()};
@@ -221,8 +264,9 @@ const float *DoFilters(BiquadFilter &lpfilter, BiquadFilter &hpfilter, float *ds
 
 
 template<FmtType Type>
-inline void LoadSamples(float *dstSamples, const al::byte *src, const size_t srcChan,
-    const size_t srcOffset, const size_t srcStep, const size_t samples) noexcept
+inline void LoadSamples(float *RESTRICT dstSamples, const al::byte *src, const size_t srcChan,
+    const size_t srcOffset, const size_t srcStep, const size_t /*samplesPerBlock*/,
+    const size_t samples) noexcept
 {
     constexpr size_t sampleSize{sizeof(typename al::FmtTypeTraits<Type>::Type)};
     auto s = src + (srcOffset*srcStep + srcChan)*sampleSize;
@@ -230,12 +274,192 @@ inline void LoadSamples(float *dstSamples, const al::byte *src, const size_t src
     al::LoadSampleArray<Type>(dstSamples, s, srcStep, samples);
 }
 
+template<>
+inline void LoadSamples<FmtIMA4>(float *RESTRICT dstSamples, const al::byte *src,
+    const size_t srcChan, const size_t srcOffset, const size_t srcStep,
+    const size_t samplesPerBlock, const size_t samples) noexcept
+{
+    const size_t blockBytes{((samplesPerBlock-1)/2 + 4)*srcStep};
+
+    /* Skip to the ADPCM block containing the srcOffset sample. */
+    src += srcOffset/samplesPerBlock*blockBytes;
+    /* Calculate how many samples need to be skipped in the block. */
+    size_t skip{srcOffset % samplesPerBlock};
+
+    /* NOTE: This could probably be optimized better. */
+    size_t wrote{0};
+    do {
+        /* Each IMA4 block starts with a signed 16-bit sample, and a signed
+         * 16-bit table index. The table index needs to be clamped.
+         */
+        int sample{src[srcChan*4] | (src[srcChan*4 + 1] << 8)};
+        int index{src[srcChan*4 + 2] | (src[srcChan*4 + 3] << 8)};
+
+        sample = (sample^0x8000) - 32768;
+        index = clampi((index^0x8000) - 32768, 0, al::size(IMAStep_size)-1);
+
+        if(!skip) [[likely]]
+        {
+            dstSamples[wrote++] = static_cast<float>(sample) / 32768.0f;
+            if(wrote == samples) return;
+        }
+        else
+            --skip;
+
+        int tempsamples[8]{};
+        const al::byte *nibbleData{src + (srcStep+srcChan)*4};
+        for(size_t i{1};i < samplesPerBlock;i+=8)
+        {
+            /* The rest of the block is arranged as a series of nibbles, with 4
+             * bytes per channel interleaved. So we can decode a series of 8
+             * samples at once from these next 4 bytes.
+             */
+            uint code{uint{nibbleData[0]} | (uint{nibbleData[1]} << 8)
+                | (uint{nibbleData[2]} << 16) | (uint{nibbleData[3]} << 24)};
+            for(size_t j{0};j < 8;++j)
+            {
+                const uint nibble{code & 0xf};
+                code >>= 4;
+
+                sample += IMA4Codeword[nibble] * IMAStep_size[index] / 8;
+                sample = clampi(sample, -32768, 32767);
+                tempsamples[j] = sample;
+
+                index += IMA4Index_adjust[nibble];
+                index = clampi(index, 0, al::size(IMAStep_size)-1);
+            }
+            nibbleData += 4*srcStep;
+
+            /* If we're skipping these 8 samples, go on to the next set. They
+             * still need to be decoded to update the predictor state for the
+             * next set.
+             */
+            if(skip >= 8)
+            {
+                skip -= 8;
+                continue;
+            }
+
+            const size_t todo{minz(8-skip, samples-wrote)};
+            for(size_t j{0};j < todo;++j)
+                dstSamples[wrote++] = static_cast<float>(tempsamples[j+skip]) / 32768.0f;
+            if(wrote == samples)
+                return;
+            skip = 0;
+        }
+
+        src += blockBytes;
+    } while(1);
+}
+
+template<>
+inline void LoadSamples<FmtMSADPCM>(float *RESTRICT dstSamples, const al::byte *src,
+    const size_t srcChan, const size_t srcOffset, const size_t srcStep,
+    const size_t samplesPerBlock, const size_t samples) noexcept
+{
+    const size_t blockBytes{((samplesPerBlock-2)/2 + 7)*srcStep};
+
+    src += srcOffset/samplesPerBlock*blockBytes;
+    size_t skip{srcOffset % samplesPerBlock};
+
+    size_t wrote{0};
+    do {
+        /* Each MS ADPCM block starts with an 8-bit block predictor, used to
+         * dictate how the two sample history values are mixed with the decoded
+         * sample, and an initial signed 16-bit delta value which scales the
+         * nibble sample value. This is followed by the two initial 16-bit
+         * sample history values.
+         */
+        const al::byte *input{src};
+        uint8_t blockpred{std::min(input[srcChan], uint8_t{8})};
+        input += srcStep;
+        int delta{input[2*srcChan + 0] | (input[2*srcChan + 1] << 8)};
+        input += srcStep*2;
+
+        int sampleHistory[2]{};
+        sampleHistory[0] = input[2*srcChan + 0] | (input[2*srcChan + 1]<<8);
+        input += srcStep*2;
+        sampleHistory[1] = input[2*srcChan + 0] | (input[2*srcChan + 1]<<8);
+        input += srcStep*2;
+
+        delta = (delta^0x8000) - 32768;
+        sampleHistory[0] = (sampleHistory[0]^0x8000) - 32768;
+        sampleHistory[1] = (sampleHistory[1]^0x8000) - 32768;
+
+        /* The second history sample is "older", so it's the first to be
+         * written out.
+         */
+        if(skip < 2) [[likely]]
+        {
+            if(!skip) [[likely]]
+            {
+                dstSamples[wrote++] = static_cast<float>(sampleHistory[1]) / 32768.0f;
+                if(wrote == samples) return;
+            }
+            else
+                --skip;
+            dstSamples[wrote++] = static_cast<float>(sampleHistory[0]) / 32768.0f;
+            if(wrote == samples) return;
+        }
+        else
+            skip -= 2;
+
+        int tempsamples[8]{};
+        size_t nibbleOffset{srcChan};
+        for(size_t i{2};i < samplesPerBlock;)
+        {
+            /* The rest of the block is a series of nibbles, interleaved per-
+             * channel. Here we decode a set of (up to) 8 samples at a time to
+             * write out together.
+             */
+            const size_t todo{minz(samplesPerBlock-i, 8)};
+
+            for(size_t j{0};j < todo;++j)
+            {
+                const size_t byteOffset{nibbleOffset>>1};
+                const size_t byteShift{((nibbleOffset&1)^1) * 4};
+                const int nibble{(input[byteOffset]>>byteShift) & 15};
+                nibbleOffset += srcStep;
+
+                int pred{(sampleHistory[0]*MSADPCMAdaptionCoeff[blockpred][0] +
+                    sampleHistory[1]*MSADPCMAdaptionCoeff[blockpred][1]) / 256};
+                pred += ((nibble^0x08) - 0x08) * delta;
+                pred  = clampi(pred, -32768, 32767);
+
+                sampleHistory[1] = sampleHistory[0];
+                sampleHistory[0] = pred;
+                tempsamples[j] = pred;
+
+                delta = (MSADPCMAdaption[nibble] * delta) / 256;
+                delta = maxi(16, delta);
+            }
+
+            if(skip < todo) [[likely]]
+            {
+                const size_t towrite{minz(todo-skip, samples-wrote)};
+                for(size_t j{0};j < towrite;++j)
+                    dstSamples[wrote++] = static_cast<float>(tempsamples[j+skip]) / 32768.0f;
+                if(wrote == samples)
+                    return;
+                skip = 0;
+            }
+            else
+                skip -= todo;
+
+            i += todo;
+        }
+
+        src += blockBytes;
+    } while(true);
+}
+
 void LoadSamples(float *dstSamples, const al::byte *src, const size_t srcChan,
-    const size_t srcOffset, const FmtType srcType, const size_t srcStep, const size_t samples)
-    noexcept
+    const size_t srcOffset, const FmtType srcType, const size_t srcStep,
+    const size_t samplesPerBlock, const size_t samples) noexcept
 {
 #define HANDLE_FMT(T) case T:                                                 \
-    LoadSamples<T>(dstSamples, src, srcChan, srcOffset, srcStep, samples);    \
+    LoadSamples<T>(dstSamples, src, srcChan, srcOffset, srcStep,              \
+        samplesPerBlock, samples);                                            \
     break
 
     switch(srcType)
@@ -246,6 +470,8 @@ void LoadSamples(float *dstSamples, const al::byte *src, const size_t srcChan,
     HANDLE_FMT(FmtDouble);
     HANDLE_FMT(FmtMulaw);
     HANDLE_FMT(FmtAlaw);
+    HANDLE_FMT(FmtIMA4);
+    HANDLE_FMT(FmtMSADPCM);
     }
 #undef HANDLE_FMT
 }
@@ -263,7 +489,7 @@ void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *bufferLoopItem,
             const size_t buffer_remaining{buffer->mSampleLen - dataPosInt};
             const size_t remaining{minz(samplesToLoad-samplesLoaded, buffer_remaining)};
             LoadSamples(voiceSamples+samplesLoaded, buffer->mSamples, srcChannel, dataPosInt,
-                sampleType, srcStep, remaining);
+                sampleType, srcStep, buffer->mBlockAlign, remaining);
             samplesLoaded += remaining;
         }
 
@@ -285,7 +511,7 @@ void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *bufferLoopItem,
         /* Load what's left of this loop iteration */
         const size_t remaining{minz(samplesToLoad-samplesLoaded, loopEnd-dataPosInt)};
         LoadSamples(voiceSamples+samplesLoaded, buffer->mSamples, srcChannel, intPos, sampleType,
-            srcStep, remaining);
+            srcStep, buffer->mBlockAlign, remaining);
         samplesLoaded += remaining;
 
         /* Load repeats of the loop to fill the buffer. */
@@ -293,7 +519,7 @@ void LoadBufferStatic(VoiceBufferItem *buffer, VoiceBufferItem *bufferLoopItem,
         while(const size_t toFill{minz(samplesToLoad - samplesLoaded, loopSize)})
         {
             LoadSamples(voiceSamples+samplesLoaded, buffer->mSamples, srcChannel, loopStart,
-                sampleType, srcStep, toFill);
+                sampleType, srcStep, buffer->mBlockAlign, toFill);
             samplesLoaded += toFill;
         }
     }
@@ -308,7 +534,7 @@ void LoadBufferCallback(VoiceBufferItem *buffer, const size_t dataPosInt,
     {
         const size_t remaining{minz(samplesToLoad-samplesLoaded, numCallbackSamples-dataPosInt)};
         LoadSamples(voiceSamples+samplesLoaded, buffer->mSamples, srcChannel, dataPosInt,
-            sampleType, srcStep, remaining);
+            sampleType, srcStep, buffer->mBlockAlign, remaining);
         samplesLoaded += remaining;
     }
 
@@ -337,7 +563,7 @@ void LoadBufferQueue(VoiceBufferItem *buffer, VoiceBufferItem *bufferLoopItem,
 
         const size_t remaining{minz(samplesToLoad-samplesLoaded, buffer->mSampleLen-dataPosInt)};
         LoadSamples(voiceSamples+samplesLoaded, buffer->mSamples, srcChannel, dataPosInt,
-            sampleType, srcStep, remaining);
+            sampleType, srcStep, buffer->mBlockAlign, remaining);
 
         samplesLoaded += remaining;
         if(samplesLoaded == samplesToLoad)
@@ -527,7 +753,7 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
     const uint samplesToLoad{samplesToMix + mDecoderPadding};
 
     /* Get a span of pointers to hold the floating point, deinterlaced,
-     * resampled buffer data.
+     * resampled buffer data to be mixed.
      */
     std::array<float*,DeviceBase::MixerChannelsMax> SamplePointers;
     const al::span<float*> MixingSamples{SamplePointers.data(), mChans.size()};
@@ -544,6 +770,12 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
             const al::span<float> dst) { std::copy_n(src, dst.size(), dst.begin()); }}
         : mResampler};
 
+    /* For callback buffers, this is the sample offset for the start of the
+     * buffer data. This is needed with compressed formats to track how many
+     * samples into a block we're starting from.
+     */
+    const uint callbackBase{RoundDown(static_cast<uint>(maxi(DataPosInt, 0)), mSamplesPerBlock)};
+
     /* UHJ2 and SuperStereo only have 2 buffer channels, but 3 mixing channels
      * (3rd channel is generated from decoding).
      */
@@ -557,7 +789,6 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         const auto prevSamples = al::as_span(mPrevSamples[chan]);
         const auto resampleBuffer = std::copy(prevSamples.cbegin(), prevSamples.cend(),
             Device->mResampleData.begin()) - MaxResamplerEdge;
-        const uint callbackBase{static_cast<uint>(maxi(DataPosInt, 0))};
         int intPos{DataPosInt};
         uint fracPos{DataPosFrac};
 
@@ -567,7 +798,8 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         for(uint samplesLoaded{0};samplesLoaded < samplesToLoad;)
         {
             /* Calculate the number of dst samples that can be loaded this
-             * iteration, given the available resampler buffer size.
+             * iteration, given the available resampler buffer size, and the
+             * number of src samples that are needed to load it.
              */
             auto calc_buffer_sizes = [fracPos,increment](uint dstBufferSize)
             {
@@ -599,7 +831,7 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                 {
                     /* Some resamplers require the destination being 16-byte
                      * aligned, so limit to a multiple of 4 samples to maintain
-                     * alignment.
+                     * alignment if we need to do another iteration after this.
                      */
                     dstBufferSize = static_cast<uint>(dataSize64) & ~3u;
                 }
@@ -654,11 +886,12 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                 else if(mFlags.test(VoiceIsCallback))
                 {
                     const size_t bufferOffset{uintPos - callbackBase};
-                    const size_t getTotal{bufferOffset + srcBufferSize - srcSampleDelay};
-                    if(!mFlags.test(VoiceCallbackStopped) && getTotal > mNumCallbackSamples)
+                    const size_t needSamples{bufferOffset + srcBufferSize - srcSampleDelay};
+                    const size_t needBlocks{(needSamples + mSamplesPerBlock-1) / mSamplesPerBlock};
+                    if(!mFlags.test(VoiceCallbackStopped) && needBlocks > mNumCallbackBlocks)
                     {
-                        const size_t byteOffset{mNumCallbackSamples*mFrameSize};
-                        const size_t needBytes{getTotal*mFrameSize - byteOffset};
+                        const size_t byteOffset{mNumCallbackBlocks*mBytesPerBlock};
+                        const size_t needBytes{(needBlocks-mNumCallbackBlocks)*mBytesPerBlock};
 
                         const int gotBytes{BufferListItem->mCallback(BufferListItem->mUserData,
                             &BufferListItem->mSamples[byteOffset], static_cast<int>(needBytes))};
@@ -667,14 +900,14 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                         else if(static_cast<uint>(gotBytes) < needBytes)
                         {
                             mFlags.set(VoiceCallbackStopped);
-                            mNumCallbackSamples += static_cast<uint>(gotBytes) / mFrameSize;
+                            mNumCallbackBlocks += static_cast<uint>(gotBytes) / mBytesPerBlock;
                         }
                         else
-                            mNumCallbackSamples = static_cast<uint>(getTotal);
+                            mNumCallbackBlocks = static_cast<uint>(needBlocks);
                     }
-                    LoadBufferCallback(BufferListItem, bufferOffset, mNumCallbackSamples,
-                        mFmtType, chan, mFrameStep, srcSampleDelay, srcBufferSize,
-                        al::to_address(resampleBuffer));
+                    const size_t numSamples{uint{mNumCallbackBlocks} * mSamplesPerBlock};
+                    LoadBufferCallback(BufferListItem, bufferOffset, numSamples, mFmtType, chan,
+                        mFrameStep, srcSampleDelay, srcBufferSize, al::to_address(resampleBuffer));
                 }
                 else
                     LoadBufferQueue(BufferListItem, BufferLoopItem, uintPos, mFmtType, chan,
@@ -815,13 +1048,12 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         return;
     }
 
-    /* Update positions */
+    /* Update voice positions and buffers as needed. */
     DataPosFrac += increment*samplesToMix;
     const uint SrcSamplesDone{DataPosFrac>>MixerFracBits};
     DataPosInt  += SrcSamplesDone;
     DataPosFrac &= MixerFracMask;
 
-    /* Update voice positions and buffers as needed. */
     uint buffers_done{0u};
     if(BufferListItem && DataPosInt >= 0) [[likely]]
     {
@@ -850,18 +1082,20 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         else if(mFlags.test(VoiceIsCallback))
         {
             /* Handle callback buffer source */
-            if(SrcSamplesDone < mNumCallbackSamples)
+            const uint samplesDone{static_cast<uint>(DataPosInt) - callbackBase};
+            const uint blocksDone{samplesDone / mSamplesPerBlock};
+            if(blocksDone < mNumCallbackBlocks)
             {
-                const size_t byteOffset{SrcSamplesDone*mFrameSize};
-                const size_t byteEnd{mNumCallbackSamples*mFrameSize};
+                const size_t byteOffset{blocksDone*mBytesPerBlock};
+                const size_t byteEnd{mNumCallbackBlocks*mBytesPerBlock};
                 al::byte *data{BufferListItem->mSamples};
                 std::copy(data+byteOffset, data+byteEnd, data);
-                mNumCallbackSamples -= SrcSamplesDone;
+                mNumCallbackBlocks -= blocksDone;
             }
             else
             {
                 BufferListItem = nullptr;
-                mNumCallbackSamples = 0;
+                mNumCallbackBlocks = 0;
             }
         }
         else

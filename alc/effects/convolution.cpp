@@ -84,6 +84,11 @@ void LoadSamples(float *RESTRICT dst, const al::byte *src, const size_t srcstep,
     HANDLE_FMT(FmtDouble);
     HANDLE_FMT(FmtMulaw);
     HANDLE_FMT(FmtAlaw);
+    /* FIXME: Handle ADPCM decoding here. */
+    case FmtIMA4:
+    case FmtMSADPCM:
+        std::fill_n(dst, samples, 0.0f);
+        break;
     }
 #undef HANDLE_FMT
 }

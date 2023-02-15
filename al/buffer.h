@@ -24,9 +24,8 @@ enum UserFmtType : unsigned char {
     UserFmtMulaw = FmtMulaw,
     UserFmtAlaw = FmtAlaw,
     UserFmtDouble = FmtDouble,
-
-    UserFmtIMA4 = 128,
-    UserFmtMSADPCM,
+    UserFmtIMA4 = FmtIMA4,
+    UserFmtMSADPCM = FmtMSADPCM,
 };
 enum UserFmtChannels : unsigned char {
     UserFmtMono = FmtMono,
@@ -51,7 +50,6 @@ struct ALbuffer : public BufferStorage {
 
     UserFmtType OriginalType{UserFmtShort};
     ALuint OriginalSize{0};
-    ALuint OriginalAlign{0};
 
     ALuint UnpackAlign{0};
     ALuint PackAlign{0};
