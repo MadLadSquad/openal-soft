@@ -266,18 +266,18 @@ const float *DoFilters(BiquadFilter &lpfilter, BiquadFilter &hpfilter, float *ds
 template<FmtType Type>
 inline void LoadSamples(float *RESTRICT dstSamples, const al::byte *src, const size_t srcChan,
     const size_t srcOffset, const size_t srcStep, const size_t /*samplesPerBlock*/,
-    const size_t samples) noexcept
+    const size_t samplesToLoad) noexcept
 {
     constexpr size_t sampleSize{sizeof(typename al::FmtTypeTraits<Type>::Type)};
     auto s = src + (srcOffset*srcStep + srcChan)*sampleSize;
 
-    al::LoadSampleArray<Type>(dstSamples, s, srcStep, samples);
+    al::LoadSampleArray<Type>(dstSamples, s, srcStep, samplesToLoad);
 }
 
 template<>
 inline void LoadSamples<FmtIMA4>(float *RESTRICT dstSamples, const al::byte *src,
     const size_t srcChan, const size_t srcOffset, const size_t srcStep,
-    const size_t samplesPerBlock, const size_t samples) noexcept
+    const size_t samplesPerBlock, const size_t samplesToLoad) noexcept
 {
     const size_t blockBytes{((samplesPerBlock-1)/2 + 4)*srcStep};
 
@@ -298,64 +298,76 @@ inline void LoadSamples<FmtIMA4>(float *RESTRICT dstSamples, const al::byte *src
         sample = (sample^0x8000) - 32768;
         index = clampi((index^0x8000) - 32768, 0, al::size(IMAStep_size)-1);
 
-        if(!skip) [[likely]]
+        if(skip == 0)
         {
             dstSamples[wrote++] = static_cast<float>(sample) / 32768.0f;
-            if(wrote == samples) return;
+            if(wrote == samplesToLoad) return;
         }
         else
             --skip;
 
-        int tempsamples[8]{};
-        const al::byte *nibbleData{src + (srcStep+srcChan)*4};
-        for(size_t i{1};i < samplesPerBlock;i+=8)
+        auto decode_sample = [&sample,&index](const uint nibble)
         {
-            /* The rest of the block is arranged as a series of nibbles, with 4
-             * bytes per channel interleaved. So we can decode a series of 8
-             * samples at once from these next 4 bytes.
-             */
+            sample += IMA4Codeword[nibble] * IMAStep_size[index] / 8;
+            sample = clampi(sample, -32768, 32767);
+
+            index += IMA4Index_adjust[nibble];
+            index = clampi(index, 0, al::size(IMAStep_size)-1);
+
+            return sample;
+        };
+
+        /* The rest of the block is arranged as a series of nibbles, contained
+         * in 4 *bytes* per channel interleaved. So we can decode a series of 8
+         * samples at once from each of these 4 bytes.
+         *
+         * First, decode the 8 sample sets being skipped entirely (they still
+         * need to be decoded for proper state on the remaining samples).
+         */
+        const size_t startOffset{(skip&~size_t{7}) + 1};
+        const al::byte *nibbleData{src + (srcStep+srcChan)*4};
+        for(;skip >= 8;skip-=8)
+        {
             uint code{uint{nibbleData[0]} | (uint{nibbleData[1]} << 8)
                 | (uint{nibbleData[2]} << 16) | (uint{nibbleData[3]} << 24)};
-            for(size_t j{0};j < 8;++j)
-            {
-                const uint nibble{code & 0xf};
-                code >>= 4;
-
-                sample += IMA4Codeword[nibble] * IMAStep_size[index] / 8;
-                sample = clampi(sample, -32768, 32767);
-                tempsamples[j] = sample;
-
-                index += IMA4Index_adjust[nibble];
-                index = clampi(index, 0, al::size(IMAStep_size)-1);
-            }
             nibbleData += 4*srcStep;
 
-            /* If we're skipping these 8 samples, go on to the next set. They
-             * still need to be decoded to update the predictor state for the
-             * next set.
-             */
-            if(skip >= 8)
+            for(size_t j{0};j < 8;++j)
             {
-                skip -= 8;
-                continue;
+                std::ignore = decode_sample(code & 0xf);
+                code >>= 4;
+            }
+        }
+
+        int samples[8]{};
+        for(size_t i{startOffset};i < samplesPerBlock;i+=8)
+        {
+            uint code{uint{nibbleData[0]} | (uint{nibbleData[1]} << 8)
+                | (uint{nibbleData[2]} << 16) | (uint{nibbleData[3]} << 24)};
+            nibbleData += 4*srcStep;
+
+            for(size_t j{0};j < 8;++j)
+            {
+                samples[j] = decode_sample(code & 0xf);
+                code >>= 4;
             }
 
-            const size_t todo{minz(8-skip, samples-wrote)};
+            const size_t todo{minz(8-skip, samplesToLoad-wrote)};
             for(size_t j{0};j < todo;++j)
-                dstSamples[wrote++] = static_cast<float>(tempsamples[j+skip]) / 32768.0f;
-            if(wrote == samples)
+                dstSamples[wrote++] = static_cast<float>(samples[j+skip]) / 32768.0f;
+            if(wrote == samplesToLoad)
                 return;
             skip = 0;
         }
 
         src += blockBytes;
-    } while(1);
+    } while(true);
 }
 
 template<>
 inline void LoadSamples<FmtMSADPCM>(float *RESTRICT dstSamples, const al::byte *src,
     const size_t srcChan, const size_t srcOffset, const size_t srcStep,
-    const size_t samplesPerBlock, const size_t samples) noexcept
+    const size_t samplesPerBlock, const size_t samplesToLoad) noexcept
 {
     const size_t blockBytes{((samplesPerBlock-2)/2 + 7)*srcStep};
 
@@ -389,65 +401,67 @@ inline void LoadSamples<FmtMSADPCM>(float *RESTRICT dstSamples, const al::byte *
         /* The second history sample is "older", so it's the first to be
          * written out.
          */
-        if(skip < 2) [[likely]]
+        if(skip == 0)
         {
-            if(!skip) [[likely]]
-            {
-                dstSamples[wrote++] = static_cast<float>(sampleHistory[1]) / 32768.0f;
-                if(wrote == samples) return;
-            }
-            else
-                --skip;
+            dstSamples[wrote++] = static_cast<float>(sampleHistory[1]) / 32768.0f;
+            if(wrote == samplesToLoad) return;
             dstSamples[wrote++] = static_cast<float>(sampleHistory[0]) / 32768.0f;
-            if(wrote == samples) return;
+            if(wrote == samplesToLoad) return;
+        }
+        else if(skip == 1)
+        {
+            --skip;
+            dstSamples[wrote++] = static_cast<float>(sampleHistory[0]) / 32768.0f;
+            if(wrote == samplesToLoad) return;
         }
         else
             skip -= 2;
 
-        int tempsamples[8]{};
-        size_t nibbleOffset{srcChan};
-        for(size_t i{2};i < samplesPerBlock;)
+        auto decode_sample = [&sampleHistory,&delta,blockpred](const int nibble)
         {
-            /* The rest of the block is a series of nibbles, interleaved per-
-             * channel. Here we decode a set of (up to) 8 samples at a time to
-             * write out together.
-             */
-            const size_t todo{minz(samplesPerBlock-i, 8)};
+            int pred{(sampleHistory[0]*MSADPCMAdaptionCoeff[blockpred][0] +
+                sampleHistory[1]*MSADPCMAdaptionCoeff[blockpred][1]) / 256};
+            pred += ((nibble^0x08) - 0x08) * delta;
+            pred  = clampi(pred, -32768, 32767);
 
-            for(size_t j{0};j < todo;++j)
-            {
-                const size_t byteOffset{nibbleOffset>>1};
-                const size_t byteShift{((nibbleOffset&1)^1) * 4};
-                const int nibble{(input[byteOffset]>>byteShift) & 15};
-                nibbleOffset += srcStep;
+            sampleHistory[1] = sampleHistory[0];
+            sampleHistory[0] = pred;
 
-                int pred{(sampleHistory[0]*MSADPCMAdaptionCoeff[blockpred][0] +
-                    sampleHistory[1]*MSADPCMAdaptionCoeff[blockpred][1]) / 256};
-                pred += ((nibble^0x08) - 0x08) * delta;
-                pred  = clampi(pred, -32768, 32767);
+            delta = (MSADPCMAdaption[nibble] * delta) / 256;
+            delta = maxi(16, delta);
 
-                sampleHistory[1] = sampleHistory[0];
-                sampleHistory[0] = pred;
-                tempsamples[j] = pred;
+            return pred;
+        };
 
-                delta = (MSADPCMAdaption[nibble] * delta) / 256;
-                delta = maxi(16, delta);
-            }
-
-            if(skip < todo) [[likely]]
-            {
-                const size_t towrite{minz(todo-skip, samples-wrote)};
-                for(size_t j{0};j < towrite;++j)
-                    dstSamples[wrote++] = static_cast<float>(tempsamples[j+skip]) / 32768.0f;
-                if(wrote == samples)
-                    return;
-                skip = 0;
-            }
-            else
-                skip -= todo;
-
-            i += todo;
+        /* The rest of the block is a series of nibbles, interleaved per-
+         * channel. Decode the number of samples that we need to skip in the
+         * block (will always be less than the block size).
+         */
+        const size_t startOffset{skip + 2};
+        size_t nibbleOffset{srcChan};
+        for(;skip;--skip)
+        {
+            const size_t byteOffset{nibbleOffset>>1};
+            const size_t byteShift{((nibbleOffset&1)^1) * 4};
+            std::ignore = decode_sample((input[byteOffset]>>byteShift) & 15);
+            nibbleOffset += srcStep;
         }
+
+        /* Now decode the rest of the block, until the end of the block or the
+         * dst buffer is full.
+         */
+        const size_t todo{minz(samplesPerBlock-startOffset, samplesToLoad-wrote)};
+        for(size_t j{0};j < todo;++j)
+        {
+            const size_t byteOffset{nibbleOffset>>1};
+            const size_t byteShift{((nibbleOffset&1)^1) * 4};
+            nibbleOffset += srcStep;
+
+            const int sample{decode_sample((input[byteOffset]>>byteShift) & 15)};
+            dstSamples[wrote++] = static_cast<float>(sample) / 32768.0f;
+        }
+        if(wrote == samplesToLoad)
+            return;
 
         src += blockBytes;
     } while(true);
@@ -455,11 +469,11 @@ inline void LoadSamples<FmtMSADPCM>(float *RESTRICT dstSamples, const al::byte *
 
 void LoadSamples(float *dstSamples, const al::byte *src, const size_t srcChan,
     const size_t srcOffset, const FmtType srcType, const size_t srcStep,
-    const size_t samplesPerBlock, const size_t samples) noexcept
+    const size_t samplesPerBlock, const size_t samplesToLoad) noexcept
 {
 #define HANDLE_FMT(T) case T:                                                 \
     LoadSamples<T>(dstSamples, src, srcChan, srcOffset, srcStep,              \
-        samplesPerBlock, samples);                                            \
+        samplesPerBlock, samplesToLoad);                                      \
     break
 
     switch(srcType)
