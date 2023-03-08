@@ -177,6 +177,28 @@ al::optional<FmtType> FmtFromUserFmt(UserFmtType type)
 
 
 #ifdef ALSOFT_EAX
+al::optional<EaxStorage> EaxStorageFromEnum(ALenum scale)
+{
+    switch(scale)
+    {
+    case AL_STORAGE_AUTOMATIC: return EaxStorage::Automatic;
+    case AL_STORAGE_ACCESSIBLE: return EaxStorage::Accessible;
+    case AL_STORAGE_HARDWARE: return EaxStorage::Hardware;
+    }
+    return al::nullopt;
+}
+ALenum EnumFromEaxStorage(EaxStorage storage)
+{
+    switch(storage)
+    {
+    case EaxStorage::Automatic: return AL_STORAGE_AUTOMATIC;
+    case EaxStorage::Accessible: return AL_STORAGE_ACCESSIBLE;
+    case EaxStorage::Hardware: return AL_STORAGE_HARDWARE;
+    }
+    throw std::runtime_error{"Invalid EaxStorage: "+std::to_string(int(storage))};
+}
+
+
 bool eax_x_ram_check_availability(const ALCdevice &device, const ALbuffer &buffer,
     const ALuint newsize) noexcept
 {
@@ -409,7 +431,7 @@ void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
     const size_t newsize{static_cast<size_t>(blocks) * DstBlockSize};
 
 #ifdef ALSOFT_EAX
-    if(ALBuf->eax_x_ram_mode == AL_STORAGE_HARDWARE)
+    if(ALBuf->eax_x_ram_mode == EaxStorage::Hardware)
     {
         ALCdevice &device = *context->mALDevice;
         if(!eax_x_ram_check_availability(device, *ALBuf, size))
@@ -460,7 +482,7 @@ void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
     ALBuf->mLoopEnd = ALBuf->mSampleLen;
 
 #ifdef ALSOFT_EAX
-    if(eax_g_is_enabled && ALBuf->eax_x_ram_mode != AL_STORAGE_ACCESSIBLE)
+    if(eax_g_is_enabled && ALBuf->eax_x_ram_mode == EaxStorage::Hardware)
         eax_x_ram_apply(*context->mALDevice, *ALBuf);
 #endif
 }
@@ -537,7 +559,7 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
         UserFmtChannels channels;
         UserFmtType type;
     };
-    static const std::array<FormatMap,60> UserFmtList{{
+    static const std::array<FormatMap,63> UserFmtList{{
         { AL_FORMAT_MONO8,             UserFmtMono, UserFmtUByte   },
         { AL_FORMAT_MONO16,            UserFmtMono, UserFmtShort   },
         { AL_FORMAT_MONO_FLOAT32,      UserFmtMono, UserFmtFloat   },
@@ -598,6 +620,7 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
         { AL_FORMAT_UHJ2CHN16_SOFT,       UserFmtUHJ2, UserFmtShort   },
         { AL_FORMAT_UHJ2CHN_FLOAT32_SOFT, UserFmtUHJ2, UserFmtFloat   },
         { AL_FORMAT_UHJ2CHN_MULAW_SOFT,   UserFmtUHJ2, UserFmtMulaw   },
+        { AL_FORMAT_UHJ2CHN_ALAW_SOFT,    UserFmtUHJ2, UserFmtAlaw    },
         { AL_FORMAT_UHJ2CHN_IMA4_SOFT,    UserFmtUHJ2, UserFmtIMA4    },
         { AL_FORMAT_UHJ2CHN_MSADPCM_SOFT, UserFmtUHJ2, UserFmtMSADPCM },
 
@@ -605,11 +628,13 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
         { AL_FORMAT_UHJ3CHN16_SOFT,       UserFmtUHJ3, UserFmtShort },
         { AL_FORMAT_UHJ3CHN_FLOAT32_SOFT, UserFmtUHJ3, UserFmtFloat },
         { AL_FORMAT_UHJ3CHN_MULAW_SOFT,   UserFmtUHJ3, UserFmtMulaw },
+        { AL_FORMAT_UHJ3CHN_ALAW_SOFT,    UserFmtUHJ3, UserFmtAlaw  },
 
         { AL_FORMAT_UHJ4CHN8_SOFT,        UserFmtUHJ4, UserFmtUByte },
         { AL_FORMAT_UHJ4CHN16_SOFT,       UserFmtUHJ4, UserFmtShort },
         { AL_FORMAT_UHJ4CHN_FLOAT32_SOFT, UserFmtUHJ4, UserFmtFloat },
         { AL_FORMAT_UHJ4CHN_MULAW_SOFT,   UserFmtUHJ4, UserFmtMulaw },
+        { AL_FORMAT_UHJ4CHN_ALAW_SOFT,    UserFmtUHJ4, UserFmtAlaw  },
     }};
 
     for(const auto &fmt : UserFmtList)
@@ -1073,21 +1098,20 @@ START_API_FUNC
         if(ReadRef(albuf->ref) != 0) UNLIKELY
             context->setError(AL_INVALID_OPERATION, "Modifying in-use buffer %u's ambisonic layout",
                 buffer);
-        else if(value != AL_FUMA_SOFT && value != AL_ACN_SOFT) UNLIKELY
+        else if(const auto layout = AmbiLayoutFromEnum(value))
+            albuf->mAmbiLayout = layout.value();
+        else UNLIKELY
             context->setError(AL_INVALID_VALUE, "Invalid unpack ambisonic layout %04x", value);
-        else
-            albuf->mAmbiLayout = AmbiLayoutFromEnum(value).value();
         break;
 
     case AL_AMBISONIC_SCALING_SOFT:
         if(ReadRef(albuf->ref) != 0) UNLIKELY
             context->setError(AL_INVALID_OPERATION, "Modifying in-use buffer %u's ambisonic scaling",
                 buffer);
-        else if(value != AL_FUMA_SOFT && value != AL_SN3D_SOFT && value != AL_N3D_SOFT)
-            UNLIKELY
+        else if(const auto scaling = AmbiScalingFromEnum(value))
+            albuf->mAmbiScaling = scaling.value();
+        else UNLIKELY
             context->setError(AL_INVALID_VALUE, "Invalid unpack ambisonic scaling %04x", value);
-        else
-            albuf->mAmbiScaling = AmbiScalingFromEnum(value).value();
         break;
 
     case AL_UNPACK_AMBISONIC_ORDER_SOFT:
@@ -1191,6 +1215,11 @@ START_API_FUNC
         context->setError(AL_INVALID_VALUE, "NULL pointer");
     else switch(param)
     {
+    case AL_SEC_LENGTH_SOFT:
+        *value = (albuf->mSampleRate < 1) ? 0.0f :
+            (static_cast<float>(albuf->mSampleLen) / static_cast<float>(albuf->mSampleRate));
+        break;
+
     default:
         context->setError(AL_INVALID_ENUM, "Invalid buffer float property 0x%04x", param);
     }
@@ -1276,8 +1305,16 @@ START_API_FUNC
         break;
 
     case AL_SIZE:
+        *value = albuf->mCallback ? 0 : static_cast<ALint>(albuf->mData.size());
+        break;
+
+    case AL_BYTE_LENGTH_SOFT:
         *value = static_cast<ALint>(albuf->mSampleLen / albuf->mBlockAlign
             * albuf->blockSizeFromFmt());
+        break;
+
+    case AL_SAMPLE_LENGTH_SOFT:
+        *value = static_cast<ALint>(albuf->mSampleLen);
         break;
 
     case AL_UNPACK_BLOCK_ALIGNMENT_SOFT:
@@ -1511,14 +1548,9 @@ START_API_FUNC
         return ALC_FALSE;
     }
 
-    switch(value)
+    const auto storage = EaxStorageFromEnum(value);
+    if(!storage)
     {
-    case AL_STORAGE_AUTOMATIC:
-    case AL_STORAGE_HARDWARE:
-    case AL_STORAGE_ACCESSIBLE:
-        break;
-
-    default:
         context->setError(AL_INVALID_ENUM, EAX_PREFIX "Unsupported X-RAM mode 0x%x", value);
         return ALC_FALSE;
     }
@@ -1561,7 +1593,7 @@ START_API_FUNC
          * only when not set/queued on a source?
          */
 
-        if(value == AL_STORAGE_HARDWARE && !al_buffer->eax_x_ram_is_hardware)
+        if(*storage == EaxStorage::Hardware && !al_buffer->eax_x_ram_is_hardware)
         {
             /* FIXME: This doesn't account for duplicate buffers. When the same
              * buffer ID is specified multiple times in the provided list, it
@@ -1594,11 +1626,11 @@ START_API_FUNC
         const auto al_buffer = LookupBuffer(device, buffer);
         assert(al_buffer);
 
-        if(value != AL_STORAGE_ACCESSIBLE)
+        if(*storage == EaxStorage::Hardware)
             eax_x_ram_apply(*device, *al_buffer);
         else
             eax_x_ram_clear(*device, *al_buffer);
-        al_buffer->eax_x_ram_mode = value;
+        al_buffer->eax_x_ram_mode = *storage;
     }
 
     return AL_TRUE;
@@ -1641,7 +1673,7 @@ START_API_FUNC
         return AL_NONE;
     }
 
-    return al_buffer->eax_x_ram_mode;
+    return EnumFromEaxStorage(al_buffer->eax_x_ram_mode);
 
 #undef EAX_PREFIX
 }
