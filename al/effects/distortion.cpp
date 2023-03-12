@@ -207,56 +207,22 @@ template<>
 template<>
 bool DistortionCommitter::commit(const EaxEffectProps &props)
 {
-    const auto orig = props_;
-    props_ = props;
+    if(props.mType == mEaxProps.mType && mEaxProps.mDistortion.flEdge == props.mDistortion.flEdge
+        && mEaxProps.mDistortion.lGain == props.mDistortion.lGain
+        && mEaxProps.mDistortion.flLowPassCutOff == props.mDistortion.flLowPassCutOff
+        && mEaxProps.mDistortion.flEQCenter == props.mDistortion.flEQCenter
+        && mEaxProps.mDistortion.flEQBandwidth == props.mDistortion.flEQBandwidth)
+        return false;
 
-    auto is_dirty = bool{orig.mType != props_.mType};
-    if(props_.mDistortion.flEdge != props.mDistortion.flEdge)
-    {
-        is_dirty = true;
-        al_effect_props_.Distortion.Edge = clamp(
-            props_.mDistortion.flEdge,
-            AL_DISTORTION_MIN_EDGE,
-            AL_DISTORTION_MAX_EDGE);
-    }
+    mEaxProps = props;
 
-    if(props_.mDistortion.lGain != props.mDistortion.lGain)
-    {
-        is_dirty = true;
-        al_effect_props_.Distortion.Gain = clamp(
-            level_mb_to_gain(static_cast<float>(props_.mDistortion.lGain)),
-            AL_DISTORTION_MIN_GAIN,
-            AL_DISTORTION_MAX_GAIN);
-    }
+    mAlProps.Distortion.Edge = props.mDistortion.flEdge;
+    mAlProps.Distortion.Gain = level_mb_to_gain(static_cast<float>(props.mDistortion.lGain));
+    mAlProps.Distortion.LowpassCutoff = props.mDistortion.flLowPassCutOff;
+    mAlProps.Distortion.EQCenter = props.mDistortion.flEQCenter;
+    mAlProps.Distortion.EQBandwidth = props.mDistortion.flEdge;
 
-    if(props_.mDistortion.flLowPassCutOff != props.mDistortion.flLowPassCutOff)
-    {
-        is_dirty = true;
-        al_effect_props_.Distortion.LowpassCutoff = clamp(
-            props_.mDistortion.flLowPassCutOff,
-            AL_DISTORTION_MIN_LOWPASS_CUTOFF,
-            AL_DISTORTION_MAX_LOWPASS_CUTOFF);
-    }
-
-    if(props_.mDistortion.flEQCenter != props.mDistortion.flEQCenter)
-    {
-        is_dirty = true;
-        al_effect_props_.Distortion.EQCenter = clamp(
-            props_.mDistortion.flEQCenter,
-            AL_DISTORTION_MIN_EQCENTER,
-            AL_DISTORTION_MAX_EQCENTER);
-    }
-
-    if(props_.mDistortion.flEQBandwidth != props.mDistortion.flEQBandwidth)
-    {
-        is_dirty = true;
-        al_effect_props_.Distortion.EQBandwidth = clamp(
-            props_.mDistortion.flEdge,
-            AL_DISTORTION_MIN_EQBANDWIDTH,
-            AL_DISTORTION_MAX_EQBANDWIDTH);
-    }
-
-    return is_dirty;
+    return true;
 }
 
 template<>

@@ -350,14 +350,11 @@ struct EaxChorusTraits {
     static constexpr auto efx_default_feedback() { return AL_CHORUS_DEFAULT_FEEDBACK; }
     static constexpr auto efx_default_delay() { return AL_CHORUS_DEFAULT_DELAY; }
 
-    static al::optional<ChorusWaveform> eax_waveform(unsigned long type)
+    static ChorusWaveform eax_waveform(unsigned long type)
     {
-        switch(type)
-        {
-        case EAX_CHORUS_SINUSOID: return ChorusWaveform::Sinusoid;
-        case EAX_CHORUS_TRIANGLE: return ChorusWaveform::Triangle;
-        }
-        return al::nullopt;
+        if(type == EAX_CHORUS_SINUSOID) return ChorusWaveform::Sinusoid;
+        if(type == EAX_CHORUS_TRIANGLE) return ChorusWaveform::Triangle;
+        return ChorusWaveform::Sinusoid;
     }
 }; // EaxChorusTraits
 
@@ -420,14 +417,11 @@ struct EaxFlangerTraits {
     static constexpr auto efx_default_feedback() { return AL_FLANGER_DEFAULT_FEEDBACK; }
     static constexpr auto efx_default_delay() { return AL_FLANGER_DEFAULT_DELAY; }
 
-    static al::optional<ChorusWaveform> eax_waveform(unsigned long type)
+    static ChorusWaveform eax_waveform(unsigned long type)
     {
-        switch(type)
-        {
-        case EAX_FLANGER_SINUSOID: return ChorusWaveform::Sinusoid;
-        case EAX_FLANGER_TRIANGLE: return ChorusWaveform::Triangle;
-        }
-        return al::nullopt;
+        if(type == EAX_FLANGER_SINUSOID) return ChorusWaveform::Sinusoid;
+        if(type == EAX_FLANGER_TRIANGLE) return ChorusWaveform::Triangle;
+        return ChorusWaveform::Sinusoid;
     }
 }; // EaxFlangerTraits
 
@@ -613,32 +607,27 @@ public:
         }
     }
 
-    static bool Commit(const EaxEffectProps &props, EaxEffectProps &props_,
-        EffectProps &al_effect_props_)
+    static bool Commit(const EaxEffectProps &props, EaxEffectProps &props_, EffectProps &al_props_)
     {
-        const auto orig = props_;
+        if(props.mType == props_.mType)
+        {
+            auto&& src = props_.*Field;
+            auto&& dst = props.*Field;
+            if(dst.ulWaveform == src.ulWaveform && dst.lPhase == src.lPhase
+                && dst.flRate == src.flRate && dst.flDepth == src.flDepth
+                && dst.flFeedback == src.flFeedback && dst.flDelay == src.flDelay)
+                return false;
+        }
+
         props_ = props;
+        auto&& dst = props.*Field;
 
-        auto&& src = orig.*Field;
-        auto&& dst = props_.*Field;
-        if(orig.mType == props_.mType && dst.ulWaveform == src.ulWaveform
-            && dst.lPhase == src.lPhase && dst.flRate == src.flRate && dst.flDepth == src.flDepth
-            && dst.flFeedback == src.flFeedback && dst.flDelay == src.flDelay)
-            return false;
-
-        const auto efx_waveform = Traits::eax_waveform(dst.ulWaveform);
-        assert(efx_waveform.has_value());
-        al_effect_props_.Chorus.Waveform = *efx_waveform;
-        al_effect_props_.Chorus.Phase = clamp(static_cast<ALint>(dst.lPhase),
-            Traits::efx_min_phase(), Traits::efx_max_phase());
-        al_effect_props_.Chorus.Rate = clamp(dst.flRate,
-            Traits::efx_min_rate(), Traits::efx_max_rate());
-        al_effect_props_.Chorus.Depth = clamp(dst.flDepth,
-            Traits::efx_min_depth(), Traits::efx_max_depth());
-        al_effect_props_.Chorus.Feedback = clamp(dst.flFeedback,
-            Traits::efx_min_feedback(), Traits::efx_max_feedback());
-        al_effect_props_.Chorus.Delay = clamp(dst.flDelay,
-            Traits::efx_min_delay(), Traits::efx_max_delay());
+        al_props_.Chorus.Waveform = Traits::eax_waveform(dst.ulWaveform);
+        al_props_.Chorus.Phase = static_cast<int>(dst.lPhase);
+        al_props_.Chorus.Rate = dst.flRate;
+        al_props_.Chorus.Depth = dst.flDepth;
+        al_props_.Chorus.Feedback = dst.flFeedback;
+        al_props_.Chorus.Delay = dst.flDelay;
 
         return true;
     }
@@ -667,7 +656,7 @@ template<>
 bool ChorusCommitter::commit(const EaxEffectProps &props)
 {
     using Committer = ChorusFlangerEffect<EaxChorusTraits>;
-    return Committer::Commit(props, props_, al_effect_props_);
+    return Committer::Commit(props, mEaxProps, mAlProps);
 }
 
 template<>
@@ -708,7 +697,7 @@ template<>
 bool FlangerCommitter::commit(const EaxEffectProps &props)
 {
     using Committer = ChorusFlangerEffect<EaxFlangerTraits>;
-    return Committer::Commit(props, props_, al_effect_props_);
+    return Committer::Commit(props, mEaxProps, mAlProps);
 }
 
 template<>

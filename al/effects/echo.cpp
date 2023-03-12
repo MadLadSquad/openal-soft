@@ -204,56 +204,22 @@ template<>
 template<>
 bool EchoCommitter::commit(const EaxEffectProps &props)
 {
-    const auto orig = props_;
-    props_ = props;
+    if(props.mType == mEaxProps.mType && mEaxProps.mEcho.flDelay == props.mEcho.flDelay
+        && mEaxProps.mEcho.flLRDelay == props.mEcho.flLRDelay
+        && mEaxProps.mEcho.flDamping == props.mEcho.flDamping
+        && mEaxProps.mEcho.flFeedback == props.mEcho.flFeedback
+        && mEaxProps.mEcho.flSpread == props.mEcho.flSpread)
+        return false;
 
-    auto is_dirty = bool{orig.mType != props_.mType};
-    if(props_.mEcho.flDelay != props.mEcho.flDelay)
-    {
-        is_dirty = true;
-        al_effect_props_.Echo.Delay = clamp(
-            props_.mEcho.flDelay,
-            AL_ECHO_MIN_DELAY,
-            AL_ECHO_MAX_DELAY);
-    }
+    mEaxProps = props;
 
-    if(props_.mEcho.flLRDelay != props.mEcho.flLRDelay)
-    {
-        is_dirty = true;
-        al_effect_props_.Echo.LRDelay = clamp(
-            props_.mEcho.flLRDelay,
-            AL_ECHO_MIN_LRDELAY,
-            AL_ECHO_MAX_LRDELAY);
-    }
+    mAlProps.Echo.Delay = props.mEcho.flDelay;
+    mAlProps.Echo.LRDelay = props.mEcho.flLRDelay;
+    mAlProps.Echo.Damping = props.mEcho.flDamping;
+    mAlProps.Echo.Feedback = props.mEcho.flFeedback;
+    mAlProps.Echo.Spread = props.mEcho.flSpread;
 
-    if(props_.mEcho.flDamping != props.mEcho.flDamping)
-    {
-        is_dirty = true;
-        al_effect_props_.Echo.Damping = clamp(
-            props_.mEcho.flDamping,
-            AL_ECHO_MIN_DAMPING,
-            AL_ECHO_MAX_DAMPING);
-    }
-
-    if(props_.mEcho.flFeedback != props.mEcho.flFeedback)
-    {
-        is_dirty = true;
-        al_effect_props_.Echo.Feedback = clamp(
-            props_.mEcho.flFeedback,
-            AL_ECHO_MIN_FEEDBACK,
-            AL_ECHO_MAX_FEEDBACK);
-    }
-
-    if(props_.mEcho.flSpread != props.mEcho.flSpread)
-    {
-        is_dirty = true;
-        al_effect_props_.Echo.Spread = clamp(
-            props_.mEcho.flSpread,
-            AL_ECHO_MIN_SPREAD,
-            AL_ECHO_MAX_SPREAD);
-    }
-
-    return is_dirty;
+    return true;
 }
 
 template<>

@@ -264,10 +264,6 @@ void ALCcontext::applyAllUpdates()
         /* busy-wait */
     }
 
-#ifdef ALSOFT_EAX
-    if(eax_is_initialized_)
-        eax_commit();
-#endif
     if(std::exchange(mPropsDirty, false))
         UpdateContextProps(this);
     UpdateAllEffectSlotProps(this);
@@ -331,10 +327,6 @@ ALenum ALCcontext::eax_eax_set(
         property_value,
         property_value_size);
 
-    const auto eax_version = call.get_version();
-    if(eax_version != eax_version_)
-        eax_df_ = ~EaxDirtyFlags();
-    eax_version_ = eax_version;
     eax_initialize();
 
     switch(call.get_property_set_id())
@@ -353,8 +345,12 @@ ALenum ALCcontext::eax_eax_set(
         eax_fail_unknown_property_set_id();
     }
 
-    if(!call.is_deferred() && !mDeferUpdates)
-        applyAllUpdates();
+    if(!call.is_deferred())
+    {
+        eax_commit();
+        if(!mDeferUpdates)
+            applyAllUpdates();
+    }
 
     return AL_NO_ERROR;
 }
@@ -373,7 +369,7 @@ ALenum ALCcontext::eax_eax_get(
         property_source_id,
         property_value,
         property_value_size);
-    eax_version_ = call.get_version();
+
     eax_initialize();
 
     switch(call.get_property_set_id())
@@ -609,45 +605,14 @@ void ALCcontext::eax5_context_set_defaults(Eax5State& state) noexcept
     state.d = state.i;
 }
 
-void ALCcontext::eax4_context_set_current_defaults(const Eax4Props& props) noexcept
-{
-    static_cast<Eax4Props&>(eax_) = props;
-    eax_.flMacroFXFactor = EAXCONTEXT_DEFAULTMACROFXFACTOR;
-}
-
-void ALCcontext::eax5_context_set_current_defaults(const Eax5Props& props) noexcept
-{
-    eax_ = props;
-}
-
-void ALCcontext::eax_context_set_current_defaults()
-{
-    switch(eax_version_)
-    {
-        case 1:
-        case 2:
-        case 3:
-            eax5_context_set_current_defaults(eax123_.i);
-            break;
-        case 4:
-            eax4_context_set_current_defaults(eax4_.i);
-            break;
-        case 5:
-            eax5_context_set_current_defaults(eax5_.i);
-            break;
-        default:
-            eax_fail_unknown_version();
-    }
-
-    eax_df_ = ~EaxDirtyFlags{};
-}
-
 void ALCcontext::eax_context_set_defaults()
 {
     eax5_context_set_defaults(eax123_);
     eax4_context_set_defaults(eax4_);
     eax5_context_set_defaults(eax5_);
-    eax_context_set_current_defaults();
+    eax_ = eax5_.i;
+    eax_version_ = 5;
+    eax_df_ = EaxDirtyFlags{};
 }
 
 void ALCcontext::eax_set_defaults()
@@ -941,12 +906,16 @@ void ALCcontext::eax5_defer(const EaxCall& call, Eax5State& state)
 
 void ALCcontext::eax_set(const EaxCall& call)
 {
-    switch(call.get_version())
+    const auto version = call.get_version();
+    switch(version)
     {
     case 4: eax4_defer(call, eax4_); break;
     case 5: eax5_defer(call, eax5_); break;
     default: eax_fail_unknown_version();
     }
+    if(version != eax_version_)
+        eax_df_ = ~EaxDirtyFlags();
+    eax_version_ = version;
 }
 
 void ALCcontext::eax4_context_commit(Eax4State& state, EaxDirtyFlags& dst_df)
@@ -1002,8 +971,6 @@ void ALCcontext::eax_context_commit()
     case 5:
         eax5_context_commit(eax5_, dst_df);
         break;
-    default:
-        eax_fail_unknown_version();
     }
 
     if(dst_df == EaxDirtyFlags{})
@@ -1031,6 +998,8 @@ void ALCcontext::eax_context_commit()
 void ALCcontext::eax_commit()
 {
     eax_context_commit();
+    eax_commit_fx_slots();
+    eax_update_sources();
 }
 
 namespace {

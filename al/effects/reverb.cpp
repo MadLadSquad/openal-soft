@@ -1156,66 +1156,41 @@ bool EaxReverbCommitter::commit(const EAXREVERBPROPERTIES &props)
 
 bool EaxReverbCommitter::commit(const EaxEffectProps &props)
 {
-    const auto orig = props_;
-    props_ = props;
-    if(orig.mType == props_.mType && memcmp(&orig.mReverb, &props_.mReverb, sizeof(props_.mReverb)) == 0)
+    if(props.mType == mEaxProps.mType
+        && memcmp(&props.mReverb, &mEaxProps.mReverb, sizeof(mEaxProps.mReverb)) == 0)
         return false;
 
-    const auto size = props_.mReverb.flEnvironmentSize;
+    mEaxProps = props;
+
+    const auto size = props.mReverb.flEnvironmentSize;
     const auto density = (size * size * size) / 16.0F;
-    al_effect_props_.Reverb.Density = clamp(density,
-        AL_EAXREVERB_MIN_DENSITY, AL_EAXREVERB_MAX_DENSITY);
-    al_effect_props_.Reverb.Diffusion = clamp(props_.mReverb.flEnvironmentDiffusion,
-        AL_EAXREVERB_MIN_DIFFUSION, AL_EAXREVERB_MAX_DIFFUSION);
-    al_effect_props_.Reverb.Gain = clamp(
-        level_mb_to_gain(static_cast<float>(props_.mReverb.lRoom)),
-        AL_EAXREVERB_MIN_GAIN, AL_EAXREVERB_MAX_GAIN);
-    al_effect_props_.Reverb.GainHF = clamp(
-        level_mb_to_gain(static_cast<float>(props_.mReverb.lRoomHF)),
-        AL_EAXREVERB_MIN_GAINHF, AL_EAXREVERB_MAX_GAINHF);
-    al_effect_props_.Reverb.GainLF = clamp(
-        level_mb_to_gain(static_cast<float>(props_.mReverb.lRoomLF)),
-        AL_EAXREVERB_MIN_GAINLF, AL_EAXREVERB_MAX_GAINLF);
-    al_effect_props_.Reverb.DecayTime = clamp(props_.mReverb.flDecayTime,
-        AL_EAXREVERB_MIN_DECAY_TIME, AL_EAXREVERB_MAX_DECAY_TIME);
-    al_effect_props_.Reverb.DecayHFRatio = clamp(props_.mReverb.flDecayHFRatio,
-        AL_EAXREVERB_MIN_DECAY_HFRATIO, AL_EAXREVERB_MAX_DECAY_HFRATIO);
-    al_effect_props_.Reverb.DecayLFRatio = clamp(props_.mReverb.flDecayLFRatio,
-        AL_EAXREVERB_MIN_DECAY_LFRATIO, AL_EAXREVERB_MAX_DECAY_LFRATIO);
-    al_effect_props_.Reverb.ReflectionsGain = clamp(
-        level_mb_to_gain(static_cast<float>(props_.mReverb.lReflections)),
-        AL_EAXREVERB_MIN_REFLECTIONS_GAIN, AL_EAXREVERB_MAX_REFLECTIONS_GAIN);
-    al_effect_props_.Reverb.ReflectionsDelay = clamp(props_.mReverb.flReflectionsDelay,
-        AL_EAXREVERB_MIN_REFLECTIONS_DELAY, AL_EAXREVERB_MAX_REFLECTIONS_DELAY);
-    al_effect_props_.Reverb.ReflectionsPan[0] = props_.mReverb.vReflectionsPan.x;
-    al_effect_props_.Reverb.ReflectionsPan[1] = props_.mReverb.vReflectionsPan.y;
-    al_effect_props_.Reverb.ReflectionsPan[2] = props_.mReverb.vReflectionsPan.z;
-    al_effect_props_.Reverb.LateReverbGain = clamp(
-        level_mb_to_gain(static_cast<float>(props_.mReverb.lReverb)),
-        AL_EAXREVERB_MIN_LATE_REVERB_GAIN, AL_EAXREVERB_MAX_LATE_REVERB_GAIN);
-    al_effect_props_.Reverb.LateReverbDelay = clamp(props_.mReverb.flReverbDelay,
-        AL_EAXREVERB_MIN_LATE_REVERB_DELAY, AL_EAXREVERB_MAX_LATE_REVERB_DELAY);
-    al_effect_props_.Reverb.LateReverbPan[0] = props_.mReverb.vReverbPan.x;
-    al_effect_props_.Reverb.LateReverbPan[1] = props_.mReverb.vReverbPan.y;
-    al_effect_props_.Reverb.LateReverbPan[2] = props_.mReverb.vReverbPan.z;
-    al_effect_props_.Reverb.EchoTime = clamp(props_.mReverb.flEchoTime,
-        AL_EAXREVERB_MIN_ECHO_TIME, AL_EAXREVERB_MAX_ECHO_TIME);
-    al_effect_props_.Reverb.EchoDepth = clamp(props_.mReverb.flEchoDepth,
-        AL_EAXREVERB_MIN_ECHO_DEPTH, AL_EAXREVERB_MAX_ECHO_DEPTH);
-    al_effect_props_.Reverb.ModulationTime = clamp(props_.mReverb.flModulationTime,
-        AL_EAXREVERB_MIN_MODULATION_TIME, AL_EAXREVERB_MAX_MODULATION_TIME);
-    al_effect_props_.Reverb.ModulationDepth = clamp(props_.mReverb.flModulationDepth,
-        AL_EAXREVERB_MIN_MODULATION_DEPTH, AL_EAXREVERB_MAX_MODULATION_DEPTH);
-    al_effect_props_.Reverb.AirAbsorptionGainHF = clamp(
-        level_mb_to_gain(props_.mReverb.flAirAbsorptionHF),
-        AL_EAXREVERB_MIN_AIR_ABSORPTION_GAINHF, AL_EAXREVERB_MAX_AIR_ABSORPTION_GAINHF);
-    al_effect_props_.Reverb.HFReference = clamp(props_.mReverb.flHFReference,
-        AL_EAXREVERB_MIN_HFREFERENCE, AL_EAXREVERB_MAX_HFREFERENCE);
-    al_effect_props_.Reverb.LFReference = clamp(props_.mReverb.flLFReference,
-        AL_EAXREVERB_MIN_LFREFERENCE, AL_EAXREVERB_MAX_LFREFERENCE);
-    al_effect_props_.Reverb.RoomRolloffFactor = clamp(props_.mReverb.flRoomRolloffFactor,
-        AL_EAXREVERB_MIN_ROOM_ROLLOFF_FACTOR, AL_EAXREVERB_MAX_ROOM_ROLLOFF_FACTOR);
-    al_effect_props_.Reverb.DecayHFLimit = ((props_.mReverb.ulFlags & EAXREVERBFLAGS_DECAYHFLIMIT) != 0);
+    mAlProps.Reverb.Density = std::min(density, AL_EAXREVERB_MAX_DENSITY);
+    mAlProps.Reverb.Diffusion = props.mReverb.flEnvironmentDiffusion;
+    mAlProps.Reverb.Gain = level_mb_to_gain(static_cast<float>(props.mReverb.lRoom));
+    mAlProps.Reverb.GainHF = level_mb_to_gain(static_cast<float>(props.mReverb.lRoomHF));
+    mAlProps.Reverb.GainLF = level_mb_to_gain(static_cast<float>(props.mReverb.lRoomLF));
+    mAlProps.Reverb.DecayTime = props.mReverb.flDecayTime;
+    mAlProps.Reverb.DecayHFRatio = props.mReverb.flDecayHFRatio;
+    mAlProps.Reverb.DecayLFRatio = mEaxProps.mReverb.flDecayLFRatio;
+    mAlProps.Reverb.ReflectionsGain = level_mb_to_gain(static_cast<float>(props.mReverb.lReflections));
+    mAlProps.Reverb.ReflectionsDelay = props.mReverb.flReflectionsDelay;
+    mAlProps.Reverb.ReflectionsPan[0] = props.mReverb.vReflectionsPan.x;
+    mAlProps.Reverb.ReflectionsPan[1] = props.mReverb.vReflectionsPan.y;
+    mAlProps.Reverb.ReflectionsPan[2] = props.mReverb.vReflectionsPan.z;
+    mAlProps.Reverb.LateReverbGain = level_mb_to_gain(static_cast<float>(props.mReverb.lReverb));
+    mAlProps.Reverb.LateReverbDelay = props.mReverb.flReverbDelay;
+    mAlProps.Reverb.LateReverbPan[0] = props.mReverb.vReverbPan.x;
+    mAlProps.Reverb.LateReverbPan[1] = props.mReverb.vReverbPan.y;
+    mAlProps.Reverb.LateReverbPan[2] = props.mReverb.vReverbPan.z;
+    mAlProps.Reverb.EchoTime = props.mReverb.flEchoTime;
+    mAlProps.Reverb.EchoDepth = props.mReverb.flEchoDepth;
+    mAlProps.Reverb.ModulationTime = props.mReverb.flModulationTime;
+    mAlProps.Reverb.ModulationDepth = props.mReverb.flModulationDepth;
+    mAlProps.Reverb.AirAbsorptionGainHF = level_mb_to_gain(props.mReverb.flAirAbsorptionHF);
+    mAlProps.Reverb.HFReference = props.mReverb.flHFReference;
+    mAlProps.Reverb.LFReference = props.mReverb.flLFReference;
+    mAlProps.Reverb.RoomRolloffFactor = props.mReverb.flRoomRolloffFactor;
+    mAlProps.Reverb.DecayHFLimit = ((props.mReverb.ulFlags & EAXREVERBFLAGS_DECAYHFLIMIT) != 0);
     return true;
 }
 

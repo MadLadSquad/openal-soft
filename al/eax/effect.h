@@ -64,11 +64,11 @@ struct EaxReverbCommitter {
     struct Exception;
 
     EaxReverbCommitter(EaxEffectProps &eaxprops, EffectProps &alprops)
-        : props_{eaxprops}, al_effect_props_{alprops}
+        : mEaxProps{eaxprops}, mAlProps{alprops}
     { }
 
-    EaxEffectProps &props_;
-    EffectProps &al_effect_props_;
+    EaxEffectProps &mEaxProps;
+    EffectProps &mAlProps;
 
     [[noreturn]] static void fail(const char* message);
     [[noreturn]] static void fail_unknown_property_id()
@@ -132,11 +132,11 @@ struct EaxCommitter {
     struct Exception;
 
     EaxCommitter(EaxEffectProps &eaxprops, EffectProps &alprops)
-        : props_{eaxprops}, al_effect_props_{alprops}
+        : mEaxProps{eaxprops}, mAlProps{alprops}
     { }
 
-    EaxEffectProps &props_;
-    EffectProps &al_effect_props_;
+    EaxEffectProps &mEaxProps;
+    EffectProps &mAlProps;
 
     template<typename TValidator, typename TProperty>
     static void defer(const EaxCall& call, TProperty& property)
@@ -144,14 +144,6 @@ struct EaxCommitter {
         const auto& value = call.get_value<Exception, const TProperty>();
         TValidator{}(value);
         property = value;
-    }
-
-    template<typename TValidator, typename TDeferrer, typename TProperties, typename TProperty>
-    static void defer(const EaxCall& call, TProperties& properties, TProperty&)
-    {
-        const auto& value = call.get_value<Exception, const TProperty>();
-        TValidator{}(value);
-        TDeferrer{}(properties, value);
     }
 
     [[noreturn]] static void fail(const char *message);
@@ -186,6 +178,18 @@ struct EaxEqualizerCommitter : public EaxCommitter<EaxEqualizerCommitter> {
 struct EaxFlangerCommitter : public EaxCommitter<EaxFlangerCommitter> {
     using EaxCommitter<EaxFlangerCommitter>::EaxCommitter;
 };
+struct EaxFrequencyShifterCommitter : public EaxCommitter<EaxFrequencyShifterCommitter> {
+    using EaxCommitter<EaxFrequencyShifterCommitter>::EaxCommitter;
+};
+struct EaxModulatorCommitter : public EaxCommitter<EaxModulatorCommitter> {
+    using EaxCommitter<EaxModulatorCommitter>::EaxCommitter;
+};
+struct EaxPitchShifterCommitter : public EaxCommitter<EaxPitchShifterCommitter> {
+    using EaxCommitter<EaxPitchShifterCommitter>::EaxCommitter;
+};
+struct EaxVocalMorpherCommitter : public EaxCommitter<EaxVocalMorpherCommitter> {
+    using EaxCommitter<EaxVocalMorpherCommitter>::EaxCommitter;
+};
 struct EaxNullCommitter : public EaxCommitter<EaxNullCommitter> {
     using EaxCommitter<EaxNullCommitter>::EaxCommitter;
 };
@@ -194,7 +198,7 @@ struct EaxNullCommitter : public EaxCommitter<EaxNullCommitter> {
 class EaxEffect {
 public:
     EaxEffect() noexcept = default;
-    virtual ~EaxEffect() = default;
+    ~EaxEffect() = default;
 
     ALenum al_effect_type_{AL_EFFECT_NULL};
     EffectProps al_effect_props_{};
@@ -233,10 +237,6 @@ public:
     State4 state4_{};
     State4 state5_{};
 
-    [[deprecated]] virtual void dispatch(const EaxCall& /*call*/) { }
-
-    // Returns "true" if any immediated property was changed.
-    /*[[nodiscard]]*/ [[deprecated]] virtual bool commit() { return false; }
 
     template<typename T, typename ...Args>
     void call_set_defaults(Args&& ...args)
@@ -260,6 +260,14 @@ public:
             return call_set_defaults<EaxEqualizerCommitter>(props);
         if(altype == AL_EFFECT_FLANGER)
             return call_set_defaults<EaxFlangerCommitter>(props);
+        if(altype == AL_EFFECT_FREQUENCY_SHIFTER)
+            return call_set_defaults<EaxFrequencyShifterCommitter>(props);
+        if(altype == AL_EFFECT_RING_MODULATOR)
+            return call_set_defaults<EaxModulatorCommitter>(props);
+        if(altype == AL_EFFECT_PITCH_SHIFTER)
+            return call_set_defaults<EaxPitchShifterCommitter>(props);
+        if(altype == AL_EFFECT_VOCAL_MORPHER)
+            return call_set_defaults<EaxVocalMorpherCommitter>(props);
         return call_set_defaults<EaxNullCommitter>(props);
     }
 
@@ -309,6 +317,14 @@ public:
         return Callable<EaxEqualizerCommitter>(__VA_ARGS__);                  \
     if(T == EaxEffectType::Flanger)                                           \
         return Callable<EaxFlangerCommitter>(__VA_ARGS__);                    \
+    if(T == EaxEffectType::FrequencyShifter)                                  \
+        return Callable<EaxFrequencyShifterCommitter>(__VA_ARGS__);           \
+    if(T == EaxEffectType::Modulator)                                         \
+        return Callable<EaxModulatorCommitter>(__VA_ARGS__);                  \
+    if(T == EaxEffectType::PitchShifter)                                      \
+        return Callable<EaxPitchShifterCommitter>(__VA_ARGS__);               \
+    if(T == EaxEffectType::VocalMorpher)                                      \
+        return Callable<EaxVocalMorpherCommitter>(__VA_ARGS__);               \
     return Callable<EaxNullCommitter>(__VA_ARGS__)
 
     template<typename T, typename ...Args>
@@ -397,116 +413,6 @@ public:
 #undef EAXCALL
 }; // EaxEffect
 
-// Base class for EAX4+ effects.
-template<typename TException>
-class EaxEffect4 : public EaxEffect
-{
-public:
-    EaxEffect4(ALenum, int) { }
-
-    void initialize()
-    {
-        set_defaults();
-        set_efx_defaults();
-    }
-
-    void dispatch(const EaxCall& call) override
-    { call.is_get() ? get(call) : set(call); }
-
-    bool commit() final
-    {
-        switch (version_)
-        {
-            case 4: return commit_state(state4_);
-            case 5: return commit_state(state5_);
-            default: fail_unknown_version();
-        }
-    }
-
-protected:
-    using Exception = TException;
-
-    template<typename TValidator, typename TProperty>
-    static void defer(const EaxCall& call, TProperty& property)
-    {
-        const auto& value = call.get_value<Exception, const TProperty>();
-        TValidator{}(value);
-        property = value;
-    }
-
-    virtual void set_defaults(Props4& props) = 0;
-    virtual void set_efx_defaults() = 0;
-
-    virtual void get(const EaxCall& call, const Props4& props) = 0;
-    virtual void set(const EaxCall& call, Props4& props) = 0;
-
-    virtual bool commit_props(const Props4& props) = 0;
-
-    [[noreturn]] static void fail(const char* message)
-    {
-        throw Exception{message};
-    }
-
-    [[noreturn]] static void fail_unknown_property_id()
-    {
-        fail(EaxEffectErrorMessages::unknown_property_id());
-    }
-
-    [[noreturn]] static void fail_unknown_version()
-    {
-        fail(EaxEffectErrorMessages::unknown_version());
-    }
-
-private:
-    void set_defaults()
-    {
-        set_defaults(props_);
-        state4_.i = props_;
-        state4_.d = props_;
-        state5_.i = props_;
-        state5_.d = props_;
-    }
-
-    void get(const EaxCall& call)
-    {
-        switch (call.get_version())
-        {
-            case 4: get(call, state4_.i); break;
-            case 5: get(call, state5_.i); break;
-            default: fail_unknown_version();
-        }
-    }
-
-    void set(const EaxCall& call)
-    {
-        const auto version = call.get_version();
-        switch (version)
-        {
-            case 4: set(call, state4_.d); break;
-            case 5: set(call, state5_.d); break;
-            default: fail_unknown_version();
-        }
-        version_ = version;
-    }
-
-    bool commit_state(State4& state)
-    {
-        const auto props = props_;
-        state.i = state.d;
-        props_ = state.d;
-        return commit_props(props);
-    }
-}; // EaxEffect4
-
 using EaxEffectUPtr = std::unique_ptr<EaxEffect>;
-
-// Creates EAX4+ effect.
-template<typename TEffect>
-EaxEffectUPtr eax_create_eax4_effect(int eax_version)
-{
-    auto effect = std::make_unique<TEffect>(eax_version);
-    effect->initialize();
-    return effect;
-}
 
 #endif // !EAX_EFFECT_INCLUDED
