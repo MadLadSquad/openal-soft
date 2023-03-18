@@ -1043,7 +1043,7 @@ endif()
 
 # Check PortAudio backend
 option(ALSOFT_REQUIRE_PORTAUDIO "Require PortAudio backend" OFF)
-find_package(PortAudio)
+#find_package(PortAudio)
 if(PORTAUDIO_FOUND)
     option(ALSOFT_BACKEND_PORTAUDIO "Enable PortAudio backend" ON)
     if(ALSOFT_BACKEND_PORTAUDIO)
@@ -1206,7 +1206,7 @@ endif()
 set(BACKENDS  "${BACKENDS} Null")
 
 
-find_package(Git)
+#find_package(Git)
 if(ALSOFT_UPDATE_BUILD_VERSION AND GIT_FOUND AND EXISTS "${OpenAL_SOURCE_DIR}/.git")
     set(GIT_DIR "${OpenAL_SOURCE_DIR}/.git")
 
