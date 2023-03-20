@@ -334,29 +334,11 @@ double GetSourceOffset(ALsource *Source, ALenum name, ALCcontext *context)
         break;
 
     case AL_BYTE_OFFSET:
-        if(BufferFmt->OriginalType == UserFmtIMA4)
-        {
-            ALuint FrameBlockSize{BufferFmt->mBlockAlign};
-            ALuint align{(BufferFmt->mBlockAlign-1)/2 + 4};
-            ALuint BlockSize{align * BufferFmt->channelsFromFmt()};
+        const ALuint BlockSamples{BufferFmt->mBlockAlign};
+        const ALuint BlockSize{BufferFmt->blockSizeFromFmt()};
 
-            /* Round down to nearest ADPCM block */
-            offset = static_cast<double>(readPos / FrameBlockSize * BlockSize);
-        }
-        else if(BufferFmt->OriginalType == UserFmtMSADPCM)
-        {
-            ALuint FrameBlockSize{BufferFmt->mBlockAlign};
-            ALuint align{(FrameBlockSize-2)/2 + 7};
-            ALuint BlockSize{align * BufferFmt->channelsFromFmt()};
-
-            /* Round down to nearest ADPCM block */
-            offset = static_cast<double>(readPos / FrameBlockSize * BlockSize);
-        }
-        else
-        {
-            const ALuint FrameSize{BufferFmt->frameSizeFromFmt()};
-            offset = static_cast<double>(readPos * FrameSize);
-        }
+        /* Round down to the block boundary. */
+        offset = static_cast<double>(readPos / BlockSamples) * BlockSize;
         break;
     }
     return offset;
@@ -390,25 +372,11 @@ double GetSourceLength(const ALsource *source, ALenum name)
         return static_cast<double>(length);
 
     case AL_BYTE_LENGTH_SOFT:
-        if(BufferFmt->OriginalType == UserFmtIMA4)
-        {
-            ALuint FrameBlockSize{BufferFmt->mBlockAlign};
-            ALuint align{(BufferFmt->mBlockAlign-1)/2 + 4};
-            ALuint BlockSize{align * BufferFmt->channelsFromFmt()};
+        const ALuint BlockSamples{BufferFmt->mBlockAlign};
+        const ALuint BlockSize{BufferFmt->blockSizeFromFmt()};
 
-            /* Round down to nearest ADPCM block */
-            return static_cast<double>(length / FrameBlockSize) * BlockSize;
-        }
-        else if(BufferFmt->OriginalType == UserFmtMSADPCM)
-        {
-            ALuint FrameBlockSize{BufferFmt->mBlockAlign};
-            ALuint align{(FrameBlockSize-2)/2 + 7};
-            ALuint BlockSize{align * BufferFmt->channelsFromFmt()};
-
-            /* Round down to nearest ADPCM block */
-            return static_cast<double>(length / FrameBlockSize) * BlockSize;
-        }
-        return static_cast<double>(length) * BufferFmt->frameSizeFromFmt();
+        /* Round down to the block boundary. */
+        return static_cast<double>(length / BlockSamples) * BlockSize;
     }
     return 0.0;
 }
@@ -474,21 +442,8 @@ al::optional<VoicePos> GetSampleOffset(al::deque<ALbufferQueueItem> &BufferList,
 
     case AL_BYTE_OFFSET:
         /* Determine the ByteOffset (and ensure it is block aligned) */
-        if(BufferFmt->OriginalType == UserFmtIMA4)
-        {
-            const ALuint align{(BufferFmt->mBlockAlign-1)/2 + 4};
-            Offset = std::floor(Offset / align / BufferFmt->channelsFromFmt());
-            Offset *= BufferFmt->mBlockAlign;
-        }
-        else if(BufferFmt->OriginalType == UserFmtMSADPCM)
-        {
-            const ALuint align{(BufferFmt->mBlockAlign-2)/2 + 7};
-            Offset = std::floor(Offset / align / BufferFmt->channelsFromFmt());
-            Offset *= BufferFmt->mBlockAlign;
-        }
-        else
-            Offset = std::floor(Offset / BufferFmt->channelsFromFmt());
-        offset = static_cast<int64_t>(Offset);
+        Offset = std::floor(Offset / BufferFmt->blockSizeFromFmt());
+        offset = static_cast<int64_t>(Offset) * BufferFmt->mBlockAlign;
         frac = 0;
         break;
     }
@@ -3918,7 +3873,7 @@ START_API_FUNC
                 fmt_mismatch |= BufferFmt->mAmbiScaling != buffer->mAmbiScaling;
             }
             fmt_mismatch |= BufferFmt->mAmbiOrder != buffer->mAmbiOrder;
-            fmt_mismatch |= BufferFmt->OriginalType != buffer->OriginalType;
+            fmt_mismatch |= BufferFmt->mType != buffer->mType;
         }
         if(fmt_mismatch) UNLIKELY
         {
