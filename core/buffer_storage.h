@@ -5,6 +5,7 @@
 
 #include "albyte.h"
 #include "alnumeric.h"
+#include "alspan.h"
 #include "ambidefs.h"
 
 
@@ -48,6 +49,9 @@ enum class AmbiScaling : unsigned char {
     UHJ,
 };
 
+const char *NameFromFormat(FmtType type) noexcept;
+const char *NameFromFormat(FmtChannels channels) noexcept;
+
 uint BytesFromFmt(FmtType type) noexcept;
 uint ChannelsFromFmt(FmtChannels chans, uint ambiorder) noexcept;
 inline uint FrameSizeFromFmt(FmtChannels chans, FmtType type, uint ambiorder) noexcept
@@ -80,6 +84,8 @@ using CallbackType = int(*)(void*, void*, int);
 struct BufferStorage {
     CallbackType mCallback{nullptr};
     void *mUserData{nullptr};
+
+    al::span<al::byte> mData;
 
     uint mSampleRate{0u};
     FmtChannels mChannels{FmtMono};

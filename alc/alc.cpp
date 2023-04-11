@@ -457,6 +457,8 @@ const struct {
     DECL(alSourcePlayAtTimevSOFT),
 
     DECL(alBufferSubDataSOFT),
+
+    DECL(alBufferDataStatic),
 #ifdef ALSOFT_EAX
 }, eaxFunctions[] = {
     DECL(EAXGet),
@@ -2316,11 +2318,6 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
     {
         auto *context = static_cast<ALCcontext*>(ctxbase);
 
-        auto GetEffectBuffer = [](ALbuffer *buffer) noexcept -> EffectState::Buffer
-        {
-            if(!buffer) return EffectState::Buffer{};
-            return EffectState::Buffer{buffer, buffer->mData};
-        };
         std::unique_lock<std::mutex> proplock{context->mPropLock};
         std::unique_lock<std::mutex> slotlock{context->mEffectSlotLock};
 
@@ -2357,7 +2354,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
             EffectState *state{slot->Effect.State.get()};
             state->mOutTarget = device->Dry.Buffer;
-            state->deviceUpdate(device, GetEffectBuffer(slot->Buffer));
+            state->deviceUpdate(device, slot->Buffer);
             slot->updateProps(context);
         }
 
@@ -2376,7 +2373,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
                 EffectState *state{slot->Effect.State.get()};
                 state->mOutTarget = device->Dry.Buffer;
-                state->deviceUpdate(device, GetEffectBuffer(slot->Buffer));
+                state->deviceUpdate(device, slot->Buffer);
                 slot->updateProps(context);
             }
         }

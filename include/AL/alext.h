@@ -141,9 +141,9 @@ extern "C" {
 
 #ifndef AL_EXT_STATIC_BUFFER
 #define AL_EXT_STATIC_BUFFER 1
-typedef void (AL_APIENTRY*PFNALBUFFERDATASTATICPROC)(const ALint,ALenum,ALvoid*,ALsizei,ALsizei);
+typedef void (AL_APIENTRY*PFNALBUFFERDATASTATICPROC)(const ALuint,ALenum,ALvoid*,ALsizei,ALsizei);
 #ifdef AL_ALEXT_PROTOTYPES
-AL_API void AL_APIENTRY alBufferDataStatic(const ALint buffer, ALenum format, ALvoid *data, ALsizei len, ALsizei freq);
+void AL_APIENTRY alBufferDataStatic(const ALuint buffer, ALenum format, ALvoid *data, ALsizei size, ALsizei freq);
 #endif
 #endif
 
@@ -636,6 +636,16 @@ AL_API void AL_APIENTRY alGetBufferPtrvSOFT(ALuint buffer, ALenum param, ALvoid 
 #define ALC_SURROUND_5_1_SOFT                    0x1504
 #define ALC_SURROUND_6_1_SOFT                    0x1505
 #define ALC_SURROUND_7_1_SOFT                    0x1506
+#endif
+
+#ifndef AL_SOFT_source_start_delay
+#define AL_SOFT_source_start_delay
+typedef void (AL_APIENTRY*LPALSOURCEPLAYATTIMESOFT)(ALuint source, ALint64SOFT start_time);
+typedef void (AL_APIENTRY*LPALSOURCEPLAYATTIMEVSOFT)(ALsizei n, const ALuint *sources, ALint64SOFT start_time);
+#ifdef AL_ALEXT_PROTOTYPES
+void AL_APIENTRY alSourcePlayAtTimeSOFT(ALuint source, ALint64SOFT start_time);
+void AL_APIENTRY alSourcePlayAtTimevSOFT(ALsizei n, const ALuint *sources, ALint64SOFT start_time);
+#endif
 #endif
 
 #ifdef __cplusplus
