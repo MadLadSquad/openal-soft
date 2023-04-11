@@ -1043,7 +1043,7 @@ endif()
 
 # Check PortAudio backend
 option(ALSOFT_REQUIRE_PORTAUDIO "Require PortAudio backend" OFF)
-#find_package(PortAudio)
+find_package(PortAudio)
 if(PORTAUDIO_FOUND)
     option(ALSOFT_BACKEND_PORTAUDIO "Enable PortAudio backend" ON)
     if(ALSOFT_BACKEND_PORTAUDIO)
