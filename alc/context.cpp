@@ -4,11 +4,13 @@
 #include "context.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <numeric>
 #include <stddef.h>
 #include <stdexcept>
+#include <utility>
 
 #include "AL/efx.h"
 
@@ -19,6 +21,7 @@
 #include "al/listener.h"
 #include "albit.h"
 #include "alc/alu.h"
+#include "alspan.h"
 #include "core/async_event.h"
 #include "core/device.h"
 #include "core/effectslot.h"
@@ -27,6 +30,7 @@
 #include "core/voice_change.h"
 #include "device.h"
 #include "ringbuffer.h"
+#include "threads.h"
 #include "vecmat.h"
 
 #ifdef ALSOFT_EAX
@@ -295,81 +299,67 @@ void ALCcontext::applyAllUpdates()
     mHoldUpdates.store(false, std::memory_order_release);
 }
 
+
 void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
     DebugSeverity severity, ALsizei length, const char *message)
 {
+    static_assert(DebugSeverityBase+DebugSeverityCount <= 32, "Too many debug bits");
+    static auto get_source_enum = [](DebugSource source) noexcept
+    {
+        switch(source)
+        {
+        case DebugSource::API: return AL_DEBUG_SOURCE_API_SOFT;
+        case DebugSource::System: return AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT;
+        case DebugSource::ThirdParty: return AL_DEBUG_SOURCE_THIRD_PARTY_SOFT;
+        case DebugSource::Application: return AL_DEBUG_SOURCE_APPLICATION_SOFT;
+        case DebugSource::Other: return AL_DEBUG_SOURCE_OTHER_SOFT;
+        }
+    };
+    static auto get_type_enum = [](DebugType type) noexcept
+    {
+        switch(type)
+        {
+        case DebugType::Error: return AL_DEBUG_TYPE_ERROR_SOFT;
+        case DebugType::DeprecatedBehavior: return AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT;
+        case DebugType::UndefinedBehavior: return AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT;
+        case DebugType::Portability: return AL_DEBUG_TYPE_PORTABILITY_SOFT;
+        case DebugType::Performance: return AL_DEBUG_TYPE_PERFORMANCE_SOFT;
+        case DebugType::Marker: return AL_DEBUG_TYPE_MARKER_SOFT;
+        case DebugType::Other: return AL_DEBUG_TYPE_OTHER_SOFT;
+        }
+    };
+    static auto get_severity_enum = [](DebugSeverity severity) noexcept
+    {
+        switch(severity)
+        {
+        case DebugSeverity::High: return AL_DEBUG_SEVERITY_HIGH_SOFT;
+        case DebugSeverity::Medium: return AL_DEBUG_SEVERITY_MEDIUM_SOFT;
+        case DebugSeverity::Low: return AL_DEBUG_SEVERITY_LOW_SOFT;
+        case DebugSeverity::Notification: return AL_DEBUG_SEVERITY_NOTIFICATION_SOFT;
+        }
+    };
+
     std::lock_guard<std::mutex> _{mDebugCbLock};
-    if(!mDebugEnabled.load())
+    if(!mDebugEnabled.load()) UNLIKELY
+        return;
+
+    const uint filter{(1u<<(DebugSourceBase+al::to_underlying(source)))
+        | (1u<<(DebugTypeBase+al::to_underlying(type)))
+        | (1u<<(DebugSeverityBase+al::to_underlying(severity)))};
+
+    auto iter = std::lower_bound(mDebugFilters.cbegin(), mDebugFilters.cend(), filter);
+    if(iter != mDebugFilters.cend() && *iter == filter)
         return;
 
     if(mDebugCb)
-        mDebugCb(al::to_underlying(source), al::to_underlying(type), id,
-            al::to_underlying(severity), length, message, mDebugParam);
+        mDebugCb(get_source_enum(source), get_type_enum(type), id, get_severity_enum(severity),
+            length, message, mDebugParam);
     else
     {
         /* TODO: Store in a log. */
     }
 }
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackSOFT(ALDEBUGPROCSOFT callback, void *userParam) noexcept
-{
-    ContextRef context{GetContextRef()};
-    if(!context) UNLIKELY return;
-
-    std::lock_guard<std::mutex> _{context->mDebugCbLock};
-    context->mDebugCb = callback;
-    context->mDebugParam = userParam;
-}
-
-FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertSOFT(ALenum source, ALenum type, ALuint id,
-    ALenum severity, ALsizei length, const ALchar *message) noexcept
-{
-    ContextRef context{GetContextRef()};
-    if(!context) UNLIKELY return;
-
-    if(!message)
-        return context->setError(AL_INVALID_VALUE, "Null message pointer");
-
-    DebugSource dsource{};
-    switch(source)
-    {
-    case AL_DEBUG_SOURCE_THIRD_PARTY_SOFT: dsource = DebugSource::ThirdParty; break;
-    case AL_DEBUG_SOURCE_APPLICATION_SOFT: dsource = DebugSource::Application; break;
-    case AL_DEBUG_SOURCE_API_SOFT:
-    case AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT:
-    case AL_DEBUG_SOURCE_OTHER_SOFT:
-        return context->setError(AL_INVALID_ENUM, "Debug source enum 0x%04x not allowed", source);
-    default:
-        return context->setError(AL_INVALID_ENUM, "Invalid debug source enum 0x%04x", source);
-    }
-
-    DebugType dtype{};
-    switch(type)
-    {
-    case AL_DEBUG_TYPE_ERROR_SOFT: dtype = DebugType::Error; break;
-    case AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT: dtype = DebugType::DeprecatedBehavior; break;
-    case AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT: dtype = DebugType::UndefinedBehavior; break;
-    case AL_DEBUG_TYPE_PORTABILITY_SOFT: dtype = DebugType::Portability; break;
-    case AL_DEBUG_TYPE_PERFORMANCE_SOFT: dtype = DebugType::Performance; break;
-    case AL_DEBUG_TYPE_MARKER_SOFT: dtype = DebugType::Marker; break;
-    case AL_DEBUG_TYPE_OTHER_SOFT: dtype = DebugType::Other; break;
-    default:
-        return context->setError(AL_INVALID_ENUM, "Invalid debug type 0x%04x", type);
-    }
-
-    DebugSeverity dseverity{};
-    switch(severity)
-    {
-    case AL_DEBUG_SEVERITY_HIGH_SOFT: dseverity = DebugSeverity::High; break;
-    case AL_DEBUG_SEVERITY_MEDIUM_SOFT: dseverity = DebugSeverity::Medium; break;
-    case AL_DEBUG_SEVERITY_LOW_SOFT: dseverity = DebugSeverity::Low; break;
-    case AL_DEBUG_SEVERITY_NOTIFICATION_SOFT: dseverity = DebugSeverity::Notification; break;
-    default:
-        return context->setError(AL_INVALID_ENUM, "Invalid debug severity 0x%04x", severity);
-    }
-
-    context->debugMessage(dsource, dtype, id, dseverity, length, message);
-}
 
 #ifdef ALSOFT_EAX
 namespace {

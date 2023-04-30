@@ -35,28 +35,36 @@ struct ALsource;
 using uint = unsigned int;
 
 
-enum class DebugSource : ALenum {
-    API = AL_DEBUG_SOURCE_API_SOFT,
-    System = AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT,
-    ThirdParty = AL_DEBUG_SOURCE_THIRD_PARTY_SOFT,
-    Application = AL_DEBUG_SOURCE_APPLICATION_SOFT,
-    Other = AL_DEBUG_SOURCE_OTHER_SOFT,
+constexpr uint DebugSourceBase{0};
+enum class DebugSource : uint8_t {
+    API = 0,
+    System,
+    ThirdParty,
+    Application,
+    Other,
 };
-enum class DebugType : ALenum {
-    Error = AL_DEBUG_TYPE_ERROR_SOFT,
-    DeprecatedBehavior = AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT,
-    UndefinedBehavior = AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT,
-    Portability = AL_DEBUG_TYPE_PORTABILITY_SOFT,
-    Performance = AL_DEBUG_TYPE_PERFORMANCE_SOFT,
-    Marker = AL_DEBUG_TYPE_MARKER_SOFT,
-    Other = AL_DEBUG_TYPE_OTHER_SOFT,
+constexpr uint DebugSourceCount{5};
+
+constexpr uint DebugTypeBase{DebugSourceBase + DebugSourceCount};
+enum class DebugType : uint8_t {
+    Error = 0,
+    DeprecatedBehavior,
+    UndefinedBehavior,
+    Portability,
+    Performance,
+    Marker,
+    Other,
 };
-enum class DebugSeverity : ALenum {
-    High = AL_DEBUG_SEVERITY_HIGH_SOFT,
-    Medium = AL_DEBUG_SEVERITY_MEDIUM_SOFT,
-    Low = AL_DEBUG_SEVERITY_LOW_SOFT,
-    Notification = AL_DEBUG_SEVERITY_NOTIFICATION_SOFT,
+constexpr uint DebugTypeCount{7};
+
+constexpr uint DebugSeverityBase{DebugTypeBase + DebugTypeCount};
+enum class DebugSeverity : uint8_t {
+    High = 0,
+    Medium,
+    Low,
+    Notification,
 };
+constexpr uint DebugSeverityCount{4};
 
 
 struct SourceSubList {
@@ -118,6 +126,7 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
     std::mutex mDebugCbLock;
     ALDEBUGPROCSOFT mDebugCb{};
     void *mDebugParam{nullptr};
+    std::vector<uint> mDebugFilters;
 
     ALlistener mListener{};
 

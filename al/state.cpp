@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -247,6 +248,20 @@ END_API_FUNC
 AL_API ALboolean AL_APIENTRY alGetBoolean(ALenum pname)
 START_API_FUNC
 {
+    switch(pname)
+    {
+    case AL_DOPPLER_FACTOR:
+    case AL_DOPPLER_VELOCITY:
+    case AL_SPEED_OF_SOUND:
+    case AL_GAIN_LIMIT_SOFT:
+        return alGetFloat(pname) != 0.0f;
+
+    case AL_DISTANCE_MODEL:
+    case AL_NUM_RESAMPLERS_SOFT:
+    case AL_DEFAULT_RESAMPLER_SOFT:
+        return alGetInteger(pname) != 0;
+    }
+
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return AL_FALSE;
 
@@ -254,43 +269,9 @@ START_API_FUNC
     ALboolean value{AL_FALSE};
     switch(pname)
     {
-    case AL_DOPPLER_FACTOR:
-        if(context->mDopplerFactor != 0.0f)
-            value = AL_TRUE;
-        break;
-
-    case AL_DOPPLER_VELOCITY:
-        if(context->mDopplerVelocity != 0.0f)
-            value = AL_TRUE;
-        break;
-
-    case AL_DISTANCE_MODEL:
-        if(context->mDistanceModel == DistanceModel::Default)
-            value = AL_TRUE;
-        break;
-
-    case AL_SPEED_OF_SOUND:
-        if(context->mSpeedOfSound != 0.0f)
-            value = AL_TRUE;
-        break;
-
     case AL_DEFERRED_UPDATES_SOFT:
         if(context->mDeferUpdates)
             value = AL_TRUE;
-        break;
-
-    case AL_GAIN_LIMIT_SOFT:
-        if(GainMixMax/context->mGainBoost != 0.0f)
-            value = AL_TRUE;
-        break;
-
-    case AL_NUM_RESAMPLERS_SOFT:
-        /* Always non-0. */
-        value = AL_TRUE;
-        break;
-
-    case AL_DEFAULT_RESAMPLER_SOFT:
-        value = static_cast<int>(ResamplerDefault) ? AL_TRUE : AL_FALSE;
         break;
 
     default:
@@ -304,6 +285,23 @@ END_API_FUNC
 AL_API ALdouble AL_APIENTRY alGetDouble(ALenum pname)
 START_API_FUNC
 {
+    switch(pname)
+    {
+    case AL_DOPPLER_FACTOR:
+    case AL_DOPPLER_VELOCITY:
+    case AL_SPEED_OF_SOUND:
+    case AL_GAIN_LIMIT_SOFT:
+        return alGetFloat(pname);
+
+    case AL_DEFERRED_UPDATES_SOFT:
+        return alGetBoolean(pname) ? 1.0 : 0.0;
+
+    case AL_DISTANCE_MODEL:
+    case AL_NUM_RESAMPLERS_SOFT:
+    case AL_DEFAULT_RESAMPLER_SOFT:
+        return alGetInteger(pname);
+    }
+
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return 0.0;
 
@@ -311,39 +309,6 @@ START_API_FUNC
     ALdouble value{0.0};
     switch(pname)
     {
-    case AL_DOPPLER_FACTOR:
-        value = context->mDopplerFactor;
-        break;
-
-    case AL_DOPPLER_VELOCITY:
-        value = context->mDopplerVelocity;
-        break;
-
-    case AL_DISTANCE_MODEL:
-        value = static_cast<ALdouble>(ALenumFromDistanceModel(context->mDistanceModel));
-        break;
-
-    case AL_SPEED_OF_SOUND:
-        value = context->mSpeedOfSound;
-        break;
-
-    case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates)
-            value = static_cast<ALdouble>(AL_TRUE);
-        break;
-
-    case AL_GAIN_LIMIT_SOFT:
-        value = ALdouble{GainMixMax}/context->mGainBoost;
-        break;
-
-    case AL_NUM_RESAMPLERS_SOFT:
-        value = static_cast<ALdouble>(Resampler::Max) + 1.0;
-        break;
-
-    case AL_DEFAULT_RESAMPLER_SOFT:
-        value = static_cast<ALdouble>(ResamplerDefault);
-        break;
-
     default:
         context->setError(AL_INVALID_VALUE, "Invalid double property 0x%04x", pname);
     }
@@ -355,6 +320,18 @@ END_API_FUNC
 AL_API ALfloat AL_APIENTRY alGetFloat(ALenum pname)
 START_API_FUNC
 {
+    switch(pname)
+    {
+    case AL_DISTANCE_MODEL:
+    case AL_NUM_RESAMPLERS_SOFT:
+    case AL_DEFAULT_RESAMPLER_SOFT:
+        return static_cast<ALfloat>(alGetInteger(pname));
+        break;
+
+    case AL_DEFERRED_UPDATES_SOFT:
+        return alGetBoolean(pname) ? 1.0f : 0.0f;
+    }
+
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return 0.0f;
 
@@ -367,32 +344,19 @@ START_API_FUNC
         break;
 
     case AL_DOPPLER_VELOCITY:
+        context->debugMessage(DebugSource::API, DebugType::DeprecatedBehavior, 0,
+            DebugSeverity::Medium, -1,
+            "AL_DOPPLER_VELOCITY is deprecated in AL 1.1, use AL_SPEED_OF_SOUND; "
+            "AL_DOPPLER_VELOCITY -> AL_SPEED_OF_SOUND / 343.3f");
         value = context->mDopplerVelocity;
-        break;
-
-    case AL_DISTANCE_MODEL:
-        value = static_cast<ALfloat>(ALenumFromDistanceModel(context->mDistanceModel));
         break;
 
     case AL_SPEED_OF_SOUND:
         value = context->mSpeedOfSound;
         break;
 
-    case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates)
-            value = static_cast<ALfloat>(AL_TRUE);
-        break;
-
     case AL_GAIN_LIMIT_SOFT:
-        value = GainMixMax/context->mGainBoost;
-        break;
-
-    case AL_NUM_RESAMPLERS_SOFT:
-        value = static_cast<ALfloat>(Resampler::Max) + 1.0f;
-        break;
-
-    case AL_DEFAULT_RESAMPLER_SOFT:
-        value = static_cast<ALfloat>(ResamplerDefault);
+        value = GainMixMax / context->mGainBoost;
         break;
 
     default:
@@ -406,6 +370,18 @@ END_API_FUNC
 AL_API ALint AL_APIENTRY alGetInteger(ALenum pname)
 START_API_FUNC
 {
+    switch(pname)
+    {
+    case AL_DOPPLER_FACTOR:
+    case AL_DOPPLER_VELOCITY:
+    case AL_SPEED_OF_SOUND:
+    case AL_GAIN_LIMIT_SOFT:
+        return static_cast<ALint>(alGetFloat(pname));
+
+    case AL_DEFERRED_UPDATES_SOFT:
+        return alGetBoolean(pname);
+    }
+
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return 0;
 
@@ -413,37 +389,16 @@ START_API_FUNC
     ALint value{0};
     switch(pname)
     {
-    case AL_DOPPLER_FACTOR:
-        value = static_cast<ALint>(context->mDopplerFactor);
-        break;
-
-    case AL_DOPPLER_VELOCITY:
-        value = static_cast<ALint>(context->mDopplerVelocity);
-        break;
-
     case AL_DISTANCE_MODEL:
         value = ALenumFromDistanceModel(context->mDistanceModel);
         break;
 
-    case AL_SPEED_OF_SOUND:
-        value = static_cast<ALint>(context->mSpeedOfSound);
-        break;
-
-    case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates)
-            value = AL_TRUE;
-        break;
-
-    case AL_GAIN_LIMIT_SOFT:
-        value = static_cast<ALint>(GainMixMax/context->mGainBoost);
-        break;
-
     case AL_NUM_RESAMPLERS_SOFT:
-        value = static_cast<int>(Resampler::Max) + 1;
+        value = al::to_underlying(Resampler::Max) + 1;
         break;
 
     case AL_DEFAULT_RESAMPLER_SOFT:
-        value = static_cast<int>(ResamplerDefault);
+        value = al::to_underlying(ResamplerDefault);
         break;
 
 #ifdef ALSOFT_EAX
@@ -451,30 +406,21 @@ START_API_FUNC
 #define EAX_ERROR "[alGetInteger] EAX not enabled."
 
     case AL_EAX_RAM_SIZE:
-        if (eax_g_is_enabled)
-        {
+        if(eax_g_is_enabled)
             value = eax_x_ram_max_size;
-        }
         else
-        {
             context->setError(AL_INVALID_VALUE, EAX_ERROR);
-        }
-
         break;
 
     case AL_EAX_RAM_FREE:
-        if (eax_g_is_enabled)
+        if(eax_g_is_enabled)
         {
             auto device = context->mALDevice.get();
             std::lock_guard<std::mutex> device_lock{device->BufferLock};
-
             value = static_cast<ALint>(device->eax_x_ram_free_size);
         }
         else
-        {
             context->setError(AL_INVALID_VALUE, EAX_ERROR);
-        }
-
         break;
 
 #undef EAX_ERROR
@@ -492,6 +438,23 @@ END_API_FUNC
 AL_API ALint64SOFT AL_APIENTRY alGetInteger64SOFT(ALenum pname)
 START_API_FUNC
 {
+    switch(pname)
+    {
+    case AL_DOPPLER_FACTOR:
+    case AL_DOPPLER_VELOCITY:
+    case AL_SPEED_OF_SOUND:
+    case AL_GAIN_LIMIT_SOFT:
+        return static_cast<ALint64SOFT>(alGetFloat(pname));
+
+    case AL_DEFERRED_UPDATES_SOFT:
+        return alGetBoolean(pname);
+
+    case AL_DISTANCE_MODEL:
+    case AL_NUM_RESAMPLERS_SOFT:
+    case AL_DEFAULT_RESAMPLER_SOFT:
+        return alGetInteger(pname);
+    }
+
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return 0_i64;
 
@@ -499,39 +462,6 @@ START_API_FUNC
     ALint64SOFT value{0};
     switch(pname)
     {
-    case AL_DOPPLER_FACTOR:
-        value = static_cast<ALint64SOFT>(context->mDopplerFactor);
-        break;
-
-    case AL_DOPPLER_VELOCITY:
-        value = static_cast<ALint64SOFT>(context->mDopplerVelocity);
-        break;
-
-    case AL_DISTANCE_MODEL:
-        value = ALenumFromDistanceModel(context->mDistanceModel);
-        break;
-
-    case AL_SPEED_OF_SOUND:
-        value = static_cast<ALint64SOFT>(context->mSpeedOfSound);
-        break;
-
-    case AL_DEFERRED_UPDATES_SOFT:
-        if(context->mDeferUpdates)
-            value = AL_TRUE;
-        break;
-
-    case AL_GAIN_LIMIT_SOFT:
-        value = static_cast<ALint64SOFT>(GainMixMax/context->mGainBoost);
-        break;
-
-    case AL_NUM_RESAMPLERS_SOFT:
-        value = static_cast<ALint64SOFT>(Resampler::Max) + 1;
-        break;
-
-    case AL_DEFAULT_RESAMPLER_SOFT:
-        value = static_cast<ALint64SOFT>(ResamplerDefault);
-        break;
-
     default:
         context->setError(AL_INVALID_VALUE, "Invalid integer64 property 0x%04x", pname);
     }
@@ -581,16 +511,16 @@ START_API_FUNC
     {
         switch(pname)
         {
-            case AL_DOPPLER_FACTOR:
-            case AL_DOPPLER_VELOCITY:
-            case AL_DISTANCE_MODEL:
-            case AL_SPEED_OF_SOUND:
-            case AL_DEFERRED_UPDATES_SOFT:
-            case AL_GAIN_LIMIT_SOFT:
-            case AL_NUM_RESAMPLERS_SOFT:
-            case AL_DEFAULT_RESAMPLER_SOFT:
-                values[0] = alGetBoolean(pname);
-                return;
+        case AL_DOPPLER_FACTOR:
+        case AL_DOPPLER_VELOCITY:
+        case AL_DISTANCE_MODEL:
+        case AL_SPEED_OF_SOUND:
+        case AL_DEFERRED_UPDATES_SOFT:
+        case AL_GAIN_LIMIT_SOFT:
+        case AL_NUM_RESAMPLERS_SOFT:
+        case AL_DEFAULT_RESAMPLER_SOFT:
+            values[0] = alGetBoolean(pname);
+            return;
         }
     }
 
@@ -614,16 +544,16 @@ START_API_FUNC
     {
         switch(pname)
         {
-            case AL_DOPPLER_FACTOR:
-            case AL_DOPPLER_VELOCITY:
-            case AL_DISTANCE_MODEL:
-            case AL_SPEED_OF_SOUND:
-            case AL_DEFERRED_UPDATES_SOFT:
-            case AL_GAIN_LIMIT_SOFT:
-            case AL_NUM_RESAMPLERS_SOFT:
-            case AL_DEFAULT_RESAMPLER_SOFT:
-                values[0] = alGetDouble(pname);
-                return;
+        case AL_DOPPLER_FACTOR:
+        case AL_DOPPLER_VELOCITY:
+        case AL_DISTANCE_MODEL:
+        case AL_SPEED_OF_SOUND:
+        case AL_DEFERRED_UPDATES_SOFT:
+        case AL_GAIN_LIMIT_SOFT:
+        case AL_NUM_RESAMPLERS_SOFT:
+        case AL_DEFAULT_RESAMPLER_SOFT:
+            values[0] = alGetDouble(pname);
+            return;
         }
     }
 
@@ -647,16 +577,16 @@ START_API_FUNC
     {
         switch(pname)
         {
-            case AL_DOPPLER_FACTOR:
-            case AL_DOPPLER_VELOCITY:
-            case AL_DISTANCE_MODEL:
-            case AL_SPEED_OF_SOUND:
-            case AL_DEFERRED_UPDATES_SOFT:
-            case AL_GAIN_LIMIT_SOFT:
-            case AL_NUM_RESAMPLERS_SOFT:
-            case AL_DEFAULT_RESAMPLER_SOFT:
-                values[0] = alGetFloat(pname);
-                return;
+        case AL_DOPPLER_FACTOR:
+        case AL_DOPPLER_VELOCITY:
+        case AL_DISTANCE_MODEL:
+        case AL_SPEED_OF_SOUND:
+        case AL_DEFERRED_UPDATES_SOFT:
+        case AL_GAIN_LIMIT_SOFT:
+        case AL_NUM_RESAMPLERS_SOFT:
+        case AL_DEFAULT_RESAMPLER_SOFT:
+            values[0] = alGetFloat(pname);
+            return;
         }
     }
 
@@ -680,16 +610,16 @@ START_API_FUNC
     {
         switch(pname)
         {
-            case AL_DOPPLER_FACTOR:
-            case AL_DOPPLER_VELOCITY:
-            case AL_DISTANCE_MODEL:
-            case AL_SPEED_OF_SOUND:
-            case AL_DEFERRED_UPDATES_SOFT:
-            case AL_GAIN_LIMIT_SOFT:
-            case AL_NUM_RESAMPLERS_SOFT:
-            case AL_DEFAULT_RESAMPLER_SOFT:
-                values[0] = alGetInteger(pname);
-                return;
+        case AL_DOPPLER_FACTOR:
+        case AL_DOPPLER_VELOCITY:
+        case AL_DISTANCE_MODEL:
+        case AL_SPEED_OF_SOUND:
+        case AL_DEFERRED_UPDATES_SOFT:
+        case AL_GAIN_LIMIT_SOFT:
+        case AL_NUM_RESAMPLERS_SOFT:
+        case AL_DEFAULT_RESAMPLER_SOFT:
+            values[0] = alGetInteger(pname);
+            return;
         }
     }
 
@@ -713,16 +643,16 @@ START_API_FUNC
     {
         switch(pname)
         {
-            case AL_DOPPLER_FACTOR:
-            case AL_DOPPLER_VELOCITY:
-            case AL_DISTANCE_MODEL:
-            case AL_SPEED_OF_SOUND:
-            case AL_DEFERRED_UPDATES_SOFT:
-            case AL_GAIN_LIMIT_SOFT:
-            case AL_NUM_RESAMPLERS_SOFT:
-            case AL_DEFAULT_RESAMPLER_SOFT:
-                values[0] = alGetInteger64SOFT(pname);
-                return;
+        case AL_DOPPLER_FACTOR:
+        case AL_DOPPLER_VELOCITY:
+        case AL_DISTANCE_MODEL:
+        case AL_SPEED_OF_SOUND:
+        case AL_DEFERRED_UPDATES_SOFT:
+        case AL_GAIN_LIMIT_SOFT:
+        case AL_NUM_RESAMPLERS_SOFT:
+        case AL_DEFAULT_RESAMPLER_SOFT:
+            values[0] = alGetInteger64SOFT(pname);
+            return;
         }
     }
 
@@ -847,13 +777,10 @@ START_API_FUNC
     ContextRef context{GetContextRef()};
     if(!context) UNLIKELY return;
 
-    if(context->mDebugEnabled.load(std::memory_order_relaxed))
-    {
-        static constexpr char deprecatedMessage[] = "alDopplerVelocity is deprecated in AL 1.1";
-        context->sendDebugMessage(DebugSource::API, DebugType::DeprecatedBehavior, 0,
-            DebugSeverity::Medium, static_cast<int>(std::strlen(deprecatedMessage)),
-            deprecatedMessage);
-    }
+    context->debugMessage(DebugSource::API, DebugType::DeprecatedBehavior, 0,
+        DebugSeverity::Medium, -1,
+        "alDopplerVelocity is deprecated in AL 1.1, use alSpeedOfSound; "
+        "alDopplerVelocity(x) -> alSpeedOfSound(343.3f * x)");
 
     if(!(value >= 0.0f && std::isfinite(value)))
         context->setError(AL_INVALID_VALUE, "Doppler velocity %f out of range", value);

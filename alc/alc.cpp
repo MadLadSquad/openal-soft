@@ -461,6 +461,8 @@ const struct {
     DECL(alBufferDataStatic),
 
     DECL(alDebugMessageCallbackSOFT),
+    DECL(alDebugMessageInsertSOFT),
+    DECL(alDebugMessageControlSOFT),
 #ifdef ALSOFT_EAX
 }, eaxFunctions[] = {
     DECL(EAXGet),
@@ -917,7 +919,26 @@ constexpr struct {
     DECL(AL_FORMAT_UHJ4CHN_MULAW_SOFT),
     DECL(AL_FORMAT_UHJ4CHN_ALAW_SOFT),
 
+    DECL(AL_DONT_CARE_SOFT),
     DECL(AL_DEBUG_OUTPUT_SOFT),
+    DECL(AL_DEBUG_CALLBACK_FUNCTION_SOFT),
+    DECL(AL_DEBUG_CALLBACK_USER_PARAM_SOFT),
+    DECL(AL_DEBUG_SOURCE_API_SOFT),
+    DECL(AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT),
+    DECL(AL_DEBUG_SOURCE_THIRD_PARTY_SOFT),
+    DECL(AL_DEBUG_SOURCE_APPLICATION_SOFT),
+    DECL(AL_DEBUG_SOURCE_OTHER_SOFT),
+    DECL(AL_DEBUG_TYPE_ERROR_SOFT),
+    DECL(AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT),
+    DECL(AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT),
+    DECL(AL_DEBUG_TYPE_PORTABILITY_SOFT),
+    DECL(AL_DEBUG_TYPE_PERFORMANCE_SOFT),
+    DECL(AL_DEBUG_TYPE_MARKER_SOFT),
+    DECL(AL_DEBUG_TYPE_OTHER_SOFT),
+    DECL(AL_DEBUG_SEVERITY_HIGH_SOFT),
+    DECL(AL_DEBUG_SEVERITY_MEDIUM_SOFT),
+    DECL(AL_DEBUG_SEVERITY_LOW_SOFT),
+    DECL(AL_DEBUG_SEVERITY_NOTIFICATION_SOFT),
 
     DECL(AL_STOP_SOURCES_ON_DISCONNECT_SOFT),
 
@@ -2584,13 +2605,20 @@ END_API_FUNC
 ALC_API void ALC_APIENTRY alcSuspendContext(ALCcontext *context)
 START_API_FUNC
 {
-    if(!SuspendDefers)
-        return;
-
     ContextRef ctx{VerifyContext(context)};
     if(!ctx)
+    {
         alcSetError(nullptr, ALC_INVALID_CONTEXT);
-    else
+        return;
+    }
+
+    ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
+        "alcSuspendContext behavior is not portable -- some implementations suspend all "
+        "rendering, some only defer property changes, and some are completely no-op; consider "
+        "using alcDevicePauseSOFT to suspend all rendering, or alDeferUpdatesSOFT to only defer "
+        "property changes");
+
+    if(SuspendDefers)
     {
         std::lock_guard<std::mutex> _{ctx->mPropLock};
         ctx->deferUpdates();
@@ -2601,13 +2629,20 @@ END_API_FUNC
 ALC_API void ALC_APIENTRY alcProcessContext(ALCcontext *context)
 START_API_FUNC
 {
-    if(!SuspendDefers)
-        return;
-
     ContextRef ctx{VerifyContext(context)};
     if(!ctx)
+    {
         alcSetError(nullptr, ALC_INVALID_CONTEXT);
-    else
+        return;
+    }
+
+    ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
+        "alcProcessContext behavior is not portable -- some implementations resume rendering, "
+        "some apply deferred property changes, and some are completely no-op; consider using "
+        "alcDeviceResumeSOFT to resume rendering, or alProcessUpdatesSOFT to apply deferred "
+        "property changes");
+
+    if(SuspendDefers)
     {
         std::lock_guard<std::mutex> _{ctx->mPropLock};
         ctx->processUpdates();
