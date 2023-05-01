@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <numeric>
@@ -15,6 +16,7 @@
 #include "AL/efx.h"
 
 #include "al/auxeffectslot.h"
+#include "al/debug.h"
 #include "al/source.h"
 #include "al/effect.h"
 #include "al/event.h"
@@ -70,6 +72,7 @@ constexpr ALchar alExtList[] =
     "AL_SOFT_buffer_length_query "
     "AL_SOFT_callback_buffer "
     "AL_SOFTX_convolution_reverb "
+    "AL_SOFTX_debug "
     "AL_SOFT_deferred_updates "
     "AL_SOFT_direct_channels "
     "AL_SOFT_direct_channels_remix "
@@ -304,7 +307,28 @@ void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
     DebugSeverity severity, ALsizei length, const char *message)
 {
     static_assert(DebugSeverityBase+DebugSeverityCount <= 32, "Too many debug bits");
-    static auto get_source_enum = [](DebugSource source) noexcept
+
+    if(length < 0)
+    {
+        size_t newlen{std::strlen(message)};
+        if(newlen > MaxDebugMessageLength) UNLIKELY
+        {
+            ERR("Debug message too long (%zu > %d)\n", newlen, MaxDebugMessageLength);
+            return;
+        }
+        length = static_cast<ALsizei>(newlen);
+    }
+    else if(length > MaxDebugMessageLength) UNLIKELY
+    {
+        ERR("Debug message too long (%d > %d)\n", length, MaxDebugMessageLength);
+        return;
+    }
+
+    std::unique_lock<std::mutex> debuglock{mDebugCbLock};
+    if(!mDebugEnabled.load()) UNLIKELY
+        return;
+
+    auto get_source_enum = [source]()
     {
         switch(source)
         {
@@ -314,8 +338,9 @@ void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
         case DebugSource::Application: return AL_DEBUG_SOURCE_APPLICATION_SOFT;
         case DebugSource::Other: return AL_DEBUG_SOURCE_OTHER_SOFT;
         }
+        throw std::runtime_error{"Unexpected debug source value "+std::to_string(al::to_underlying(source))};
     };
-    static auto get_type_enum = [](DebugType type) noexcept
+    auto get_type_enum = [type]()
     {
         switch(type)
         {
@@ -327,8 +352,9 @@ void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
         case DebugType::Marker: return AL_DEBUG_TYPE_MARKER_SOFT;
         case DebugType::Other: return AL_DEBUG_TYPE_OTHER_SOFT;
         }
+        throw std::runtime_error{"Unexpected debug type value "+std::to_string(al::to_underlying(type))};
     };
-    static auto get_severity_enum = [](DebugSeverity severity) noexcept
+    auto get_severity_enum = [severity]()
     {
         switch(severity)
         {
@@ -337,11 +363,8 @@ void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
         case DebugSeverity::Low: return AL_DEBUG_SEVERITY_LOW_SOFT;
         case DebugSeverity::Notification: return AL_DEBUG_SEVERITY_NOTIFICATION_SOFT;
         }
+        throw std::runtime_error{"Unexpected debug severity value "+std::to_string(al::to_underlying(severity))};
     };
-
-    std::lock_guard<std::mutex> _{mDebugCbLock};
-    if(!mDebugEnabled.load()) UNLIKELY
-        return;
 
     const uint filter{(1u<<(DebugSourceBase+al::to_underlying(source)))
         | (1u<<(DebugTypeBase+al::to_underlying(type)))
@@ -352,11 +375,25 @@ void ALCcontext::sendDebugMessage(DebugSource source, DebugType type, ALuint id,
         return;
 
     if(mDebugCb)
-        mDebugCb(get_source_enum(source), get_type_enum(type), id, get_severity_enum(severity),
-            length, message, mDebugParam);
+    {
+        auto callback = mDebugCb;
+        auto param = mDebugParam;
+        debuglock.unlock();
+        callback(get_source_enum(), get_type_enum(), id, get_severity_enum(), length, message,
+            param);
+    }
     else
     {
-        /* TODO: Store in a log. */
+        if(mDebugLog.size() < MaxDebugLoggedMessages)
+            mDebugLog.emplace_back(source, type, id, severity, message);
+        else UNLIKELY
+            ERR("Debug message log overflow. Lost message:\n"
+                "  Source: 0x%04x\n"
+                "  Type: 0x%04x\n"
+                "  ID: %u\n"
+                "  Severity: 0x%04x\n"
+                "  Message: \"%s\"\n",
+                get_source_enum(), get_type_enum(), id, get_severity_enum(), message);
     }
 }
 

@@ -4,8 +4,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <mutex>
 #include <stddef.h>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "AL/al.h"
@@ -24,9 +27,9 @@ template<typename T, T ...Vals>
 constexpr auto make_array(std::integer_sequence<T, Vals...>)
 { return std::array<T,sizeof...(Vals)>{Vals...}; }
 
-template<typename T, size_t N, typename Indices = std::make_integer_sequence<T,N>>
+template<typename T, size_t N>
 constexpr auto make_array()
-{ return make_array(Indices{}); }
+{ return make_array(std::make_integer_sequence<T,N>{}); }
 
 
 constexpr al::optional<DebugSource> GetDebugSource(ALenum source) noexcept
@@ -71,6 +74,46 @@ constexpr al::optional<DebugSeverity> GetDebugSeverity(ALenum severity) noexcept
 
 } // namespace
 
+ALenum GetDebugSourceEnum(DebugSource source)
+{
+    switch(source)
+    {
+    case DebugSource::API: return AL_DEBUG_SOURCE_API_SOFT;
+    case DebugSource::System: return AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT;
+    case DebugSource::ThirdParty: return AL_DEBUG_SOURCE_THIRD_PARTY_SOFT;
+    case DebugSource::Application: return AL_DEBUG_SOURCE_APPLICATION_SOFT;
+    case DebugSource::Other: return AL_DEBUG_SOURCE_OTHER_SOFT;
+    }
+    throw std::runtime_error{"Unexpected debug source value "+std::to_string(al::to_underlying(source))};
+}
+
+ALenum GetDebugTypeEnum(DebugType type)
+{
+    switch(type)
+    {
+    case DebugType::Error: return AL_DEBUG_TYPE_ERROR_SOFT;
+    case DebugType::DeprecatedBehavior: return AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT;
+    case DebugType::UndefinedBehavior: return AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT;
+    case DebugType::Portability: return AL_DEBUG_TYPE_PORTABILITY_SOFT;
+    case DebugType::Performance: return AL_DEBUG_TYPE_PERFORMANCE_SOFT;
+    case DebugType::Marker: return AL_DEBUG_TYPE_MARKER_SOFT;
+    case DebugType::Other: return AL_DEBUG_TYPE_OTHER_SOFT;
+    }
+    throw std::runtime_error{"Unexpected debug type value "+std::to_string(al::to_underlying(type))};
+}
+
+ALenum GetDebugSeverityEnum(DebugSeverity severity)
+{
+    switch(severity)
+    {
+    case DebugSeverity::High: return AL_DEBUG_SEVERITY_HIGH_SOFT;
+    case DebugSeverity::Medium: return AL_DEBUG_SEVERITY_MEDIUM_SOFT;
+    case DebugSeverity::Low: return AL_DEBUG_SEVERITY_LOW_SOFT;
+    case DebugSeverity::Notification: return AL_DEBUG_SEVERITY_NOTIFICATION_SOFT;
+    }
+    throw std::runtime_error{"Unexpected debug severity value "+std::to_string(al::to_underlying(severity))};
+}
+
 
 FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackSOFT(ALDEBUGPROCSOFT callback, void *userParam) noexcept
 {
@@ -90,6 +133,18 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertSOFT(ALenum source, ALenum type
 
     if(!message)
         return context->setError(AL_INVALID_VALUE, "Null message pointer");
+
+    if(length < 0)
+    {
+        size_t newlen{std::strlen(message)};
+        if(newlen > MaxDebugMessageLength) UNLIKELY
+            return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu > %d)", newlen,
+                MaxDebugMessageLength);
+        length = static_cast<ALsizei>(newlen);
+    }
+    else if(length > MaxDebugMessageLength) UNLIKELY
+        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d > %d)", length,
+            MaxDebugMessageLength);
 
     auto dsource = GetDebugSource(source);
     if(!dsource)
@@ -120,13 +175,13 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
         if(!ids)
             return context->setError(AL_INVALID_VALUE, "IDs is null with non-0 count");
         if(source == AL_DONT_CARE_SOFT)
-            return context->setError(AL_INVALID_VALUE,
+            return context->setError(AL_INVALID_OPERATION,
                 "Debug source cannot be AL_DONT_CARE_SOFT with IDs");
         if(type == AL_DONT_CARE_SOFT)
-            return context->setError(AL_INVALID_VALUE,
+            return context->setError(AL_INVALID_OPERATION,
                 "Debug type cannot be AL_DONT_CARE_SOFT with IDs");
         if(severity != AL_DONT_CARE_SOFT)
-            return context->setError(AL_INVALID_VALUE,
+            return context->setError(AL_INVALID_OPERATION,
                 "Debug severity must be AL_DONT_CARE_SOFT with IDs");
 
         return context->setError(AL_INVALID_VALUE, "Debug ID filtering not supported");
@@ -134,7 +189,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
     }
 
     if(enable != AL_TRUE && enable != AL_FALSE)
-        return context->setError(AL_INVALID_VALUE, "Invalid debug enable %d", enable);
+        return context->setError(AL_INVALID_ENUM, "Invalid debug enable %d", enable);
 
     static constexpr size_t ElemCount{DebugSourceCount + DebugTypeCount + DebugSeverityCount};
     static constexpr auto Values = make_array<uint,ElemCount>();
@@ -171,9 +226,9 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
     {
         auto iter = std::lower_bound(context->mDebugFilters.cbegin(),
             context->mDebugFilters.cend(), filter);
-        if(enable && (iter == context->mDebugFilters.cend() || *iter != filter))
+        if(!enable && (iter == context->mDebugFilters.cend() || *iter != filter))
             context->mDebugFilters.insert(iter, filter);
-        else if(!enable && iter != context->mDebugFilters.cend() && *iter == filter)
+        else if(enable && iter != context->mDebugFilters.cend() && *iter == filter)
             context->mDebugFilters.erase(iter);
     };
     auto apply_severity = [apply_filter,svrIndices](const uint filter)
@@ -188,4 +243,45 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
     };
     std::for_each(srcIndices.cbegin(), srcIndices.cend(),
         [apply_type](const uint idx){ apply_type(1<<idx); });
+}
+
+
+FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogSOFT(ALuint count, ALsizei logBufSize,
+    ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities, ALsizei *lengths,
+    ALchar *logBuf) noexcept
+{
+    ContextRef context{GetContextRef()};
+    if(!context) UNLIKELY return 0;
+
+    if(logBufSize < 0)
+    {
+        context->setError(AL_INVALID_VALUE, "Negative debug log buffer size");
+        return 0;
+    }
+
+    std::lock_guard<std::mutex> _{context->mDebugCbLock};
+    ALsizei logBufWritten{0};
+    for(ALuint i{0};i < count;++i)
+    {
+        if(context->mDebugLog.empty())
+            return i;
+
+        auto &entry = context->mDebugLog.front();
+        const size_t tocopy{entry.mMessage.size() + 1};
+        const size_t avail{static_cast<ALuint>(logBufSize - logBufWritten)};
+        if(avail < tocopy)
+            return i;
+
+        if(sources) sources[i] = GetDebugSourceEnum(entry.mSource);
+        if(types) types[i] = GetDebugTypeEnum(entry.mType);
+        if(ids) ids[i] = entry.mId;
+        if(severities) severities[i] = GetDebugSeverityEnum(entry.mSeverity);
+        if(lengths) lengths[i] = static_cast<ALsizei>(tocopy);
+        if(logBuf) std::copy_n(entry.mMessage.data(), tocopy, logBuf+logBufWritten);
+
+        logBufWritten += static_cast<ALsizei>(tocopy);
+        context->mDebugLog.pop_front();
+    }
+
+    return count;
 }
