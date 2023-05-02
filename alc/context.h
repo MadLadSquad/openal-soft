@@ -33,42 +33,16 @@
 struct ALeffect;
 struct ALeffectslot;
 struct ALsource;
+struct DebugGroup;
+
+enum class DebugSource : uint8_t;
+enum class DebugType : uint8_t;
+enum class DebugSeverity : uint8_t;
 
 using uint = unsigned int;
 
 
-constexpr uint DebugSourceBase{0};
-enum class DebugSource : uint8_t {
-    API = 0,
-    System,
-    ThirdParty,
-    Application,
-    Other,
-};
-constexpr uint DebugSourceCount{5};
-
-constexpr uint DebugTypeBase{DebugSourceBase + DebugSourceCount};
-enum class DebugType : uint8_t {
-    Error = 0,
-    DeprecatedBehavior,
-    UndefinedBehavior,
-    Portability,
-    Performance,
-    Marker,
-    Other,
-};
-constexpr uint DebugTypeCount{7};
-
-constexpr uint DebugSeverityBase{DebugTypeBase + DebugTypeCount};
-enum class DebugSeverity : uint8_t {
-    High = 0,
-    Medium,
-    Low,
-    Notification,
-};
-constexpr uint DebugSeverityCount{4};
-
-struct LogEntry {
+struct DebugLogEntry {
     const DebugSource mSource;
     const DebugType mType;
     const DebugSeverity mSeverity;
@@ -77,12 +51,12 @@ struct LogEntry {
     std::string mMessage;
 
     template<typename T>
-    LogEntry(DebugSource source, DebugType type, uint id, DebugSeverity severity, T&& message)
+    DebugLogEntry(DebugSource source, DebugType type, uint id, DebugSeverity severity, T&& message)
         : mSource{source}, mType{type}, mSeverity{severity}, mId{id}
         , mMessage{std::forward<T>(message)}
     { }
-    LogEntry(const LogEntry&) = default;
-    LogEntry(LogEntry&&) = default;
+    DebugLogEntry(const DebugLogEntry&) = default;
+    DebugLogEntry(DebugLogEntry&&) = default;
 };
 
 
@@ -145,9 +119,8 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
     std::mutex mDebugCbLock;
     ALDEBUGPROCSOFT mDebugCb{};
     void *mDebugParam{nullptr};
-    std::vector<uint> mDebugFilters;
-    std::unordered_map<uint,std::vector<uint>> mDebugIdFilters;
-    std::deque<LogEntry> mDebugLog;
+    std::vector<DebugGroup> mDebugGroups;
+    std::deque<DebugLogEntry> mDebugLog;
 
     ALlistener mListener{};
 
@@ -210,15 +183,16 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
 #endif
     void setError(ALenum errorCode, const char *msg, ...);
 
-    void sendDebugMessage(DebugSource source, DebugType type, ALuint id, DebugSeverity severity,
-        ALsizei length, const char *message);
+    void sendDebugMessage(std::unique_lock<std::mutex> &debuglock, DebugSource source,
+        DebugType type, ALuint id, DebugSeverity severity, ALsizei length, const char *message);
 
     void debugMessage(DebugSource source, DebugType type, ALuint id, DebugSeverity severity,
         ALsizei length, const char *message)
     {
         if(!mDebugEnabled.load(std::memory_order_relaxed)) LIKELY
             return;
-        sendDebugMessage(source, type, id, severity, length, message);
+        std::unique_lock<std::mutex> debuglock{mDebugCbLock};
+        sendDebugMessage(debuglock, source, type, id, severity, length, message);
     }
 
     /* Process-wide current context */

@@ -17,11 +17,14 @@
 #include "alc/inprogext.h"
 #include "aloptional.h"
 #include "alspan.h"
+#include "core/logging.h"
 #include "opthelpers.h"
 #include "threads.h"
 
 
 namespace {
+
+static_assert(DebugSeverityBase+DebugSeverityCount <= 32, "Too many debug bits");
 
 template<typename T, T ...Vals>
 constexpr auto make_array(std::integer_sequence<T, Vals...>)
@@ -55,6 +58,8 @@ constexpr al::optional<DebugType> GetDebugType(ALenum type) noexcept
     case AL_DEBUG_TYPE_PORTABILITY_SOFT: return DebugType::Portability;
     case AL_DEBUG_TYPE_PERFORMANCE_SOFT: return DebugType::Performance;
     case AL_DEBUG_TYPE_MARKER_SOFT: return DebugType::Marker;
+    case AL_DEBUG_TYPE_PUSH_GROUP_SOFT: return DebugType::PushGroup;
+    case AL_DEBUG_TYPE_POP_GROUP_SOFT: return DebugType::PopGroup;
     case AL_DEBUG_TYPE_OTHER_SOFT: return DebugType::Other;
     }
     return al::nullopt;
@@ -72,7 +77,6 @@ constexpr al::optional<DebugSeverity> GetDebugSeverity(ALenum severity) noexcept
     return al::nullopt;
 }
 
-} // namespace
 
 ALenum GetDebugSourceEnum(DebugSource source)
 {
@@ -97,6 +101,8 @@ ALenum GetDebugTypeEnum(DebugType type)
     case DebugType::Portability: return AL_DEBUG_TYPE_PORTABILITY_SOFT;
     case DebugType::Performance: return AL_DEBUG_TYPE_PERFORMANCE_SOFT;
     case DebugType::Marker: return AL_DEBUG_TYPE_MARKER_SOFT;
+    case DebugType::PushGroup: return AL_DEBUG_TYPE_PUSH_GROUP_SOFT;
+    case DebugType::PopGroup: return AL_DEBUG_TYPE_POP_GROUP_SOFT;
     case DebugType::Other: return AL_DEBUG_TYPE_OTHER_SOFT;
     }
     throw std::runtime_error{"Unexpected debug type value "+std::to_string(al::to_underlying(type))};
@@ -112,6 +118,74 @@ ALenum GetDebugSeverityEnum(DebugSeverity severity)
     case DebugSeverity::Notification: return AL_DEBUG_SEVERITY_NOTIFICATION_SOFT;
     }
     throw std::runtime_error{"Unexpected debug severity value "+std::to_string(al::to_underlying(severity))};
+}
+
+} // namespace
+
+
+void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, DebugSource source,
+    DebugType type, ALuint id, DebugSeverity severity, ALsizei length, const char *message)
+{
+    if(!mDebugEnabled.load()) UNLIKELY
+        return;
+
+    /* MaxDebugMessageLength is the size including the null terminator,
+     * <length> does not include the null terminator.
+     */
+    if(length < 0)
+    {
+        size_t newlen{std::strlen(message)};
+        if(newlen >= MaxDebugMessageLength) UNLIKELY
+        {
+            ERR("Debug message too long (%zu >= %d)\n", newlen, MaxDebugMessageLength);
+            return;
+        }
+        length = static_cast<ALsizei>(newlen);
+    }
+    else if(length >= MaxDebugMessageLength) UNLIKELY
+    {
+        ERR("Debug message too long (%d >= %d)\n", length, MaxDebugMessageLength);
+        return;
+    }
+
+    DebugGroup &debug = mDebugGroups.back();
+
+    const uint64_t idfilter{(1_u64 << (DebugSourceBase+al::to_underlying(source)))
+        | (1_u64 << (DebugTypeBase+al::to_underlying(type)))
+        | (uint64_t{id} << 32)};
+    auto iditer = std::lower_bound(debug.mIdFilters.cbegin(), debug.mIdFilters.cend(), idfilter);
+    if(iditer != debug.mIdFilters.cend() && *iditer == idfilter)
+        return;
+
+    const uint filter{(1u << (DebugSourceBase+al::to_underlying(source)))
+        | (1u << (DebugTypeBase+al::to_underlying(type)))
+        | (1u << (DebugSeverityBase+al::to_underlying(severity)))};
+    auto iter = std::lower_bound(debug.mFilters.cbegin(), debug.mFilters.cend(), filter);
+    if(iter != debug.mFilters.cend() && *iter == filter)
+        return;
+
+    if(mDebugCb)
+    {
+        auto callback = mDebugCb;
+        auto param = mDebugParam;
+        debuglock.unlock();
+        callback(GetDebugSourceEnum(source), GetDebugTypeEnum(type), id,
+            GetDebugSeverityEnum(severity), length, message, param);
+    }
+    else
+    {
+        if(mDebugLog.size() < MaxDebugLoggedMessages)
+            mDebugLog.emplace_back(source, type, id, severity, message);
+        else UNLIKELY
+            ERR("Debug message log overflow. Lost message:\n"
+                "  Source: 0x%04x\n"
+                "  Type: 0x%04x\n"
+                "  ID: %u\n"
+                "  Severity: 0x%04x\n"
+                "  Message: \"%s\"\n",
+                GetDebugSourceEnum(source), GetDebugTypeEnum(type), id,
+                GetDebugSeverityEnum(severity), message);
+    }
 }
 
 
@@ -137,12 +211,12 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertSOFT(ALenum source, ALenum type
     if(length < 0)
     {
         size_t newlen{std::strlen(message)};
-        if(newlen > MaxDebugMessageLength) UNLIKELY
-            return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu > %d)", newlen,
-                MaxDebugMessageLength);
+        if(newlen >= MaxDebugMessageLength) UNLIKELY
+            return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu >= %d)",
+                newlen, MaxDebugMessageLength);
         length = static_cast<ALsizei>(newlen);
     }
-    else if(length > MaxDebugMessageLength) UNLIKELY
+    else if(length >= MaxDebugMessageLength) UNLIKELY
         return context->setError(AL_INVALID_VALUE, "Debug message too long (%d > %d)", length,
             MaxDebugMessageLength);
 
@@ -219,43 +293,32 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
     }
 
     std::lock_guard<std::mutex> _{context->mDebugCbLock};
+    DebugGroup &debug = context->mDebugGroups.back();
     if(count > 0)
     {
-        const uint filter{(1u<<srcIndices[0]) | (1u<<typeIndices[0])};
+        const uint filterbase{(1u<<srcIndices[0]) | (1u<<typeIndices[0])};
 
         for(const uint id : al::as_span(ids, static_cast<uint>(count)))
         {
-            if(!enable)
-            {
-                auto &idfilters = context->mDebugIdFilters[id];
-                auto iter = std::lower_bound(idfilters.cbegin(), idfilters.cend(), filter);
-                if(iter == idfilters.cend() || *iter != filter)
-                    idfilters.insert(iter, filter);
-                continue;
-            }
+            const uint64_t filter{filterbase | (uint64_t{id} << 32)};
 
-            auto iditer = context->mDebugIdFilters.find(id);
-            if(iditer == context->mDebugIdFilters.end())
-                continue;
-            auto iter = std::lower_bound(iditer->second.cbegin(), iditer->second.cend(), filter);
-            if(iter != iditer->second.cend() && *iter == filter)
-            {
-                iditer->second.erase(iter);
-                if(iditer->second.empty())
-                    context->mDebugIdFilters.erase(iditer);
-            }
+            auto iter = std::lower_bound(debug.mIdFilters.cbegin(), debug.mIdFilters.cend(),
+                filter);
+            if(!enable && (iter == debug.mIdFilters.cend() || *iter != filter))
+                debug.mIdFilters.insert(iter, filter);
+            else if(enable && iter != debug.mIdFilters.cend() && *iter == filter)
+                debug.mIdFilters.erase(iter);
         }
     }
     else
     {
-        auto apply_filter = [enable,&context](const uint filter)
+        auto apply_filter = [enable,&debug](const uint filter)
         {
-            auto iter = std::lower_bound(context->mDebugFilters.cbegin(),
-                context->mDebugFilters.cend(), filter);
-            if(!enable && (iter == context->mDebugFilters.cend() || *iter != filter))
-                context->mDebugFilters.insert(iter, filter);
-            else if(enable && iter != context->mDebugFilters.cend() && *iter == filter)
-                context->mDebugFilters.erase(iter);
+            auto iter = std::lower_bound(debug.mFilters.cbegin(), debug.mFilters.cend(), filter);
+            if(!enable && (iter == debug.mFilters.cend() || *iter != filter))
+                debug.mFilters.insert(iter, filter);
+            else if(enable && iter != debug.mFilters.cend() && *iter == filter)
+                debug.mFilters.erase(iter);
         };
         auto apply_severity = [apply_filter,svrIndices](const uint filter)
         {
@@ -270,6 +333,72 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlSOFT(ALenum source, ALenum typ
         std::for_each(srcIndices.cbegin(), srcIndices.cend(),
             [apply_type](const uint idx){ apply_type(1<<idx); });
     }
+}
+
+
+FORCE_ALIGN void AL_APIENTRY alPushDebugGroupSOFT(ALenum source, ALuint id, ALsizei length, const ALchar *message) noexcept
+{
+    ContextRef context{GetContextRef()};
+    if(!context) UNLIKELY return;
+
+    if(length < 0)
+    {
+        size_t newlen{std::strlen(message)};
+        if(newlen >= MaxDebugMessageLength) UNLIKELY
+            return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu >= %d)",
+                newlen, MaxDebugMessageLength);
+        length = static_cast<ALsizei>(newlen);
+    }
+    else if(length >= MaxDebugMessageLength) UNLIKELY
+        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d > %d)", length,
+            MaxDebugMessageLength);
+
+    auto dsource = GetDebugSource(source);
+    if(!dsource)
+        return context->setError(AL_INVALID_ENUM, "Invalid debug source 0x%04x", source);
+    if(*dsource != DebugSource::ThirdParty && *dsource != DebugSource::Application)
+        return context->setError(AL_INVALID_ENUM, "Debug source 0x%04x not allowed", source);
+
+    std::unique_lock<std::mutex> debuglock{context->mDebugCbLock};
+    if(context->mDebugGroups.size() >= MaxDebugGroupDepth)
+    {
+        debuglock.unlock();
+        return context->setError(AL_STACK_OVERFLOW_SOFT, "Pushing too many debug groups");
+    }
+
+    context->mDebugGroups.emplace_back(*dsource, id, message);
+    auto &oldback = *(context->mDebugGroups.end()-2);
+    auto &newback = context->mDebugGroups.back();
+
+    newback.mFilters = oldback.mFilters;
+    newback.mIdFilters = oldback.mIdFilters;
+
+    context->sendDebugMessage(debuglock, newback.mSource, DebugType::PushGroup, newback.mId,
+        DebugSeverity::Notification, static_cast<ALsizei>(newback.mMessage.size()),
+        newback.mMessage.data());
+}
+
+FORCE_ALIGN void AL_APIENTRY alPopDebugGroupSOFT(void) noexcept
+{
+    ContextRef context{GetContextRef()};
+    if(!context) UNLIKELY return;
+
+    std::unique_lock<std::mutex> debuglock{context->mDebugCbLock};
+    if(context->mDebugGroups.size() <= 1)
+    {
+        debuglock.unlock();
+        return context->setError(AL_STACK_UNDERFLOW_SOFT,
+            "Attempting to pop the default debug group");
+    }
+
+    DebugGroup &debug = context->mDebugGroups.back();
+    const auto source = debug.mSource;
+    const auto id = debug.mId;
+    std::string message{std::move(debug.mMessage)};
+
+    context->mDebugGroups.pop_back();
+    context->sendDebugMessage(debuglock, source, DebugType::PopGroup, id,
+        DebugSeverity::Notification, static_cast<ALsizei>(message.size()), message.data());
 }
 
 
