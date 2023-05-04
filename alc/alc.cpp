@@ -461,12 +461,12 @@ const struct {
 
     DECL(alBufferDataStatic),
 
-    DECL(alDebugMessageCallbackSOFT),
-    DECL(alDebugMessageInsertSOFT),
-    DECL(alDebugMessageControlSOFT),
-    DECL(alPushDebugGroupSOFT),
-    DECL(alPopDebugGroupSOFT),
-    DECL(alGetDebugMessageLogSOFT),
+    DECL(alDebugMessageCallbackEXT),
+    DECL(alDebugMessageInsertEXT),
+    DECL(alDebugMessageControlEXT),
+    DECL(alPushDebugGroupEXT),
+    DECL(alPopDebugGroupEXT),
+    DECL(alGetDebugMessageLogEXT),
 #ifdef ALSOFT_EAX
 }, eaxFunctions[] = {
     DECL(EAXGet),
@@ -572,6 +572,9 @@ constexpr struct {
     DECL(ALC_INVALID_ENUM),
     DECL(ALC_INVALID_VALUE),
     DECL(ALC_OUT_OF_MEMORY),
+
+    DECL(ALC_CONTEXT_FLAGS_EXT),
+    DECL(ALC_CONTEXT_DEBUG_BIT_EXT),
 
 
     DECL(AL_INVALID),
@@ -923,35 +926,35 @@ constexpr struct {
     DECL(AL_FORMAT_UHJ4CHN_MULAW_SOFT),
     DECL(AL_FORMAT_UHJ4CHN_ALAW_SOFT),
 
-    DECL(AL_DONT_CARE_SOFT),
-    DECL(AL_DEBUG_OUTPUT_SOFT),
-    DECL(AL_DEBUG_CALLBACK_FUNCTION_SOFT),
-    DECL(AL_DEBUG_CALLBACK_USER_PARAM_SOFT),
-    DECL(AL_DEBUG_SOURCE_API_SOFT),
-    DECL(AL_DEBUG_SOURCE_AUDIO_SYSTEM_SOFT),
-    DECL(AL_DEBUG_SOURCE_THIRD_PARTY_SOFT),
-    DECL(AL_DEBUG_SOURCE_APPLICATION_SOFT),
-    DECL(AL_DEBUG_SOURCE_OTHER_SOFT),
-    DECL(AL_DEBUG_TYPE_ERROR_SOFT),
-    DECL(AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_SOFT),
-    DECL(AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_SOFT),
-    DECL(AL_DEBUG_TYPE_PORTABILITY_SOFT),
-    DECL(AL_DEBUG_TYPE_PERFORMANCE_SOFT),
-    DECL(AL_DEBUG_TYPE_MARKER_SOFT),
-    DECL(AL_DEBUG_TYPE_PUSH_GROUP_SOFT),
-    DECL(AL_DEBUG_TYPE_POP_GROUP_SOFT),
-    DECL(AL_DEBUG_TYPE_OTHER_SOFT),
-    DECL(AL_DEBUG_SEVERITY_HIGH_SOFT),
-    DECL(AL_DEBUG_SEVERITY_MEDIUM_SOFT),
-    DECL(AL_DEBUG_SEVERITY_LOW_SOFT),
-    DECL(AL_DEBUG_SEVERITY_NOTIFICATION_SOFT),
-    DECL(AL_DEBUG_LOGGED_MESSAGES_SOFT),
-    DECL(AL_DEBUG_NEXT_LOGGED_MESSAGE_LENGTH_SOFT),
-    DECL(AL_MAX_DEBUG_MESSAGE_LENGTH_SOFT),
-    DECL(AL_MAX_DEBUG_LOGGED_MESSAGES_SOFT),
-    DECL(AL_MAX_DEBUG_GROUP_STACK_DEPTH_SOFT),
-    DECL(AL_STACK_OVERFLOW_SOFT),
-    DECL(AL_STACK_UNDERFLOW_SOFT),
+    DECL(AL_DONT_CARE_EXT),
+    DECL(AL_DEBUG_OUTPUT_EXT),
+    DECL(AL_DEBUG_CALLBACK_FUNCTION_EXT),
+    DECL(AL_DEBUG_CALLBACK_USER_PARAM_EXT),
+    DECL(AL_DEBUG_SOURCE_API_EXT),
+    DECL(AL_DEBUG_SOURCE_AUDIO_SYSTEM_EXT),
+    DECL(AL_DEBUG_SOURCE_THIRD_PARTY_EXT),
+    DECL(AL_DEBUG_SOURCE_APPLICATION_EXT),
+    DECL(AL_DEBUG_SOURCE_OTHER_EXT),
+    DECL(AL_DEBUG_TYPE_ERROR_EXT),
+    DECL(AL_DEBUG_TYPE_DEPRECATED_BEHAVIOR_EXT),
+    DECL(AL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_EXT),
+    DECL(AL_DEBUG_TYPE_PORTABILITY_EXT),
+    DECL(AL_DEBUG_TYPE_PERFORMANCE_EXT),
+    DECL(AL_DEBUG_TYPE_MARKER_EXT),
+    DECL(AL_DEBUG_TYPE_PUSH_GROUP_EXT),
+    DECL(AL_DEBUG_TYPE_POP_GROUP_EXT),
+    DECL(AL_DEBUG_TYPE_OTHER_EXT),
+    DECL(AL_DEBUG_SEVERITY_HIGH_EXT),
+    DECL(AL_DEBUG_SEVERITY_MEDIUM_EXT),
+    DECL(AL_DEBUG_SEVERITY_LOW_EXT),
+    DECL(AL_DEBUG_SEVERITY_NOTIFICATION_EXT),
+    DECL(AL_DEBUG_LOGGED_MESSAGES_EXT),
+    DECL(AL_DEBUG_NEXT_LOGGED_MESSAGE_LENGTH_EXT),
+    DECL(AL_MAX_DEBUG_MESSAGE_LENGTH_EXT),
+    DECL(AL_MAX_DEBUG_LOGGED_MESSAGES_EXT),
+    DECL(AL_MAX_DEBUG_GROUP_STACK_DEPTH_EXT),
+    DECL(AL_STACK_OVERFLOW_EXT),
+    DECL(AL_STACK_UNDERFLOW_EXT),
 
     DECL(AL_STOP_SOURCES_ON_DISCONNECT_SOFT),
 
@@ -1021,6 +1024,7 @@ constexpr ALCchar alcExtensionList[] =
     "ALC_ENUMERATE_ALL_EXT "
     "ALC_ENUMERATION_EXT "
     "ALC_EXT_CAPTURE "
+    "ALC_EXTX_debug "
     "ALC_EXT_DEDICATED "
     "ALC_EXT_disconnect "
     "ALC_EXT_EFX "
@@ -2619,11 +2623,12 @@ START_API_FUNC
         return;
     }
 
-    ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
-        "alcSuspendContext behavior is not portable -- some implementations suspend all "
-        "rendering, some only defer property changes, and some are completely no-op; consider "
-        "using alcDevicePauseSOFT to suspend all rendering, or alDeferUpdatesSOFT to only defer "
-        "property changes");
+    if(context->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+        ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
+            "alcSuspendContext behavior is not portable -- some implementations suspend all "
+            "rendering, some only defer property changes, and some are completely no-op; consider "
+            "using alcDevicePauseSOFT to suspend all rendering, or alDeferUpdatesSOFT to only "
+            "defer property changes");
 
     if(SuspendDefers)
     {
@@ -2643,11 +2648,12 @@ START_API_FUNC
         return;
     }
 
-    ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
-        "alcProcessContext behavior is not portable -- some implementations resume rendering, "
-        "some apply deferred property changes, and some are completely no-op; consider using "
-        "alcDeviceResumeSOFT to resume rendering, or alProcessUpdatesSOFT to apply deferred "
-        "property changes");
+    if(context->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+        ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium, -1,
+            "alcProcessContext behavior is not portable -- some implementations resume rendering, "
+            "some apply deferred property changes, and some are completely no-op; consider using "
+            "alcDeviceResumeSOFT to resume rendering, or alProcessUpdatesSOFT to apply deferred "
+            "property changes");
 
     if(SuspendDefers)
     {
@@ -3366,7 +3372,20 @@ START_API_FUNC
         return nullptr;
     }
 
-    ContextRef context{new ALCcontext{dev}};
+    ContextFlagBitset ctxflags{0};
+    if(attrList)
+    {
+        for(size_t i{0};attrList[i];i+=2)
+        {
+            if(attrList[i] == ALC_CONTEXT_FLAGS_EXT)
+            {
+                ctxflags = static_cast<ALuint>(attrList[i+1]);
+                break;
+            }
+        }
+    }
+
+    ContextRef context{new ALCcontext{dev, ctxflags}};
     context->init();
 
     if(auto volopt = dev->configValue<float>(nullptr, "volume-adjust"))

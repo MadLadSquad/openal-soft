@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <stdint.h>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -40,6 +41,12 @@ enum class DebugType : uint8_t;
 enum class DebugSeverity : uint8_t;
 
 using uint = unsigned int;
+
+
+enum ContextFlags {
+    DebugBit = 0, /* ALC_CONTEXT_DEBUG_BIT_EXT */
+};
+using ContextFlagBitset = std::bitset<sizeof(ALuint)*8>;
 
 
 struct DebugLogEntry {
@@ -102,6 +109,7 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
 
     std::atomic<ALenum> mLastError{AL_NO_ERROR};
 
+    const ContextFlagBitset mContextFlags;
     std::atomic<bool> mDebugEnabled{false};
 
     DistanceModel mDistanceModel{DistanceModel::Default};
@@ -117,7 +125,7 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
     void *mEventParam{nullptr};
 
     std::mutex mDebugCbLock;
-    ALDEBUGPROCSOFT mDebugCb{};
+    ALDEBUGPROCEXT mDebugCb{};
     void *mDebugParam{nullptr};
     std::vector<DebugGroup> mDebugGroups;
     std::deque<DebugLogEntry> mDebugLog;
@@ -140,7 +148,7 @@ struct ALCcontext : public al::intrusive_ref<ALCcontext>, ContextBase {
     std::string mExtensionListOverride{};
 
 
-    ALCcontext(al::intrusive_ptr<ALCdevice> device);
+    ALCcontext(al::intrusive_ptr<ALCdevice> device, ContextFlagBitset flags);
     ALCcontext(const ALCcontext&) = delete;
     ALCcontext& operator=(const ALCcontext&) = delete;
     ~ALCcontext();
