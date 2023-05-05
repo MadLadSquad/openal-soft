@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -34,11 +35,11 @@
 #include "AL/alext.h"
 
 #include "al/debug.h"
+#include "albit.h"
 #include "alc/alu.h"
 #include "alc/context.h"
 #include "alc/inprogext.h"
 #include "alnumeric.h"
-#include "aloptional.h"
 #include "atomic.h"
 #include "core/context.h"
 #include "core/except.h"
@@ -107,7 +108,7 @@ const ALchar *GetResamplerName(const Resampler rtype)
     throw std::runtime_error{"Unexpected resampler index"};
 }
 
-al::optional<DistanceModel> DistanceModelFromALenum(ALenum model)
+std::optional<DistanceModel> DistanceModelFromALenum(ALenum model)
 {
     switch(model)
     {
@@ -119,7 +120,7 @@ al::optional<DistanceModel> DistanceModelFromALenum(ALenum model)
     case AL_EXPONENT_DISTANCE: return DistanceModel::Exponent;
     case AL_EXPONENT_DISTANCE_CLAMPED: return DistanceModel::ExponentClamped;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 ALenum ALenumFromDistanceModel(DistanceModel model)
 {
@@ -516,7 +517,7 @@ START_API_FUNC
     switch(pname)
     {
     case AL_EVENT_CALLBACK_FUNCTION_SOFT:
-        *values = reinterpret_cast<void*>(context->mEventCb);
+        *values = al::bit_cast<void*>(context->mEventCb);
         break;
 
     case AL_EVENT_CALLBACK_USER_PARAM_SOFT:
@@ -524,7 +525,7 @@ START_API_FUNC
         break;
 
     case AL_DEBUG_CALLBACK_FUNCTION_EXT:
-        *values = reinterpret_cast<void*>(context->mDebugCb);
+        *values = al::bit_cast<void*>(context->mDebugCb);
         break;
 
     case AL_DEBUG_CALLBACK_USER_PARAM_EXT:

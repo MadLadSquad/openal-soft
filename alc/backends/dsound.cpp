@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "albit.h"
 #include "alnumeric.h"
 #include "comptr.h"
 #include "core/device.h"
@@ -347,7 +348,7 @@ void DSoundPlayback::open(const char *name)
     //DirectSound Init code
     ComPtr<IDirectSound> ds;
     if(SUCCEEDED(hr))
-        hr = DirectSoundCreate(guid, ds.getPtr(), nullptr);
+        hr = DirectSoundCreate(guid, al::out_ptr(ds), nullptr);
     if(SUCCEEDED(hr))
         hr = ds->SetCooperativeLevel(GetForegroundWindow(), DSSCL_PRIORITY);
     if(FAILED(hr))
@@ -460,7 +461,7 @@ retry_open:
             DSBUFFERDESC DSBDescription{};
             DSBDescription.dwSize = sizeof(DSBDescription);
             DSBDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
-            hr = mDS->CreateSoundBuffer(&DSBDescription, mPrimaryBuffer.getPtr(), nullptr);
+            hr = mDS->CreateSoundBuffer(&DSBDescription, al::out_ptr(mPrimaryBuffer), nullptr);
         }
         if(SUCCEEDED(hr))
             hr = mPrimaryBuffer->SetFormat(&OutputType.Format);
@@ -480,7 +481,7 @@ retry_open:
         DSBDescription.dwBufferBytes = mDevice->BufferSize * OutputType.Format.nBlockAlign;
         DSBDescription.lpwfxFormat = &OutputType.Format;
 
-        hr = mDS->CreateSoundBuffer(&DSBDescription, mBuffer.getPtr(), nullptr);
+        hr = mDS->CreateSoundBuffer(&DSBDescription, al::out_ptr(mBuffer), nullptr);
         if(FAILED(hr) && mDevice->FmtType == DevFmtFloat)
         {
             mDevice->FmtType = DevFmtShort;
@@ -490,12 +491,9 @@ retry_open:
 
     if(SUCCEEDED(hr))
     {
-        void *ptr;
-        hr = mBuffer->QueryInterface(IID_IDirectSoundNotify, &ptr);
+        hr = mBuffer->QueryInterface(IID_IDirectSoundNotify, al::out_ptr(mNotifies));
         if(SUCCEEDED(hr))
         {
-            mNotifies = ComPtr<IDirectSoundNotify>{static_cast<IDirectSoundNotify*>(ptr)};
-
             uint num_updates{mDevice->BufferSize / mDevice->UpdateSize};
             assert(num_updates <= MAX_UPDATES);
 
@@ -553,7 +551,7 @@ struct DSoundCapture final : public BackendBase {
     void open(const char *name) override;
     void start() override;
     void stop() override;
-    void captureSamples(al::byte *buffer, uint samples) override;
+    void captureSamples(std::byte *buffer, uint samples) override;
     uint availableSamples() override;
 
     ComPtr<IDirectSoundCapture> mDSC;
@@ -679,9 +677,9 @@ void DSoundCapture::open(const char *name)
     DSCBDescription.lpwfxFormat = &InputType.Format;
 
     //DirectSoundCapture Init code
-    hr = DirectSoundCaptureCreate(guid, mDSC.getPtr(), nullptr);
+    hr = DirectSoundCaptureCreate(guid, al::out_ptr(mDSC), nullptr);
     if(SUCCEEDED(hr))
-        mDSC->CreateCaptureBuffer(&DSCBDescription, mDSCbuffer.getPtr(), nullptr);
+        mDSC->CreateCaptureBuffer(&DSCBDescription, al::out_ptr(mDSCbuffer), nullptr);
     if(SUCCEEDED(hr))
          mRing = RingBuffer::Create(mDevice->BufferSize, InputType.Format.nBlockAlign, false);
 
@@ -719,7 +717,7 @@ void DSoundCapture::stop()
     }
 }
 
-void DSoundCapture::captureSamples(al::byte *buffer, uint samples)
+void DSoundCapture::captureSamples(std::byte *buffer, uint samples)
 { mRing->read(buffer, samples); }
 
 uint DSoundCapture::availableSamples()
@@ -781,7 +779,7 @@ bool DSoundBackendFactory::init()
         }
 
 #define LOAD_FUNC(f) do {                                                     \
-    p##f = reinterpret_cast<decltype(p##f)>(GetSymbol(ds_handle, #f));        \
+    p##f = al::bit_cast<decltype(p##f)>(GetSymbol(ds_handle, #f));            \
     if(!p##f)                                                                 \
     {                                                                         \
         CloseLib(ds_handle);                                                  \

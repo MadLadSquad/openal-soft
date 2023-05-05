@@ -76,8 +76,8 @@ if(NOT CMAKE_DEBUG_POSTFIX)
 endif()
 
 set(DEFAULT_TARGET_PROPS
-    # Require C++14.
-    CXX_STANDARD 14
+    # Require C++17.
+    CXX_STANDARD 17
     CXX_STANDARD_REQUIRED TRUE
     # Prefer C11, but support C99 and earlier when possible.
     C_STANDARD 11)
@@ -589,7 +589,6 @@ check_symbol_exists(getopt unistd.h HAVE_GETOPT)
 # router, and certain tools and examples.
 set(COMMON_OBJS
     common/albit.h
-    common/albyte.h
     common/alcomplex.cpp
     common/alcomplex.h
     common/aldeque.h
@@ -599,7 +598,6 @@ set(COMMON_OBJS
     common/almalloc.h
     common/alnumbers.h
     common/alnumeric.h
-    common/aloptional.h
     common/alspan.h
     common/alstring.cpp
     common/alstring.h

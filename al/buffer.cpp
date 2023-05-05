@@ -26,6 +26,7 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,7 @@
 #include <mutex>
 #include <new>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -43,13 +45,11 @@
 #include "AL/alext.h"
 
 #include "albit.h"
-#include "albyte.h"
 #include "alc/context.h"
 #include "alc/device.h"
 #include "alc/inprogext.h"
 #include "almalloc.h"
 #include "alnumeric.h"
-#include "aloptional.h"
 #include "atomic.h"
 #include "core/except.h"
 #include "core/logging.h"
@@ -64,14 +64,14 @@
 
 namespace {
 
-al::optional<AmbiLayout> AmbiLayoutFromEnum(ALenum layout)
+std::optional<AmbiLayout> AmbiLayoutFromEnum(ALenum layout)
 {
     switch(layout)
     {
     case AL_FUMA_SOFT: return AmbiLayout::FuMa;
     case AL_ACN_SOFT: return AmbiLayout::ACN;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 ALenum EnumFromAmbiLayout(AmbiLayout layout)
 {
@@ -83,7 +83,7 @@ ALenum EnumFromAmbiLayout(AmbiLayout layout)
     throw std::runtime_error{"Invalid AmbiLayout: "+std::to_string(int(layout))};
 }
 
-al::optional<AmbiScaling> AmbiScalingFromEnum(ALenum scale)
+std::optional<AmbiScaling> AmbiScalingFromEnum(ALenum scale)
 {
     switch(scale)
     {
@@ -91,7 +91,7 @@ al::optional<AmbiScaling> AmbiScalingFromEnum(ALenum scale)
     case AL_SN3D_SOFT: return AmbiScaling::SN3D;
     case AL_N3D_SOFT: return AmbiScaling::N3D;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 ALenum EnumFromAmbiScaling(AmbiScaling scale)
 {
@@ -106,7 +106,7 @@ ALenum EnumFromAmbiScaling(AmbiScaling scale)
 }
 
 #ifdef ALSOFT_EAX
-al::optional<EaxStorage> EaxStorageFromEnum(ALenum scale)
+std::optional<EaxStorage> EaxStorageFromEnum(ALenum scale)
 {
     switch(scale)
     {
@@ -114,7 +114,7 @@ al::optional<EaxStorage> EaxStorageFromEnum(ALenum scale)
     case AL_STORAGE_ACCESSIBLE: return EaxStorage::Accessible;
     case AL_STORAGE_HARDWARE: return EaxStorage::Hardware;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 ALenum EnumFromEaxStorage(EaxStorage storage)
 {
@@ -277,7 +277,7 @@ ALuint SanitizeAlignment(FmtType type, ALuint align)
 
 /** Loads the specified data into the buffer, using the specified format. */
 void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
-    const FmtChannels DstChannels, const FmtType DstType, const al::byte *SrcData,
+    const FmtChannels DstChannels, const FmtType DstType, const std::byte *SrcData,
     ALbitfieldSOFT access)
 {
     if(ReadRef(ALBuf->ref) != 0 || ALBuf->MappedAccess != 0) UNLIKELY
@@ -343,7 +343,7 @@ void LoadData(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq, ALuint size,
      */
     if(newsize != ALBuf->mDataStorage.size())
     {
-        auto newdata = al::vector<al::byte,16>(newsize, al::byte{});
+        auto newdata = al::vector<std::byte,16>(newsize, std::byte{});
         if((access&AL_PRESERVE_DATA_BIT_SOFT))
         {
             const size_t tocopy{minz(newdata.size(), ALBuf->mDataStorage.size())};
@@ -437,7 +437,7 @@ void PrepareCallback(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
 
 /** Prepares the buffer to use caller-specified storage. */
 void PrepareUserPtr(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
-    const FmtChannels DstChannels, const FmtType DstType, al::byte *sdata, const ALuint sdatalen)
+    const FmtChannels DstChannels, const FmtType DstType, std::byte *sdata, const ALuint sdatalen)
 {
     if(ReadRef(ALBuf->ref) != 0 || ALBuf->MappedAccess != 0) UNLIKELY
         return context->setError(AL_INVALID_OPERATION, "Modifying storage for in-use buffer %u",
@@ -506,7 +506,7 @@ void PrepareUserPtr(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
 #endif
 
     decltype(ALBuf->mDataStorage){}.swap(ALBuf->mDataStorage);
-    ALBuf->mData = {static_cast<al::byte*>(sdata), sdatalen};
+    ALBuf->mData = {static_cast<std::byte*>(sdata), sdatalen};
 
 #ifdef ALSOFT_EAX
     eax_x_ram_clear(*context->mALDevice, *ALBuf);
@@ -536,7 +536,7 @@ void PrepareUserPtr(ALCcontext *context, ALbuffer *ALBuf, ALsizei freq,
 
 
 struct DecompResult { FmtChannels channels; FmtType type; };
-al::optional<DecompResult> DecomposeUserFormat(ALenum format)
+std::optional<DecompResult> DecomposeUserFormat(ALenum format)
 {
     struct FormatMap {
         ALenum format;
@@ -624,9 +624,9 @@ al::optional<DecompResult> DecomposeUserFormat(ALenum format)
     for(const auto &fmt : UserFmtList)
     {
         if(fmt.format == format)
-            return al::make_optional<DecompResult>({fmt.channels, fmt.type});
+            return DecompResult{fmt.channels, fmt.type};
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 
 } // namespace
@@ -767,7 +767,7 @@ START_API_FUNC
         else
         {
             LoadData(context.get(), albuf, freq, static_cast<ALuint>(size), usrfmt->channels,
-                usrfmt->type, static_cast<const al::byte*>(data), flags);
+                usrfmt->type, static_cast<const std::byte*>(data), flags);
         }
     }
 }
@@ -796,7 +796,7 @@ START_API_FUNC
         return context->setError(AL_INVALID_ENUM, "Invalid format 0x%04x", format);
 
     PrepareUserPtr(context.get(), albuf, freq, usrfmt->channels, usrfmt->type,
-        static_cast<al::byte*>(data), static_cast<ALuint>(size));
+        static_cast<std::byte*>(data), static_cast<ALuint>(size));
 }
 END_API_FUNC
 
@@ -1463,7 +1463,7 @@ START_API_FUNC
     else switch(param)
     {
     case AL_BUFFER_CALLBACK_FUNCTION_SOFT:
-        *value = reinterpret_cast<void*>(albuf->mCallback);
+        *value = al::bit_cast<void*>(albuf->mCallback);
         break;
     case AL_BUFFER_CALLBACK_USER_PARAM_SOFT:
         *value = albuf->mUserData;

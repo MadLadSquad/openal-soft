@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stddef.h>
 #include <stdexcept>
 #include <string>
@@ -15,7 +16,6 @@
 
 #include "alc/context.h"
 #include "alc/inprogext.h"
-#include "aloptional.h"
 #include "alspan.h"
 #include "core/logging.h"
 #include "opthelpers.h"
@@ -35,7 +35,7 @@ constexpr auto make_array()
 { return make_array(std::make_integer_sequence<T,N>{}); }
 
 
-constexpr al::optional<DebugSource> GetDebugSource(ALenum source) noexcept
+constexpr std::optional<DebugSource> GetDebugSource(ALenum source) noexcept
 {
     switch(source)
     {
@@ -45,10 +45,10 @@ constexpr al::optional<DebugSource> GetDebugSource(ALenum source) noexcept
     case AL_DEBUG_SOURCE_APPLICATION_EXT: return DebugSource::Application;
     case AL_DEBUG_SOURCE_OTHER_EXT: return DebugSource::Other;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 
-constexpr al::optional<DebugType> GetDebugType(ALenum type) noexcept
+constexpr std::optional<DebugType> GetDebugType(ALenum type) noexcept
 {
     switch(type)
     {
@@ -62,10 +62,10 @@ constexpr al::optional<DebugType> GetDebugType(ALenum type) noexcept
     case AL_DEBUG_TYPE_POP_GROUP_EXT: return DebugType::PopGroup;
     case AL_DEBUG_TYPE_OTHER_EXT: return DebugType::Other;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 
-constexpr al::optional<DebugSeverity> GetDebugSeverity(ALenum severity) noexcept
+constexpr std::optional<DebugSeverity> GetDebugSeverity(ALenum severity) noexcept
 {
     switch(severity)
     {
@@ -74,7 +74,7 @@ constexpr al::optional<DebugSeverity> GetDebugSeverity(ALenum severity) noexcept
     case AL_DEBUG_SEVERITY_LOW_EXT: return DebugSeverity::Low;
     case AL_DEBUG_SEVERITY_NOTIFICATION_EXT: return DebugSeverity::Notification;
     }
-    return al::nullopt;
+    return std::nullopt;
 }
 
 
@@ -311,7 +311,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
     static constexpr size_t ElemCount{DebugSourceCount + DebugTypeCount + DebugSeverityCount};
     static constexpr auto Values = make_array<uint,ElemCount>();
 
-    al::span<const uint> srcIndices{al::as_span(Values).subspan<DebugSourceBase,DebugSourceCount>()};
+    al::span<const uint> srcIndices{al::span{Values}.subspan<DebugSourceBase,DebugSourceCount>()};
     if(source != AL_DONT_CARE_EXT)
     {
         auto dsource = GetDebugSource(source);
@@ -320,7 +320,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
         srcIndices = srcIndices.subspan(al::to_underlying(*dsource), 1);
     }
 
-    al::span<const uint> typeIndices{al::as_span(Values).subspan<DebugTypeBase,DebugTypeCount>()};
+    al::span<const uint> typeIndices{al::span{Values}.subspan<DebugTypeBase,DebugTypeCount>()};
     if(type != AL_DONT_CARE_EXT)
     {
         auto dtype = GetDebugType(type);
@@ -329,7 +329,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
         typeIndices = typeIndices.subspan(al::to_underlying(*dtype), 1);
     }
 
-    al::span<const uint> svrIndices{al::as_span(Values).subspan<DebugSeverityBase,DebugSeverityCount>()};
+    al::span<const uint> svrIndices{al::span{Values}.subspan<DebugSeverityBase,DebugSeverityCount>()};
     if(severity != AL_DONT_CARE_EXT)
     {
         auto dseverity = GetDebugSeverity(severity);
@@ -344,7 +344,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
     {
         const uint filterbase{(1u<<srcIndices[0]) | (1u<<typeIndices[0])};
 
-        for(const uint id : al::as_span(ids, static_cast<uint>(count)))
+        for(const uint id : al::span{ids, static_cast<uint>(count)})
         {
             const uint64_t filter{filterbase | (uint64_t{id} << 32)};
 
