@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -16,16 +17,15 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
 #include "albit.h"
-#include "albyte.h"
 #include "alfstream.h"
 #include "almalloc.h"
 #include "alnumbers.h"
 #include "alnumeric.h"
-#include "aloptional.h"
 #include "alspan.h"
 #include "ambidefs.h"
 #include "filters/splitter.h"
@@ -425,7 +425,7 @@ std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, uint8_t irSize,
         std::uninitialized_copy_n(delays, irCount, delays_);
 
         /* Finally, assign the storage pointers. */
-        Hrtf->mFields = al::as_span(field_, fields.size());
+        Hrtf->mFields = {field_, fields.size()};
         Hrtf->mElev = elev_;
         Hrtf->mCoeffs = coeffs_;
         Hrtf->mDelays = delays_;
@@ -492,10 +492,10 @@ T> readle(std::istream &data)
     static_assert(num_bits <= sizeof(T)*8, "num_bits is too large for the type");
 
     T ret{};
-    al::byte b[sizeof(T)]{};
+    std::byte b[sizeof(T)]{};
     if(!data.read(reinterpret_cast<char*>(b), num_bits/8))
         return static_cast<T>(EOF);
-    std::reverse_copy(std::begin(b), std::end(b), reinterpret_cast<al::byte*>(&ret));
+    std::reverse_copy(std::begin(b), std::end(b), reinterpret_cast<std::byte*>(&ret));
 
     return fixsign<num_bits>(ret);
 }
@@ -1221,7 +1221,7 @@ al::span<const char> GetResource(int name)
 } // namespace
 
 
-al::vector<std::string> EnumerateHrtf(al::optional<std::string> pathopt)
+al::vector<std::string> EnumerateHrtf(std::optional<std::string> pathopt)
 {
     std::lock_guard<std::mutex> _{EnumeratedHrtfLock};
     EnumeratedHrtfs.clear();
