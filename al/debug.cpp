@@ -27,12 +27,12 @@ namespace {
 static_assert(DebugSeverityBase+DebugSeverityCount <= 32, "Too many debug bits");
 
 template<typename T, T ...Vals>
-constexpr auto make_array(std::integer_sequence<T, Vals...>)
+constexpr auto make_array_sequence(std::integer_sequence<T, Vals...>)
 { return std::array<T,sizeof...(Vals)>{Vals...}; }
 
 template<typename T, size_t N>
-constexpr auto make_array()
-{ return make_array(std::make_integer_sequence<T,N>{}); }
+constexpr auto make_array_sequence()
+{ return make_array_sequence(std::make_integer_sequence<T,N>{}); }
 
 
 constexpr std::optional<DebugSource> GetDebugSource(ALenum source) noexcept
@@ -180,14 +180,15 @@ void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, Debug
         size_t newlen{std::strlen(message)};
         if(newlen >= MaxDebugMessageLength) UNLIKELY
         {
-            ERR("Debug message too long (%zu >= %d)\n", newlen, MaxDebugMessageLength);
+            ERR("Debug message too long (%zu >= %d):\n-> %s\n", newlen, MaxDebugMessageLength,
+                message);
             return;
         }
         length = static_cast<ALsizei>(newlen);
     }
     else if(length >= MaxDebugMessageLength) UNLIKELY
     {
-        ERR("Debug message too long (%d >= %d)\n", length, MaxDebugMessageLength);
+        ERR("Debug message too long (%d >= %d):\n-> %s\n", length, MaxDebugMessageLength, message);
         return;
     }
 
@@ -309,7 +310,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
         return context->setError(AL_INVALID_ENUM, "Invalid debug enable %d", enable);
 
     static constexpr size_t ElemCount{DebugSourceCount + DebugTypeCount + DebugSeverityCount};
-    static constexpr auto Values = make_array<uint,ElemCount>();
+    static constexpr auto Values = make_array_sequence<uint,ElemCount>();
 
     al::span<const uint> srcIndices{al::span{Values}.subspan<DebugSourceBase,DebugSourceCount>()};
     if(source != AL_DONT_CARE_EXT)
