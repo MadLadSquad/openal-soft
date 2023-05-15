@@ -41,6 +41,7 @@
 #include "almalloc.h"
 #include "core/except.h"
 #include "core/logging.h"
+#include "direct_defs.h"
 #include "opthelpers.h"
 
 
@@ -89,10 +90,12 @@ void ALCcontext::setError(ALenum errorCode, const char *msg, ...)
     debugMessage(DebugSource::API, DebugType::Error, 0, DebugSeverity::High, msglen, msg);
 }
 
-AL_API ALenum AL_APIENTRY alGetError(void)
-START_API_FUNC
+/* Special-case alGetError since it (potentially) raises a debug signal and
+ * returns a non-default value for a null context.
+ */
+AL_API ALenum AL_APIENTRY alGetError(void) START_API_FUNC
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY
     {
         static constexpr ALenum deferror{AL_INVALID_OPERATION};
@@ -108,7 +111,10 @@ START_API_FUNC
         }
         return deferror;
     }
+    return alGetErrorDirect(context.get());
+} END_API_FUNC
 
+FORCE_ALIGN ALenum AL_APIENTRY alGetErrorDirect(ALCcontext *context) noexcept
+{
     return context->mLastError.exchange(AL_NO_ERROR);
 }
-END_API_FUNC

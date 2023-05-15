@@ -27,6 +27,7 @@
 #include "core/logging.h"
 #include "core/voice_change.h"
 #include "debug.h"
+#include "direct_defs.h"
 #include "opthelpers.h"
 #include "ringbuffer.h"
 #include "threads.h"
@@ -172,12 +173,9 @@ void StopEventThrd(ALCcontext *ctx)
         ctx->mEventThread.join();
 }
 
-AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, ALboolean enable)
-START_API_FUNC
+FORCE_ALIGN void AL_APIENTRY alEventControlDirectSOFT(ALCcontext *context, ALsizei count,
+    const ALenum *types, ALboolean enable) noexcept
 {
-    ContextRef context{GetContextRef()};
-    if(!context) UNLIKELY return;
-
     if(count < 0) context->setError(AL_INVALID_VALUE, "Controlling %d events", count);
     if(count <= 0) return;
     if(!types) return context->setError(AL_INVALID_VALUE, "NULL pointer");
@@ -225,17 +223,15 @@ START_API_FUNC
         std::lock_guard<std::mutex> _{context->mEventCbLock};
     }
 }
-END_API_FUNC
 
-AL_API void AL_APIENTRY alEventCallbackSOFT(ALEVENTPROCSOFT callback, void *userParam)
-START_API_FUNC
+FORCE_ALIGN void AL_APIENTRY alEventCallbackDirectSOFT(ALCcontext *context,
+    ALEVENTPROCSOFT callback, void *userParam) noexcept
 {
-    ContextRef context{GetContextRef()};
-    if(!context) UNLIKELY return;
-
     std::lock_guard<std::mutex> _{context->mPropLock};
     std::lock_guard<std::mutex> __{context->mEventCbLock};
     context->mEventCb = callback;
     context->mEventParam = userParam;
 }
-END_API_FUNC
+
+AL_API DECL_FUNCEXT3(void, alEventControl,SOFT, ALsizei, const ALenum*, ALboolean)
+AL_API DECL_FUNCEXT2(void, alEventCallback,SOFT, ALEVENTPROCSOFT, void*)

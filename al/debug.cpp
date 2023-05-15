@@ -235,19 +235,32 @@ void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, Debug
 
 FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackEXT(ALDEBUGPROCEXT callback, void *userParam) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return;
+    return alDebugMessageCallbackDirectEXT(context.get(), callback, userParam);
+}
 
+FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackDirectEXT(ALCcontext *context,
+    ALDEBUGPROCEXT callback, void *userParam) noexcept
+{
     std::lock_guard<std::mutex> _{context->mDebugCbLock};
     context->mDebugCb = callback;
     context->mDebugParam = userParam;
 }
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertEXT(ALenum source, ALenum type, ALuint id,
-    ALenum severity, ALsizei length, const ALchar *message) noexcept
+
+FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertEXT(ALenum source, ALenum type, ALuint id, ALenum severity, ALsizei length, const ALchar *message) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return;
+    return alDebugMessageInsertDirectEXT(context.get(), source, type, id, severity, length, message);
+}
+
+FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertDirectEXT(ALCcontext *context, ALenum source,
+    ALenum type, ALuint id, ALenum severity, ALsizei length, const ALchar *message) noexcept
+{
+    if(!context) UNLIKELY
+        return;
 
     if(!context->mContextFlags.test(ContextFlags::DebugBit))
         return;
@@ -285,12 +298,16 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertEXT(ALenum source, ALenum type,
 }
 
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type, ALenum severity,
-    ALsizei count, const ALuint *ids, ALboolean enable) noexcept
+FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type, ALenum severity, ALsizei count, const ALuint *ids, ALboolean enable) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return;
+    return alDebugMessageControlDirectEXT(context.get(), source, type, severity, count, ids, enable);
+}
 
+FORCE_ALIGN void AL_APIENTRY alDebugMessageControlDirectEXT(ALCcontext *context, ALenum source,
+    ALenum type, ALenum severity, ALsizei count, const ALuint *ids, ALboolean enable) noexcept
+{
     if(count > 0)
     {
         if(!ids)
@@ -385,9 +402,14 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type
 
 FORCE_ALIGN void AL_APIENTRY alPushDebugGroupEXT(ALenum source, ALuint id, ALsizei length, const ALchar *message) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return;
+    return alPushDebugGroupDirectEXT(context.get(), source, id, length, message);
+}
 
+FORCE_ALIGN void AL_APIENTRY alPushDebugGroupDirectEXT(ALCcontext *context, ALenum source,
+    ALuint id, ALsizei length, const ALchar *message) noexcept
+{
     if(length < 0)
     {
         size_t newlen{std::strlen(message)};
@@ -428,9 +450,13 @@ FORCE_ALIGN void AL_APIENTRY alPushDebugGroupEXT(ALenum source, ALuint id, ALsiz
 
 FORCE_ALIGN void AL_APIENTRY alPopDebugGroupEXT(void) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return;
+    return alPopDebugGroupDirectEXT(context.get());
+}
 
+FORCE_ALIGN void AL_APIENTRY alPopDebugGroupDirectEXT(ALCcontext *context) noexcept
+{
     std::unique_lock<std::mutex> debuglock{context->mDebugCbLock};
     if(context->mDebugGroups.size() <= 1)
     {
@@ -451,13 +477,17 @@ FORCE_ALIGN void AL_APIENTRY alPopDebugGroupEXT(void) noexcept
 }
 
 
-FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogEXT(ALuint count, ALsizei logBufSize,
-    ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities, ALsizei *lengths,
-    ALchar *logBuf) noexcept
+FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogEXT(ALuint count, ALsizei logBufSize, ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities, ALsizei *lengths, ALchar *logBuf) noexcept
 {
-    ContextRef context{GetContextRef()};
+    auto context = GetContextRef();
     if(!context) UNLIKELY return 0;
+    return alGetDebugMessageLogDirectEXT(context.get(), count, logBufSize, sources, types, ids, severities, lengths, logBuf);
+}
 
+FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogDirectEXT(ALCcontext *context, ALuint count,
+    ALsizei logBufSize, ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities,
+    ALsizei *lengths, ALchar *logBuf) noexcept
+{
     if(logBufSize < 0)
     {
         context->setError(AL_INVALID_VALUE, "Negative debug log buffer size");
