@@ -18,6 +18,7 @@
 #include "alc/inprogext.h"
 #include "alspan.h"
 #include "core/logging.h"
+#include "direct_defs.h"
 #include "opthelpers.h"
 #include "threads.h"
 
@@ -167,28 +168,15 @@ const char *GetDebugSeverityName(DebugSeverity severity)
 
 
 void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, DebugSource source,
-    DebugType type, ALuint id, DebugSeverity severity, ALsizei length, const char *message)
+    DebugType type, ALuint id, DebugSeverity severity, std::string_view message)
 {
     if(!mDebugEnabled.load()) UNLIKELY
         return;
 
-    /* MaxDebugMessageLength is the size including the null terminator,
-     * <length> does not include the null terminator.
-     */
-    if(length < 0)
+    if(message.length() >= MaxDebugMessageLength) UNLIKELY
     {
-        size_t newlen{std::strlen(message)};
-        if(newlen >= MaxDebugMessageLength) UNLIKELY
-        {
-            ERR("Debug message too long (%zu >= %d):\n-> %s\n", newlen, MaxDebugMessageLength,
-                message);
-            return;
-        }
-        length = static_cast<ALsizei>(newlen);
-    }
-    else if(length >= MaxDebugMessageLength) UNLIKELY
-    {
-        ERR("Debug message too long (%d >= %d):\n-> %s\n", length, MaxDebugMessageLength, message);
+        ERR("Debug message too long (%zu >= %d):\n-> %s\n", message.length(),
+            MaxDebugMessageLength, message.data());
         return;
     }
 
@@ -214,7 +202,8 @@ void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, Debug
         auto param = mDebugParam;
         debuglock.unlock();
         callback(GetDebugSourceEnum(source), GetDebugTypeEnum(type), id,
-            GetDebugSeverityEnum(severity), length, message, param);
+            GetDebugSeverityEnum(severity), static_cast<ALsizei>(message.length()), message.data(),
+            param);
     }
     else
     {
@@ -228,18 +217,12 @@ void ALCcontext::sendDebugMessage(std::unique_lock<std::mutex> &debuglock, Debug
                 "  Severity: %s\n"
                 "  Message: \"%s\"\n",
                 GetDebugSourceName(source), GetDebugTypeName(type), id,
-                GetDebugSeverityName(severity), message);
+                GetDebugSeverityName(severity), message.data());
     }
 }
 
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackEXT(ALDEBUGPROCEXT callback, void *userParam) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return;
-    return alDebugMessageCallbackDirectEXT(context.get(), callback, userParam);
-}
-
+FORCE_ALIGN DECL_FUNCEXT2(void, alDebugMessageCallback,EXT, ALDEBUGPROCEXT, void*)
 FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackDirectEXT(ALCcontext *context,
     ALDEBUGPROCEXT callback, void *userParam) noexcept
 {
@@ -249,33 +232,39 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageCallbackDirectEXT(ALCcontext *context
 }
 
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertEXT(ALenum source, ALenum type, ALuint id, ALenum severity, ALsizei length, const ALchar *message) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return;
-    return alDebugMessageInsertDirectEXT(context.get(), source, type, id, severity, length, message);
-}
-
+FORCE_ALIGN DECL_FUNCEXT6(void, alDebugMessageInsert,EXT, ALenum, ALenum, ALuint, ALenum, ALsizei, const ALchar*)
 FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertDirectEXT(ALCcontext *context, ALenum source,
     ALenum type, ALuint id, ALenum severity, ALsizei length, const ALchar *message) noexcept
 {
     if(!context->mContextFlags.test(ContextFlags::DebugBit))
         return;
 
-    if(!message)
+    if(!message) UNLIKELY
         return context->setError(AL_INVALID_VALUE, "Null message pointer");
 
-    if(length < 0)
-    {
-        size_t newlen{std::strlen(message)};
-        if(newlen >= MaxDebugMessageLength) UNLIKELY
-            return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu >= %d)",
-                newlen, MaxDebugMessageLength);
-        length = static_cast<ALsizei>(newlen);
-    }
-    else if(length >= MaxDebugMessageLength) UNLIKELY
-        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d > %d)", length,
+    if(length >= MaxDebugMessageLength) UNLIKELY
+        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d >= %d)", length,
             MaxDebugMessageLength);
+
+    std::string tmpmessage;
+    std::string_view msgview;
+    if(length < 0)
+        msgview = message;
+    /* Testing if the message is null terminated like this is kind of ugly, but
+     * it's the only way to avoid an otherwise unnecessary copy since the
+     * callback and trace calls need a null-terminated message string.
+     */
+    else if(message[length] == '\0')
+        msgview = {message, static_cast<uint>(length)};
+    else
+    {
+        tmpmessage.assign(message, static_cast<uint>(length));
+        msgview = tmpmessage;
+    }
+
+    if(msgview.length() >= MaxDebugMessageLength) UNLIKELY
+        return context->setError(AL_INVALID_VALUE, "Debug message too long (%zu >= %d)",
+            msgview.length(), MaxDebugMessageLength);
 
     auto dsource = GetDebugSource(source);
     if(!dsource)
@@ -291,17 +280,11 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageInsertDirectEXT(ALCcontext *context, 
     if(!dseverity)
         return context->setError(AL_INVALID_ENUM, "Invalid debug severity 0x%04x", severity);
 
-    context->debugMessage(*dsource, *dtype, id, *dseverity, length, message);
+    context->debugMessage(*dsource, *dtype, id, *dseverity, msgview);
 }
 
 
-FORCE_ALIGN void AL_APIENTRY alDebugMessageControlEXT(ALenum source, ALenum type, ALenum severity, ALsizei count, const ALuint *ids, ALboolean enable) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return;
-    return alDebugMessageControlDirectEXT(context.get(), source, type, severity, count, ids, enable);
-}
-
+FORCE_ALIGN DECL_FUNCEXT6(void, alDebugMessageControl,EXT, ALenum, ALenum, ALenum, ALsizei, const ALuint*, ALboolean)
 FORCE_ALIGN void AL_APIENTRY alDebugMessageControlDirectEXT(ALCcontext *context, ALenum source,
     ALenum type, ALenum severity, ALsizei count, const ALuint *ids, ALboolean enable) noexcept
 {
@@ -397,13 +380,7 @@ FORCE_ALIGN void AL_APIENTRY alDebugMessageControlDirectEXT(ALCcontext *context,
 }
 
 
-FORCE_ALIGN void AL_APIENTRY alPushDebugGroupEXT(ALenum source, ALuint id, ALsizei length, const ALchar *message) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return;
-    return alPushDebugGroupDirectEXT(context.get(), source, id, length, message);
-}
-
+FORCE_ALIGN DECL_FUNCEXT4(void, alPushDebugGroup,EXT, ALenum, ALuint, ALsizei, const ALchar*)
 FORCE_ALIGN void AL_APIENTRY alPushDebugGroupDirectEXT(ALCcontext *context, ALenum source,
     ALuint id, ALsizei length, const ALchar *message) noexcept
 {
@@ -416,7 +393,7 @@ FORCE_ALIGN void AL_APIENTRY alPushDebugGroupDirectEXT(ALCcontext *context, ALen
         length = static_cast<ALsizei>(newlen);
     }
     else if(length >= MaxDebugMessageLength) UNLIKELY
-        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d > %d)", length,
+        return context->setError(AL_INVALID_VALUE, "Debug message too long (%d >= %d)", length,
             MaxDebugMessageLength);
 
     auto dsource = GetDebugSource(source);
@@ -432,7 +409,8 @@ FORCE_ALIGN void AL_APIENTRY alPushDebugGroupDirectEXT(ALCcontext *context, ALen
         return context->setError(AL_STACK_OVERFLOW_EXT, "Pushing too many debug groups");
     }
 
-    context->mDebugGroups.emplace_back(*dsource, id, message);
+    context->mDebugGroups.emplace_back(*dsource, id,
+        std::string_view{message, static_cast<uint>(length)});
     auto &oldback = *(context->mDebugGroups.end()-2);
     auto &newback = context->mDebugGroups.back();
 
@@ -441,17 +419,10 @@ FORCE_ALIGN void AL_APIENTRY alPushDebugGroupDirectEXT(ALCcontext *context, ALen
 
     if(context->mContextFlags.test(ContextFlags::DebugBit))
         context->sendDebugMessage(debuglock, newback.mSource, DebugType::PushGroup, newback.mId,
-            DebugSeverity::Notification, static_cast<ALsizei>(newback.mMessage.size()),
-            newback.mMessage.data());
+            DebugSeverity::Notification, newback.mMessage);
 }
 
-FORCE_ALIGN void AL_APIENTRY alPopDebugGroupEXT(void) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return;
-    return alPopDebugGroupDirectEXT(context.get());
-}
-
+FORCE_ALIGN DECL_FUNCEXT(void, alPopDebugGroup,EXT)
 FORCE_ALIGN void AL_APIENTRY alPopDebugGroupDirectEXT(ALCcontext *context) noexcept
 {
     std::unique_lock<std::mutex> debuglock{context->mDebugCbLock};
@@ -470,17 +441,11 @@ FORCE_ALIGN void AL_APIENTRY alPopDebugGroupDirectEXT(ALCcontext *context) noexc
     context->mDebugGroups.pop_back();
     if(context->mContextFlags.test(ContextFlags::DebugBit))
         context->sendDebugMessage(debuglock, source, DebugType::PopGroup, id,
-            DebugSeverity::Notification, static_cast<ALsizei>(message.size()), message.data());
+            DebugSeverity::Notification, message);
 }
 
 
-FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogEXT(ALuint count, ALsizei logBufSize, ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities, ALsizei *lengths, ALchar *logBuf) noexcept
-{
-    auto context = GetContextRef();
-    if(!context) UNLIKELY return 0;
-    return alGetDebugMessageLogDirectEXT(context.get(), count, logBufSize, sources, types, ids, severities, lengths, logBuf);
-}
-
+FORCE_ALIGN DECL_FUNCEXT8(ALuint, alGetDebugMessageLog,EXT, ALuint, ALsizei, ALenum*, ALenum*, ALuint*, ALenum*, ALsizei*, ALchar*)
 FORCE_ALIGN ALuint AL_APIENTRY alGetDebugMessageLogDirectEXT(ALCcontext *context, ALuint count,
     ALsizei logBufSize, ALenum *sources, ALenum *types, ALuint *ids, ALenum *severities,
     ALsizei *lengths, ALchar *logBuf) noexcept
