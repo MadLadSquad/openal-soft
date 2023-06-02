@@ -22,8 +22,8 @@
 
 #include "sndio.h"
 
+#include <cinttypes>
 #include <functional>
-#include <inttypes.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,11 +32,11 @@
 #include <vector>
 
 #include "alnumeric.h"
+#include "althrd_setname.h"
 #include "core/device.h"
 #include "core/helpers.h"
 #include "core/logging.h"
 #include "ringbuffer.h"
-#include "threads.h"
 
 #include <sndio.h>
 

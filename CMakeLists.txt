@@ -470,6 +470,7 @@ if(ALSOFT_REQUIRE_NEON AND NOT HAVE_NEON)
 endif()
 
 
+set(ALSOFT_FORCE_ALIGN )
 set(SSE_FLAGS )
 set(FPMATH_SET "0")
 if(CMAKE_SIZEOF_VOID_P MATCHES "4" AND HAVE_SSE2)
@@ -494,6 +495,7 @@ if(CMAKE_SIZEOF_VOID_P MATCHES "4" AND HAVE_SSE2)
             # OSs don't guarantee this on 32-bit, so externally-callable
             # functions need to ensure an aligned stack.
             set(EXPORT_DECL "${EXPORT_DECL}__attribute__((force_align_arg_pointer))")
+            set(ALSOFT_FORCE_ALIGN "__attribute__((force_align_arg_pointer))")
         endif()
     endif()
 endif()
@@ -616,9 +618,13 @@ set(COMMON_OBJS
     common/almalloc.h
     common/alnumbers.h
     common/alnumeric.h
+    common/alsem.cpp
+    common/alsem.h
     common/alspan.h
     common/alstring.cpp
     common/alstring.h
+    common/althrd_setname.cpp
+    common/althrd_setname.h
     common/altraits.h
     common/atomic.h
     common/comptr.h
@@ -634,8 +640,6 @@ set(COMMON_OBJS
     common/ringbuffer.h
     common/strutils.cpp
     common/strutils.h
-    common/threads.cpp
-    common/threads.h
     common/vecmat.h
     common/vector.h)
 

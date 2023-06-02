@@ -27,11 +27,11 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cinttypes>
 #include <climits>
 #include <cmath>
 #include <cstdint>
 #include <functional>
-#include <inttypes.h>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -73,7 +73,6 @@
 #include "filter.h"
 #include "opthelpers.h"
 #include "ringbuffer.h"
-#include "threads.h"
 
 #ifdef ALSOFT_EAX
 #include <cassert>
