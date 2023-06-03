@@ -222,7 +222,6 @@ struct DeviceHandle
 using EventRegistrationToken = Windows::Foundation::EventRegistrationToken;
 #else
 using DeviceHandle           = ComPtr<IMMDevice>;
-using EventRegistrationToken = void*;
 #endif
 
 #if defined(ALSOFT_UWP)
@@ -231,21 +230,14 @@ struct DeviceHelper final : public IActivateAudioInterfaceCompletionHandler
 struct DeviceHelper final : private IMMNotificationClient
 #endif
 {
-public:
     DeviceHelper()
     {
 #if defined(ALSOFT_UWP)
         mActiveClientEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-        auto cb = [](alc::DeviceType type, const WCHAR *devid)
-        {
-            const std::string msg{"Default device changed: "+wstr_to_utf8(devid)};
-            alc::Event(alc::EventType::DefaultDeviceChanged, type, msg);
-        };
-
         mRenderDeviceChangedToken = MediaDevice::DefaultAudioRenderDeviceChanged +=
             ref new TypedEventHandler<Platform::Object ^, DefaultAudioRenderDeviceChangedEventArgs ^>(
-                [this,cb](Platform::Object ^ sender, DefaultAudioRenderDeviceChangedEventArgs ^ args) {
+                [this](Platform::Object ^ sender, DefaultAudioRenderDeviceChangedEventArgs ^ args) {
                 if(args->Role == AudioDeviceRole::Default)
                 {
                     const std::string msg{"Default playback device changed: "+
@@ -256,7 +248,7 @@ public:
             });
         mCaptureDeviceChangedToken = MediaDevice::DefaultAudioCaptureDeviceChanged +=
             ref new TypedEventHandler<Platform::Object ^, DefaultAudioCaptureDeviceChangedEventArgs ^>(
-                [this,cb](Platform::Object ^ sender, DefaultAudioCaptureDeviceChangedEventArgs ^ args) {
+                [this](Platform::Object ^ sender, DefaultAudioCaptureDeviceChangedEventArgs ^ args) {
                 if(args->Role == AudioDeviceRole::Default)
                 {
                     const std::string msg{"Default capture device changed: "+
@@ -265,13 +257,6 @@ public:
                         msg);
                 }
             });
-#else
-        HRESULT hr{CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER,
-            IID_IMMDeviceEnumerator, al::out_ptr(mEnumerator))};
-        if(SUCCEEDED(hr))
-            mEnumerator->RegisterEndpointNotificationCallback(this);
-        else
-            WARN("Failed to create IMMDeviceEnumerator instance: 0x%08lx\n", hr);
 #endif
     }
     ~DeviceHelper()
@@ -290,16 +275,10 @@ public:
 #endif
     }
 
-    /** -------------------------- IUnkonwn ----------------------------- */
+    /** -------------------------- IUnknown ----------------------------- */
     std::atomic<ULONG> mRefCount{1};
     STDMETHODIMP_(ULONG) AddRef() noexcept override { return mRefCount.fetch_add(1u) + 1u; }
-
-    STDMETHODIMP_(ULONG) Release() noexcept override
-    {
-        auto ret = mRefCount.fetch_sub(1u) - 1u;
-        if(!ret) delete this;
-        return ret;
-    }
+    STDMETHODIMP_(ULONG) Release() noexcept override { return mRefCount.fetch_sub(1u) - 1u; }
 
     STDMETHODIMP QueryInterface(const IID& IId, void **UnknownPtrPtr) noexcept override
     {
@@ -400,7 +379,22 @@ public:
 #endif
 
     /** -------------------------- DeviceHelper ----------------------------- */
-    HRESULT OpenDevice(LPCWSTR devid, EDataFlow flow, DeviceHandle& device) 
+    HRESULT init()
+    {
+#if !defined(ALSOFT_UWP)
+        HRESULT hr{CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER,
+            IID_IMMDeviceEnumerator, al::out_ptr(mEnumerator))};
+        if(SUCCEEDED(hr))
+            mEnumerator->RegisterEndpointNotificationCallback(this);
+        else
+            WARN("Failed to create IMMDeviceEnumerator instance: 0x%08lx\n", hr);
+        return hr;
+#else
+        return S_OK;
+#endif
+    }
+
+    HRESULT openDevice(LPCWSTR devid, EDataFlow flow, DeviceHandle& device)
     {
 #if !defined(ALSOFT_UWP)
         HRESULT hr{E_POINTER};
@@ -431,16 +425,29 @@ public:
 #endif
     }
 
+#if !defined(ALSOFT_UWP)
+    static HRESULT ActivateAudioClient(_In_ DeviceHandle& device, void **ppv)
+    { return device->Activate(__uuidof(IAudioClient3), CLSCTX_INPROC_SERVER, nullptr, ppv); }
+#else
     HRESULT ActivateAudioClient(_In_ DeviceHandle& device, void **ppv)
     {
-#if !defined(ALSOFT_UWP)
-        HRESULT hr{device->Activate(__uuidof(IAudioClient3), CLSCTX_INPROC_SERVER, nullptr, ppv)};
-#else
-        HRESULT hr{ActivateAudioInterface(device.value->Id->Data(), __uuidof(IAudioClient3),
-            nullptr, ppv)};
-#endif
-        return hr;
+        ComPtr<IActivateAudioInterfaceAsyncOperation> asyncOp;
+        mPPV = ppv;
+        HRESULT hr{ActivateAudioInterfaceAsync(device.value->Id->Data(), __uuidof(IAudioClient3),
+            nullptr, this, al::out_ptr(asyncOp))};
+        if(FAILED(hr))
+            return hr;
+        asyncOp = nullptr;
+
+        DWORD res{WaitForSingleObjectEx(mActiveClientEvent, 2000, FALSE)};
+        if(res != WAIT_OBJECT_0)
+        {
+            ERR("WaitForSingleObjectEx error: 0x%lx\n", res);
+            return E_FAIL;
+        }
+        return S_OK;
     }
+#endif
 
     HRESULT probe_devices(EDataFlow flowdir, std::vector<DevMap>& list)
     {
@@ -576,7 +583,6 @@ public:
             WARN("Unexpected PROPVARIANT type: 0x%04x\n", pvprop->vt);
             guid = UnknownGuid;
         }
-
 #else
         auto devInfo     = device.value;
         std::string name = wstr_to_utf8(devInfo->Name->Data());
@@ -663,25 +669,6 @@ public:
 
 private:
 #if defined(ALSOFT_UWP)
-    HRESULT ActivateAudioInterface(_In_ LPCWSTR deviceInterfacePath,
-                                   _In_ REFIID riid,
-                                   _In_opt_ PROPVARIANT* activationParams,
-                                   void** ppv)
-    {
-        IActivateAudioInterfaceAsyncOperation* asyncOp{nullptr};
-        mPPV       = ppv;
-        HRESULT hr = ActivateAudioInterfaceAsync(deviceInterfacePath, riid, activationParams, this, &asyncOp);
-        if(FAILED(hr))
-            return hr;
-        if(asyncOp)
-            asyncOp->Release();
-
-        DWORD res{WaitForSingleObjectEx(mActiveClientEvent, 2000, FALSE)};
-        if(res != WAIT_OBJECT_0)
-            ERR("WaitForSingleObjectEx error: 0x%lx\n", res);
-        return res;
-    }
-
     HANDLE mActiveClientEvent{nullptr};
     void** mPPV{nullptr};
 
@@ -804,7 +791,7 @@ struct WasapiProxy {
 
     virtual HRESULT resetProxy() = 0;
     virtual HRESULT startProxy() = 0;
-    virtual void  stopProxy() = 0;
+    virtual void stopProxy() = 0;
 
     struct Msg {
         MsgType mType;
@@ -814,14 +801,11 @@ struct WasapiProxy {
 
         explicit operator bool() const noexcept { return mType != MsgType::QuitThread; }
     };
-    static std::thread sThread;
     static std::deque<Msg> mMsgQueue;
     static std::mutex mMsgQueueLock;
     static std::condition_variable mMsgQueueCond;
-    static std::mutex sThreadLock;
-    static size_t sInitCount;
 
-    static ComPtr<DeviceHelper> sDeviceHelper;
+    static std::optional<DeviceHelper> sDeviceHelper;
 
     std::future<HRESULT> pushMessage(MsgType type, const char *param=nullptr)
     {
@@ -857,45 +841,11 @@ struct WasapiProxy {
     }
 
     static int messageHandler(std::promise<HRESULT> *promise);
-
-    static HRESULT InitThread()
-    {
-        std::lock_guard<std::mutex> _{sThreadLock};
-        HRESULT res{S_OK};
-        if(!sThread.joinable())
-        {
-            std::promise<HRESULT> promise;
-            auto future = promise.get_future();
-
-            sThread = std::thread{&WasapiProxy::messageHandler, &promise};
-            res = future.get();
-            if(FAILED(res))
-            {
-                sThread.join();
-                return res;
-            }
-        }
-        ++sInitCount;
-        return res;
-    }
-
-    static void DeinitThread()
-    {
-        std::lock_guard<std::mutex> _{sThreadLock};
-        if(!--sInitCount && sThread.joinable())
-        {
-            pushMessageStatic(MsgType::QuitThread);
-            sThread.join();
-        }
-    }
 };
-std::thread WasapiProxy::sThread;
 std::deque<WasapiProxy::Msg> WasapiProxy::mMsgQueue;
 std::mutex WasapiProxy::mMsgQueueLock;
 std::condition_variable WasapiProxy::mMsgQueueCond;
-std::mutex WasapiProxy::sThreadLock;
-ComPtr<DeviceHelper> WasapiProxy::sDeviceHelper;
-size_t WasapiProxy::sInitCount{0};
+std::optional<DeviceHelper> WasapiProxy::sDeviceHelper;
 
 int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
 {
@@ -908,8 +858,12 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
         promise->set_value(hr);
         return 0;
     }
-    promise->set_value(S_OK);
+
+    hr = sDeviceHelper.emplace().init();
+    promise->set_value(hr);
     promise = nullptr;
+    if(FAILED(hr))
+        goto skip_loop;
 
     TRACE("Starting message loop\n");
     while(Msg msg{popMessage()})
@@ -962,6 +916,9 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
         msg.mPromise.set_value(E_FAIL);
     }
     TRACE("Message loop finished\n");
+
+skip_loop:
+    sDeviceHelper.reset();
     CoUninitialize();
 
     return 0;
@@ -1011,10 +968,7 @@ struct WasapiPlayback final : public BackendBase, WasapiProxy {
 WasapiPlayback::~WasapiPlayback()
 {
     if(SUCCEEDED(mOpenStatus))
-    {
         pushMessage(MsgType::CloseDevice).wait();
-        DeinitThread();
-    }
     mOpenStatus = E_FAIL;
 
     if(mNotifyEvent != nullptr)
@@ -1127,13 +1081,6 @@ void WasapiPlayback::open(const char *name)
             "Failed to create notify events"};
     }
 
-    HRESULT hr{InitThread()};
-    if(FAILED(hr))
-    {
-        throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to init COM thread: 0x%08lx", hr};
-    }
-
     if(name)
     {
         if(PlaybackDevices.empty())
@@ -1148,11 +1095,8 @@ void WasapiPlayback::open(const char *name)
 
     mOpenStatus = pushMessage(MsgType::OpenDevice, name).get();
     if(FAILED(mOpenStatus))
-    {
-        DeinitThread();
         throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
             mOpenStatus};
-    }
 }
 
 HRESULT WasapiPlayback::openProxy(const char *name)
@@ -1179,14 +1123,14 @@ HRESULT WasapiPlayback::openProxy(const char *name)
         devid = iter->devid.c_str();
     }
 
-    HRESULT hr{sDeviceHelper->OpenDevice(devid, eRender, mMMDev)};
-    if (FAILED(hr))
+    HRESULT hr{sDeviceHelper->openDevice(devid, eRender, mMMDev)};
+    if(FAILED(hr))
     {
         WARN("Failed to open device \"%s\"\n", name ? name : "(default)");
         return hr;
     }
     mClient = nullptr;
-    if (name)
+    if(name)
         mDevice->DeviceName = std::string{DevNameHead} + name;
     else
         mDevice->DeviceName = DevNameHead + DeviceHelper::get_device_name_and_guid(mMMDev).first;
@@ -1663,10 +1607,7 @@ struct WasapiCapture final : public BackendBase, WasapiProxy {
 WasapiCapture::~WasapiCapture()
 {
     if(SUCCEEDED(mOpenStatus))
-    {
         pushMessage(MsgType::CloseDevice).wait();
-        DeinitThread();
-    }
     mOpenStatus = E_FAIL;
 
     if(mNotifyEvent != nullptr)
@@ -1781,13 +1722,6 @@ void WasapiCapture::open(const char *name)
             "Failed to create notify events"};
     }
 
-    HRESULT hr{InitThread()};
-    if(FAILED(hr))
-    {
-        throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to init COM thread: 0x%08lx", hr};
-    }
-
     if(name)
     {
         if(CaptureDevices.empty())
@@ -1802,13 +1736,10 @@ void WasapiCapture::open(const char *name)
 
     mOpenStatus = pushMessage(MsgType::OpenDevice, name).get();
     if(FAILED(mOpenStatus))
-    {
-        DeinitThread();
         throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
             mOpenStatus};
-    }
 
-    hr = pushMessage(MsgType::ResetDevice).get();
+    HRESULT hr{pushMessage(MsgType::ResetDevice).get()};
     if(FAILED(hr))
     {
         if(hr == E_OUTOFMEMORY)
@@ -1841,7 +1772,7 @@ HRESULT WasapiCapture::openProxy(const char *name)
         devid = iter->devid.c_str();
     }
 
-    HRESULT hr{sDeviceHelper->OpenDevice(devid, eCapture, mMMDev)};
+    HRESULT hr{sDeviceHelper->openDevice(devid, eCapture, mMMDev)};
     if (FAILED(hr))
     {
         WARN("Failed to open device \"%s\"\n", name ? name : "(default)");
@@ -2216,34 +2147,13 @@ uint WasapiCapture::availableSamples()
 bool WasapiBackendFactory::init()
 {
     static HRESULT InitResult{E_FAIL};
-
     if(FAILED(InitResult)) try
     {
-        auto res = std::async(std::launch::async, []() -> HRESULT
-        {
-            HRESULT hr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
-            if(FAILED(hr))
-            {
-                WARN("Failed to initialize COM: 0x%08lx\n", hr);
-                return hr;
-            }
-#if !defined(ALSOFT_UWP)
-            ComPtr<IMMDeviceEnumerator> enumerator;
-            hr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_INPROC_SERVER,
-                IID_IMMDeviceEnumerator, al::out_ptr(enumerator));
-            if(FAILED(hr))
-                WARN("Failed to create IMMDeviceEnumerator instance: 0x%08lx\n", hr);
-            enumerator = nullptr;
-#endif
-            if(SUCCEEDED(hr))
-                WasapiProxy::sDeviceHelper.reset(new DeviceHelper{});
+        std::promise<HRESULT> promise;
+        auto future = promise.get_future();
 
-            CoUninitialize();
-
-            return hr;
-        });
-
-        InitResult = res.get();
+        std::thread{&WasapiProxy::messageHandler, &promise}.detach();
+        InitResult = future.get();
     }
     catch(...) {
     }
@@ -2256,16 +2166,7 @@ bool WasapiBackendFactory::querySupport(BackendType type)
 
 std::string WasapiBackendFactory::probe(BackendType type)
 {
-    struct ProxyControl {
-        HRESULT mResult{};
-        ProxyControl() { mResult = WasapiProxy::InitThread(); }
-        ~ProxyControl() { if(SUCCEEDED(mResult)) WasapiProxy::DeinitThread(); }
-    };
-    ProxyControl proxy;
-
     std::string outnames;
-    if(FAILED(proxy.mResult))
-        return outnames;
 
     switch(type)
     {
