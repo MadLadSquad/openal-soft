@@ -196,8 +196,27 @@ bool checkName(const al::span<DevMap> list, const std::string &name)
     return std::find_if(list.cbegin(), list.cend(), match_name) != list.cend();
 }
 
-std::vector<DevMap> PlaybackDevices;
-std::vector<DevMap> CaptureDevices;
+
+struct DeviceList {
+    auto lock() noexcept(noexcept(mMutex.lock())) { return mMutex.lock(); }
+    auto unlock() noexcept(noexcept(mMutex.unlock())) { return mMutex.unlock(); }
+
+private:
+    std::mutex mMutex;
+    std::vector<DevMap> mPlayback;
+    std::vector<DevMap> mCapture;
+
+    friend struct DeviceListLock;
+};
+struct DeviceListLock : public std::unique_lock<DeviceList> {
+    using std::unique_lock<DeviceList>::unique_lock;
+
+    auto& getPlaybackList() noexcept(noexcept(mutex())) { return mutex()->mPlayback; }
+    auto& getCaptureList() noexcept(noexcept(mutex())) { return mutex()->mCapture; }
+};
+
+DeviceList gDeviceList;
+
 
 #if defined(ALSOFT_UWP)
 enum EDataFlow
@@ -394,47 +413,48 @@ struct DeviceHelper final : private IMMNotificationClient
 #endif
     }
 
-    HRESULT openDevice(LPCWSTR devid, EDataFlow flow, DeviceHandle& device)
+    HRESULT openDevice(std::wstring_view devid, EDataFlow flow, DeviceHandle& device)
     {
 #if !defined(ALSOFT_UWP)
         HRESULT hr{E_POINTER};
         if(mEnumerator)
         {
-            if (!devid)
+            if(devid.empty())
                 hr = mEnumerator->GetDefaultAudioEndpoint(flow, eMultimedia, al::out_ptr(device));
             else
-                hr = mEnumerator->GetDevice(devid, al::out_ptr(device));
+                hr = mEnumerator->GetDevice(devid.data(), al::out_ptr(device));
         }
         return hr;
 #else
         const auto deviceRole = Windows::Media::Devices::AudioDeviceRole::Default;
-		Platform::String^ devIfPath =
-			!devid ? (flow == eRender ? MediaDevice::GetDefaultAudioRenderId(deviceRole) : MediaDevice::GetDefaultAudioCaptureId(deviceRole))
-			: ref new Platform::String(devid);
+        Platform::String^ devIfPath =
+            devid.empty() ? (flow == eRender ? MediaDevice::GetDefaultAudioRenderId(deviceRole) : MediaDevice::GetDefaultAudioCaptureId(deviceRole))
+            : ref new Platform::String(devid.data());
 
-		Concurrency::task<DeviceInformation^> createDeviceOp(
-			DeviceInformation::CreateFromIdAsync(devIfPath, nullptr, DeviceInformationKind::DeviceInterface));
-		auto status = createDeviceOp.then([&](DeviceInformation^ deviceInfo) {
+        Concurrency::task<DeviceInformation^> createDeviceOp(
+            DeviceInformation::CreateFromIdAsync(devIfPath, nullptr, DeviceInformationKind::DeviceInterface));
+        auto status = createDeviceOp.then([&](DeviceInformation^ deviceInfo)
+        {
             device.value = deviceInfo;
-		}).wait();
-		if (status != Concurrency::task_status::completed)
-		{
-			return E_NOINTERFACE;
-		}
+        }).wait();
+        if(status != Concurrency::task_status::completed)
+        {
+            return E_NOINTERFACE;
+        }
         return S_OK;
 #endif
     }
 
 #if !defined(ALSOFT_UWP)
-    static HRESULT ActivateAudioClient(_In_ DeviceHandle& device, void **ppv)
-    { return device->Activate(__uuidof(IAudioClient3), CLSCTX_INPROC_SERVER, nullptr, ppv); }
+    static HRESULT activateAudioClient(_In_ DeviceHandle& device, REFIID iid, void **ppv)
+    { return device->Activate(iid, CLSCTX_INPROC_SERVER, nullptr, ppv); }
 #else
-    HRESULT ActivateAudioClient(_In_ DeviceHandle& device, void **ppv)
+    HRESULT activateAudioClient(_In_ DeviceHandle& device, _In_ REFIID iid, void **ppv)
     {
         ComPtr<IActivateAudioInterfaceAsyncOperation> asyncOp;
         mPPV = ppv;
-        HRESULT hr{ActivateAudioInterfaceAsync(device.value->Id->Data(), __uuidof(IAudioClient3),
-            nullptr, this, al::out_ptr(asyncOp))};
+        HRESULT hr{ActivateAudioInterfaceAsync(device.value->Id->Data(), iid, nullptr, this,
+            al::out_ptr(asyncOp))};
         if(FAILED(hr))
             return hr;
         asyncOp = nullptr;
@@ -902,9 +922,11 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
         case MsgType::EnumeratePlayback:
         case MsgType::EnumerateCapture:
             if(msg.mType == MsgType::EnumeratePlayback)
-                msg.mPromise.set_value(sDeviceHelper->probe_devices(eRender, PlaybackDevices));
+                msg.mPromise.set_value(sDeviceHelper->probe_devices(eRender,
+                    DeviceListLock{gDeviceList}.getPlaybackList()));
             else if(msg.mType == MsgType::EnumerateCapture)
-                msg.mPromise.set_value(sDeviceHelper->probe_devices(eCapture, CaptureDevices));
+                msg.mPromise.set_value(sDeviceHelper->probe_devices(eCapture,
+                    DeviceListLock{gDeviceList}.getCaptureList()));
             else
                 msg.mPromise.set_value(E_FAIL);
             continue;
@@ -1083,7 +1105,7 @@ void WasapiPlayback::open(const char *name)
 
     if(name)
     {
-        if(PlaybackDevices.empty())
+        if(DeviceListLock{gDeviceList}.getPlaybackList().empty())
             pushMessage(MsgType::EnumeratePlayback);
         if(std::strncmp(name, DevNameHead, DevNameHeadLen) == 0)
         {
@@ -1101,37 +1123,40 @@ void WasapiPlayback::open(const char *name)
 
 HRESULT WasapiPlayback::openProxy(const char *name)
 {
-    const wchar_t *devid{nullptr};
+    std::string devname;
+    std::wstring devid;
     if(name)
     {
-        auto iter = std::find_if(PlaybackDevices.cbegin(), PlaybackDevices.cend(),
+        auto devlock = DeviceListLock{gDeviceList};
+        auto list = al::span{devlock.getPlaybackList()};
+        auto iter = std::find_if(list.cbegin(), list.cend(),
             [name](const DevMap &entry) -> bool
             { return entry.name == name || entry.endpoint_guid == name; });
-        if(iter == PlaybackDevices.cend())
+        if(iter == list.cend())
         {
             const std::wstring wname{utf8_to_wstr(name)};
-            iter = std::find_if(PlaybackDevices.cbegin(), PlaybackDevices.cend(),
+            iter = std::find_if(list.cbegin(), list.cend(),
                 [&wname](const DevMap &entry) -> bool
                 { return entry.devid == wname; });
         }
-        if(iter == PlaybackDevices.cend())
+        if(iter == list.cend())
         {
             WARN("Failed to find device name matching \"%s\"\n", name);
             return E_FAIL;
         }
-        name = iter->name.c_str();
-        devid = iter->devid.c_str();
+        devname = iter->name;
+        devid = iter->devid;
     }
 
     HRESULT hr{sDeviceHelper->openDevice(devid, eRender, mMMDev)};
     if(FAILED(hr))
     {
-        WARN("Failed to open device \"%s\"\n", name ? name : "(default)");
+        WARN("Failed to open device \"%s\"\n", devname.empty() ? "(default)" : devname.c_str());
         return hr;
     }
     mClient = nullptr;
-    if(name)
-        mDevice->DeviceName = std::string{DevNameHead} + name;
+    if(!devname.empty())
+        mDevice->DeviceName = DevNameHead + std::move(devname);
     else
         mDevice->DeviceName = DevNameHead + DeviceHelper::get_device_name_and_guid(mMMDev).first;
 
@@ -1156,7 +1181,8 @@ bool WasapiPlayback::reset()
 HRESULT WasapiPlayback::resetProxy()
 {
     mClient = nullptr;
-    HRESULT hr{sDeviceHelper->ActivateAudioClient(mMMDev, al::out_ptr(mClient))};
+    HRESULT hr{sDeviceHelper->activateAudioClient(mMMDev, __uuidof(IAudioClient),
+        al::out_ptr(mClient))};
     if(FAILED(hr))
     {
         ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
@@ -1724,7 +1750,7 @@ void WasapiCapture::open(const char *name)
 
     if(name)
     {
-        if(CaptureDevices.empty())
+        if(DeviceListLock{gDeviceList}.getCaptureList().empty())
             pushMessage(MsgType::EnumerateCapture);
         if(std::strncmp(name, DevNameHead, DevNameHeadLen) == 0)
         {
@@ -1750,37 +1776,40 @@ void WasapiCapture::open(const char *name)
 
 HRESULT WasapiCapture::openProxy(const char *name)
 {
-    const wchar_t *devid{nullptr};
+    std::string devname;
+    std::wstring devid;
     if(name)
     {
-        auto iter = std::find_if(CaptureDevices.cbegin(), CaptureDevices.cend(),
+        auto devlock = DeviceListLock{gDeviceList};
+        auto devlist = al::span{devlock.getCaptureList()};
+        auto iter = std::find_if(devlist.cbegin(), devlist.cend(),
             [name](const DevMap &entry) -> bool
             { return entry.name == name || entry.endpoint_guid == name; });
-        if(iter == CaptureDevices.cend())
+        if(iter == devlist.cend())
         {
             const std::wstring wname{utf8_to_wstr(name)};
-            iter = std::find_if(CaptureDevices.cbegin(), CaptureDevices.cend(),
+            iter = std::find_if(devlist.cbegin(), devlist.cend(),
                 [&wname](const DevMap &entry) -> bool
                 { return entry.devid == wname; });
         }
-        if(iter == CaptureDevices.cend())
+        if(iter == devlist.cend())
         {
             WARN("Failed to find device name matching \"%s\"\n", name);
             return E_FAIL;
         }
-        name = iter->name.c_str();
-        devid = iter->devid.c_str();
+        devname = iter->name;
+        devid = iter->devid;
     }
 
     HRESULT hr{sDeviceHelper->openDevice(devid, eCapture, mMMDev)};
-    if (FAILED(hr))
+    if(FAILED(hr))
     {
-        WARN("Failed to open device \"%s\"\n", name ? name : "(default)");
+        WARN("Failed to open device \"%s\"\n", devname.empty() ? "(default)" : devname.c_str());
         return hr;
     }
     mClient = nullptr;
-    if (name)
-        mDevice->DeviceName = std::string{ DevNameHead } + name;
+    if(!devname.empty())
+        mDevice->DeviceName = DevNameHead + std::move(devname);
     else
         mDevice->DeviceName = DevNameHead + DeviceHelper::get_device_name_and_guid(mMMDev).first;
 
@@ -1797,7 +1826,8 @@ HRESULT WasapiCapture::resetProxy()
 {
     mClient = nullptr;
 
-    HRESULT hr{sDeviceHelper->ActivateAudioClient(mMMDev, al::out_ptr(mClient))};
+    HRESULT hr{sDeviceHelper->activateAudioClient(mMMDev, __uuidof(IAudioClient),
+        al::out_ptr(mClient))};
     if(FAILED(hr))
     {
         ERR("Failed to reactivate audio client: 0x%08lx\n", hr);
@@ -2172,19 +2202,25 @@ std::string WasapiBackendFactory::probe(BackendType type)
     {
     case BackendType::Playback:
         WasapiProxy::pushMessageStatic(MsgType::EnumeratePlayback).wait();
-        for(const DevMap &entry : PlaybackDevices)
         {
-            /* +1 to also append the null char (to ensure a null-separated list
-             * and double-null terminated list).
-             */
-            outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
+            auto devlock = DeviceListLock{gDeviceList};
+            for(const DevMap &entry : devlock.getPlaybackList())
+            {
+                /* +1 to also append the null char (to ensure a null-separated
+                 * list and double-null terminated list).
+                 */
+                outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
+            }
         }
         break;
 
     case BackendType::Capture:
         WasapiProxy::pushMessageStatic(MsgType::EnumerateCapture).wait();
-        for(const DevMap &entry : CaptureDevices)
-            outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
+        {
+            auto devlock = DeviceListLock{gDeviceList};
+            for(const DevMap &entry : devlock.getCaptureList())
+                outnames.append(DevNameHead).append(entry.name.c_str(), entry.name.length()+1);
+        }
         break;
     }
 
