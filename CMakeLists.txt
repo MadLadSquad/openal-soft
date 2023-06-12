@@ -1,6 +1,7 @@
 # CMake build file list for OpenAL
 
 cmake_minimum_required(VERSION 3.0.2)
+enable_testing()
 
 if(APPLE)
     # The workaround for try_compile failing with code signing
@@ -111,6 +112,7 @@ option(ALSOFT_UTILS "Build utility programs"  OFF)
 option(ALSOFT_NO_CONFIG_UTIL "Disable building the alsoft-config utility" OFF)
 
 option(ALSOFT_EXAMPLES  "Build example programs"  OFF)
+option(ALSOFT_TESTS "Build test programs"  OFF)
 
 option(ALSOFT_INSTALL "Install main library" ON)
 option(ALSOFT_INSTALL_CONFIG "Install alsoft.conf sample configuration file" OFF)
