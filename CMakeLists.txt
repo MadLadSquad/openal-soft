@@ -171,7 +171,7 @@ elseif(APPLE)
 endif()
 
 
-# QNX's gcc do not uses /usr/include and /usr/lib pathes by default
+# QNX's gcc do not uses /usr/include and /usr/lib paths by default
 if("${CMAKE_C_PLATFORM_ID}" STREQUAL "QNX")
     set(INC_PATHS ${INC_PATHS} /usr/include)
     set(LINKER_FLAGS ${LINKER_FLAGS} -L/usr/lib)
@@ -539,7 +539,7 @@ if(HAVE_LIBRT)
     set(RT_LIB rt)
 endif()
 
-# Check for the dlopen API (for dynamicly loading backend libs)
+# Check for the dlopen API (for dynamically loading backend libs)
 if(ALSOFT_DLOPEN)
     check_include_file(dlfcn.h HAVE_DLFCN_H)
     check_library_exists(dl dlopen "" HAVE_LIBDL)
@@ -1183,7 +1183,8 @@ if(ALSOFT_BACKEND_OPENSL)
         set(HAVE_OPENSL 1)
         set(ALC_OBJS  ${ALC_OBJS} alc/backends/opensl.cpp alc/backends/opensl.h)
         set(BACKENDS  "${BACKENDS} OpenSL,")
-        set(EXTRA_LIBS "OpenSL::OpenSLES" ${EXTRA_LIBS})
+        set(EXTRA_LIBS ${OPENSL_LIBRARIES} ${EXTRA_LIBS})
+        set(INC_PATHS ${INC_PATHS} ${OPENSL_INCLUDE_DIRS})
     endif()
 endif()
 if(ALSOFT_REQUIRE_OPENSL AND NOT HAVE_OPENSL)
