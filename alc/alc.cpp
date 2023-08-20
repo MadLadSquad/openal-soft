@@ -307,12 +307,12 @@ constexpr ALCchar alcNoDeviceExtList[] =
     "ALC_SOFT_loopback "
     "ALC_SOFT_loopback_bformat "
     "ALC_SOFT_reopen_device "
-    "ALC_SOFTX_system_events";
+    "ALC_SOFT_system_events";
 constexpr ALCchar alcExtensionList[] =
     "ALC_ENUMERATE_ALL_EXT "
     "ALC_ENUMERATION_EXT "
     "ALC_EXT_CAPTURE "
-    "ALC_EXTX_debug "
+    "ALC_EXT_debug "
     "ALC_EXT_DEDICATED "
     "ALC_EXTX_direct_context "
     "ALC_EXT_disconnect "
@@ -326,7 +326,7 @@ constexpr ALCchar alcExtensionList[] =
     "ALC_SOFT_output_mode "
     "ALC_SOFT_pause_device "
     "ALC_SOFT_reopen_device "
-    "ALC_SOFTX_system_events";
+    "ALC_SOFT_system_events";
 constexpr int alcMajorVersion{1};
 constexpr int alcMinorVersion{1};
 
@@ -366,7 +366,7 @@ void alc_initconfig(void)
         if(logf) gLogFile = logf;
         else
         {
-            auto u8name = wstr_to_utf8(logfile->c_str());
+            auto u8name = wstr_to_utf8(*logfile);
             ERR("Failed to open log file '%s'\n", u8name.c_str());
         }
     }
