@@ -1347,11 +1347,11 @@ configure_file(
     @ONLY)
 
 
-add_library(common STATIC EXCLUDE_FROM_ALL ${COMMON_OBJS})
-target_include_directories(common PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/include)
-target_compile_definitions(common PRIVATE ${CPP_DEFS})
-target_compile_options(common PRIVATE ${C_FLAGS})
-set_target_properties(common PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
+add_library(alcommon STATIC EXCLUDE_FROM_ALL ${COMMON_OBJS})
+target_include_directories(alcommon PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/include)
+target_compile_definitions(alcommon PRIVATE ${CPP_DEFS})
+target_compile_options(alcommon PRIVATE ${C_FLAGS})
+set_target_properties(alcommon PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
 
 
 unset(HAS_ROUTER)
@@ -1386,7 +1386,7 @@ else()
             PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES "ALC_API=${EXPORT_DECL}"
             "AL_API=${EXPORT_DECL}" ${CPP_DEFS})
         target_compile_options(OpenAL PRIVATE ${C_FLAGS})
-        target_link_libraries(OpenAL PRIVATE common ${LINKER_FLAGS})
+        target_link_libraries(OpenAL PRIVATE alcommon ${LINKER_FLAGS})
         target_include_directories(OpenAL
           PUBLIC
             $<BUILD_INTERFACE:${OpenAL_SOURCE_DIR}/include>
@@ -1417,7 +1417,7 @@ else()
     if(WIN32)
         set_target_properties(${IMPL_TARGET} PROPERTIES PREFIX "")
     endif()
-    target_link_libraries(${IMPL_TARGET} PRIVATE common ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
+    target_link_libraries(${IMPL_TARGET} PRIVATE alcommon ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
 
     if(ALSOFT_UWP AND HAVE_WASAPI)
         set_target_properties(${IMPL_TARGET} PROPERTIES
@@ -1629,7 +1629,7 @@ if(ALSOFT_UTILS)
         target_include_directories(uhjdecoder
             PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
         target_compile_options(uhjdecoder PRIVATE ${C_FLAGS})
-        target_link_libraries(uhjdecoder PUBLIC common
+        target_link_libraries(uhjdecoder PUBLIC alcommon
             PRIVATE ${LINKER_FLAGS} SndFile::SndFile ${UNICODE_FLAG})
         set_target_properties(uhjdecoder PROPERTIES ${DEFAULT_TARGET_PROPS})
 
@@ -1638,7 +1638,7 @@ if(ALSOFT_UTILS)
         target_include_directories(uhjencoder
             PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
         target_compile_options(uhjencoder PRIVATE ${C_FLAGS})
-        target_link_libraries(uhjencoder PUBLIC common
+        target_link_libraries(uhjencoder PUBLIC alcommon
             PRIVATE ${LINKER_FLAGS} SndFile::SndFile ${UNICODE_FLAG})
         set_target_properties(uhjencoder PROPERTIES ${DEFAULT_TARGET_PROPS})
     endif()
@@ -1651,7 +1651,7 @@ if(ALSOFT_UTILS)
         target_compile_definitions(sofa-support PRIVATE ${CPP_DEFS})
         target_include_directories(sofa-support PUBLIC ${OpenAL_SOURCE_DIR}/common)
         target_compile_options(sofa-support PRIVATE ${C_FLAGS})
-        target_link_libraries(sofa-support PUBLIC common MySOFA::MySOFA PRIVATE ${LINKER_FLAGS})
+        target_link_libraries(sofa-support PUBLIC alcommon MySOFA::MySOFA PRIVATE ${LINKER_FLAGS})
         set_target_properties(sofa-support PROPERTIES ${DEFAULT_TARGET_PROPS})
 
         set(MAKEMHR_SRCS
