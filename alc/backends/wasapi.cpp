@@ -1226,7 +1226,7 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
      * update it dynamically based on the stream, so a fixed size may be the
      * best we can do.
      */
-    mPadding.store(mDevice->BufferSize-mDevice->UpdateSize, std::memory_order_release);
+    mPadding.store(mOrigBufferSize-mOrigUpdateSize, std::memory_order_release);
 
     while(!mKillNow.load(std::memory_order_relaxed))
     {
@@ -1298,7 +1298,7 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
                     }
 
                     const uint got{mResampler->convertPlanar(tmpbuffers.data(), &mBufferFilled,
-                        reinterpret_cast<void**>(buffers.data()), framesToDo-pos)};
+                        reinterpret_cast<void*const*>(buffers.data()), framesToDo-pos)};
                     for(auto &buf : buffers)
                         buf += got;
                     pos += got;
