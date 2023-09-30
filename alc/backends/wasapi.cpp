@@ -973,15 +973,15 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
 {
     TRACE("Starting message thread\n");
 
-    HRESULT hr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
-    if(FAILED(hr))
+    ComWrapper com{COINIT_MULTITHREADED};
+    if(!com)
     {
-        WARN("Failed to initialize COM: 0x%08lx\n", hr);
-        promise->set_value(hr);
+        WARN("Failed to initialize COM: 0x%08lx\n", com.status());
+        promise->set_value(com.status());
         return 0;
     }
 
-    hr = sDeviceHelper.emplace().init();
+    HRESULT hr{sDeviceHelper.emplace().init()};
     promise->set_value(hr);
     promise = nullptr;
     if(FAILED(hr))
@@ -1040,7 +1040,6 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
 
 skip_loop:
     sDeviceHelper.reset();
-    CoUninitialize();
 
     return 0;
 }
@@ -1113,11 +1112,11 @@ WasapiPlayback::~WasapiPlayback()
 
 FORCE_ALIGN int WasapiPlayback::mixerProc()
 {
-    HRESULT hr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
-    if(FAILED(hr))
+    ComWrapper com{COINIT_MULTITHREADED};
+    if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", hr);
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", hr);
+        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
         return 1;
     }
 
@@ -1129,10 +1128,13 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     const uint frame_size{mFormat.Format.nChannels * mFormat.Format.wBitsPerSample / 8u};
     const uint update_size{mOrigUpdateSize};
     const UINT32 buffer_len{mOrigBufferSize};
+    const void *resbufferptr{};
+
+    mBufferFilled = 0;
     while(!mKillNow.load(std::memory_order_relaxed))
     {
         UINT32 written;
-        hr = audio.mClient->GetCurrentPadding(&written);
+        HRESULT hr{audio.mClient->GetCurrentPadding(&written)};
         if(FAILED(hr))
         {
             ERR("Failed to get padding: 0x%08lx\n", hr);
@@ -1163,22 +1165,15 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
                     {
                         mDevice->renderSamples(mResampleBuffer.get(), mDevice->UpdateSize,
                             mFormat.Format.nChannels);
+                        resbufferptr = mResampleBuffer.get();
                         mBufferFilled = mDevice->UpdateSize;
                     }
 
-                    const void *src{mResampleBuffer.get()};
-                    uint srclen{mBufferFilled};
-                    uint got{mResampler->convert(&src, &srclen, buffer, len-done)};
+                    uint got{mResampler->convert(&resbufferptr, &mBufferFilled, buffer, len-done)};
                     buffer += got*frame_size;
                     done += got;
 
                     mPadding.store(written + done, std::memory_order_relaxed);
-                    if(srclen)
-                    {
-                        const char *bsrc{static_cast<const char*>(src)};
-                        std::copy(bsrc, bsrc + srclen*frame_size, mResampleBuffer.get());
-                    }
-                    mBufferFilled = srclen;
                 }
             }
             else
@@ -1198,17 +1193,16 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     }
     mPadding.store(0u, std::memory_order_release);
 
-    CoUninitialize();
     return 0;
 }
 
 FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
 {
-    HRESULT hr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
-    if(FAILED(hr))
+    ComWrapper com{COINIT_MULTITHREADED};
+    if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", hr);
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", hr);
+        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
         return 1;
     }
 
@@ -1228,13 +1222,14 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
      */
     mPadding.store(mOrigBufferSize-mOrigUpdateSize, std::memory_order_release);
 
+    mBufferFilled = 0;
     while(!mKillNow.load(std::memory_order_relaxed))
     {
         if(DWORD res{WaitForSingleObjectEx(mNotifyEvent, 1000, FALSE)}; res != WAIT_OBJECT_0)
         {
             ERR("WaitForSingleObjectEx error: 0x%lx\n", res);
 
-            hr = audio.mRender->Reset();
+            HRESULT hr{audio.mRender->Reset()};
             if(FAILED(hr))
             {
                 ERR("ISpatialAudioObjectRenderStream::Reset failed: 0x%08lx\n", hr);
@@ -1244,7 +1239,7 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
         }
 
         UINT32 dynamicCount{}, framesToDo{};
-        hr = audio.mRender->BeginUpdatingAudioObjects(&dynamicCount, &framesToDo);
+        HRESULT hr{audio.mRender->BeginUpdatingAudioObjects(&dynamicCount, &framesToDo)};
         if(SUCCEEDED(hr))
         {
             if(channels.empty()) UNLIKELY
@@ -1313,7 +1308,6 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
     }
     mPadding.store(0u, std::memory_order_release);
 
-    CoUninitialize();
     return 0;
 }
 
@@ -2153,11 +2147,11 @@ WasapiCapture::~WasapiCapture()
 
 FORCE_ALIGN int WasapiCapture::recordProc()
 {
-    HRESULT hr{CoInitializeEx(nullptr, COINIT_MULTITHREADED)};
-    if(FAILED(hr))
+    ComWrapper com{COINIT_MULTITHREADED};
+    if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", hr);
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", hr);
+        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
         return 1;
     }
 
@@ -2167,7 +2161,7 @@ FORCE_ALIGN int WasapiCapture::recordProc()
     while(!mKillNow.load(std::memory_order_relaxed))
     {
         UINT32 avail;
-        hr = mCapture->GetNextPacketSize(&avail);
+        HRESULT hr{mCapture->GetNextPacketSize(&avail)};
         if(FAILED(hr))
             ERR("Failed to get next packet size: 0x%08lx\n", hr);
         else if(avail > 0)
@@ -2238,7 +2232,6 @@ FORCE_ALIGN int WasapiCapture::recordProc()
             ERR("WaitForSingleObjectEx error: 0x%lx\n", res);
     }
 
-    CoUninitialize();
     return 0;
 }
 
