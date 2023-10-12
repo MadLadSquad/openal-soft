@@ -410,13 +410,15 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
 
             /* Convert to, and pack in, a float buffer for PFFFT. Note that the
              * first bin stores the real component of the half-frequency bin in
-             * the imaginary component.
+             * the imaginary component. Also scale the FFT by its length so the
+             * iFFT'd output will be normalized.
              */
+            static constexpr float fftscale{1.0f / float{ConvolveUpdateSize}};
             for(size_t i{0};i < ConvolveUpdateSamples;++i)
             {
-                ffttmp[i*2    ] = static_cast<float>(fftbuffer[i].real());
+                ffttmp[i*2    ] = static_cast<float>(fftbuffer[i].real()) * fftscale;
                 ffttmp[i*2 + 1] = static_cast<float>((i == 0) ?
-                    fftbuffer[ConvolveUpdateSamples+1].real() : fftbuffer[i].imag());
+                    fftbuffer[ConvolveUpdateSamples+1].real() : fftbuffer[i].imag()) * fftscale;
             }
             /* Reorder backward to make it suitable for pffft_zconvolve and the
              * subsequent pffft_transform(..., PFFFT_BACKWARD).
@@ -429,7 +431,7 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
 
 
 void ConvolutionState::update(const ContextBase *context, const EffectSlot *slot,
-    const EffectProps* /*props*/, const EffectTarget target)
+    const EffectProps *props, const EffectTarget target)
 {
     /* NOTE: Stereo and Rear are slightly different from normal mixing (as
      * defined in alu.cpp). These are 45 degrees from center, rather than the
@@ -514,6 +516,23 @@ void ConvolutionState::update(const ContextBase *context, const EffectSlot *slot
         }
         mOutTarget = target.Main->Buffer;
 
+        alu::Vector N{props->Convolution.OrientAt[0], props->Convolution.OrientAt[1],
+            props->Convolution.OrientAt[2], 0.0f};
+        N.normalize();
+        alu::Vector V{props->Convolution.OrientUp[0], props->Convolution.OrientUp[1],
+            props->Convolution.OrientUp[2], 0.0f};
+        V.normalize();
+        /* Build and normalize right-vector */
+        alu::Vector U{N.cross_product(V)};
+        U.normalize();
+
+        const float mixmatrix[4][4]{
+            {1.0f,  0.0f,  0.0f,  0.0f},
+            {0.0f,  U[0], -U[1],  U[2]},
+            {0.0f, -V[0],  V[1], -V[2]},
+            {0.0f, -N[0],  N[1], -N[2]},
+        };
+
         const auto scales = GetAmbiScales(mAmbiScaling);
         const uint8_t *index_map{Is2DAmbisonic(mChannels) ?
             GetAmbi2DLayout(mAmbiLayout).data() :
@@ -523,9 +542,12 @@ void ConvolutionState::update(const ContextBase *context, const EffectSlot *slot
         for(size_t c{0u};c < mChans->size();++c)
         {
             const size_t acn{index_map[c]};
-            coeffs[acn] = scales[acn];
+            const float scale{scales[acn]};
+
+            for(size_t x{0};x < 4;++x)
+                coeffs[x] = mixmatrix[acn][x] * scale;
+
             ComputePanGains(target.Main, coeffs.data(), gain, (*mChans)[c].Target);
-            coeffs[acn] = 0.0f;
         }
     }
     else
@@ -553,7 +575,7 @@ void ConvolutionState::update(const ContextBase *context, const EffectSlot *slot
         mOutTarget = target.Main->Buffer;
         if(device->mRenderMode == RenderMode::Pairwise)
         {
-            /* Scales the azimuth of the given vector by 3 if it's in front.
+            /* Scales the azimuth of the given vector by 2 if it's in front.
              * Effectively scales +/-45 degrees to +/-90 degrees, leaving > +90
              * and < -90 alone.
              */
@@ -655,11 +677,6 @@ void ConvolutionState::process(const size_t samplesToDo,
         const float *RESTRICT filter{mComplexData.get() + mNumConvolveSegs*ConvolveUpdateSize};
         for(size_t c{0};c < chans.size();++c)
         {
-            /* The iFFT'd response is scaled up by the number of bins, so apply
-             * the inverse to normalize the output.
-             */
-            static constexpr float fftscale{1.0f / float{ConvolveUpdateSize}};
-
             /* Convolve each input segment with its IR filter counterpart
              * (aligned in time).
              */
@@ -667,14 +684,14 @@ void ConvolutionState::process(const size_t samplesToDo,
             const float *RESTRICT input{&mComplexData[curseg*ConvolveUpdateSize]};
             for(size_t s{curseg};s < mNumConvolveSegs;++s)
             {
-                pffft_zconvolve_accumulate(mFft.get(), input, filter, mFftBuffer.data(), fftscale);
+                pffft_zconvolve_accumulate(mFft.get(), input, filter, mFftBuffer.data());
                 input += ConvolveUpdateSize;
                 filter += ConvolveUpdateSize;
             }
             input = mComplexData.get();
             for(size_t s{0};s < curseg;++s)
             {
-                pffft_zconvolve_accumulate(mFft.get(), input, filter, mFftBuffer.data(), fftscale);
+                pffft_zconvolve_accumulate(mFft.get(), input, filter, mFftBuffer.data());
                 input += ConvolveUpdateSize;
                 filter += ConvolveUpdateSize;
             }
@@ -687,6 +704,7 @@ void ConvolutionState::process(const size_t samplesToDo,
             pffft_transform(mFft.get(), mFftBuffer.data(), mFftBuffer.data(),
                 mFftWorkBuffer.data(), PFFFT_BACKWARD);
 
+            /* The filter was attenuated, so the response is already scaled. */
             for(size_t i{0};i < ConvolveUpdateSamples;++i)
                 mOutput[c][i] = mFftBuffer[i] + mOutput[c][ConvolveUpdateSamples+i];
             for(size_t i{0};i < ConvolveUpdateSamples;++i)
