@@ -41,7 +41,6 @@
 
 #include "albit.h"
 #include "alc/alconfig.h"
-#include "alc/events.h"
 #include "almalloc.h"
 #include "alnumeric.h"
 #include "alspan.h"
@@ -1490,4 +1489,19 @@ BackendFactory &PulseBackendFactory::getFactory()
 {
     static PulseBackendFactory factory{};
     return factory;
+}
+
+alc::EventSupport PulseBackendFactory::queryEventSupport(alc::EventType eventType, BackendType)
+{
+    switch(eventType)
+    {
+    case alc::EventType::DeviceAdded:
+    case alc::EventType::DeviceRemoved:
+        return alc::EventSupport::FullSupport;
+
+    case alc::EventType::DefaultDeviceChanged:
+    case alc::EventType::Count:
+        break;
+    }
+    return alc::EventSupport::NoSupport;
 }

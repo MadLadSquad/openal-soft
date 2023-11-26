@@ -69,6 +69,7 @@
 #include "al/filter.h"
 #include "al/listener.h"
 #include "al/source.h"
+#include "alc/events.h"
 #include "albit.h"
 #include "alconfig.h"
 #include "almalloc.h"
@@ -3468,4 +3469,38 @@ FORCE_ALIGN ALCboolean ALC_APIENTRY alcReopenDeviceSOFT(ALCdevice *device,
      */
     ResetDeviceParams(dev.get(), attribs);
     return ALC_TRUE;
+}
+
+/************************************************
+ * ALC event query functions
+ ************************************************/
+
+FORCE_ALIGN ALCenum ALC_APIENTRY alcEventIsSupportedSOFT(ALCenum eventType, ALCenum deviceType) noexcept
+{
+    auto etype = alc::GetEventType(eventType);
+    if(!etype)
+    {
+        WARN("Invalid event type: 0x%04x\n", eventType);
+        alcSetError(nullptr, ALC_INVALID_ENUM);
+        return ALC_EVENT_NOT_SUPPORTED_SOFT;
+    }
+
+    auto supported = alc::EventSupport::NoSupport;
+    switch(deviceType)
+    {
+        case ALC_PLAYBACK_DEVICE_SOFT:
+            if(PlaybackFactory)
+                supported = PlaybackFactory->queryEventSupport(*etype, BackendType::Playback);
+            break;
+
+        case ALC_CAPTURE_DEVICE_SOFT:
+            if(CaptureFactory)
+                supported = CaptureFactory->queryEventSupport(*etype, BackendType::Capture);
+            break;
+
+        default:
+            WARN("Invalid device type: 0x%04x\n", deviceType);
+            alcSetError(nullptr, ALC_INVALID_ENUM);
+    }
+    return al::to_underlying(supported);
 }
