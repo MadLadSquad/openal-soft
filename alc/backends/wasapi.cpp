@@ -60,7 +60,6 @@
 
 #include "albit.h"
 #include "alc/alconfig.h"
-#include "alc/events.h"
 #include "alnumeric.h"
 #include "alspan.h"
 #include "althrd_setname.h"
@@ -2740,4 +2739,23 @@ BackendFactory &WasapiBackendFactory::getFactory()
 {
     static WasapiBackendFactory factory{};
     return factory;
+}
+
+alc::EventSupport WasapiBackendFactory::queryEventSupport(alc::EventType eventType, BackendType)
+{
+    switch(eventType)
+    {
+    case alc::EventType::DefaultDeviceChanged:
+        return alc::EventSupport::FullSupport;
+
+    case alc::EventType::DeviceAdded:
+    case alc::EventType::DeviceRemoved:
+#if !defined(ALSOFT_UWP)
+        return alc::EventSupport::FullSupport;
+#endif
+
+    case alc::EventType::Count:
+        break;
+    }
+    return alc::EventSupport::NoSupport;
 }
