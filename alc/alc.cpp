@@ -976,10 +976,14 @@ std::unique_ptr<Compressor> CreateDeviceLimiter(const ALCdevice *device, const f
  */
 inline void UpdateClockBase(ALCdevice *device)
 {
-    IncrementRef(device->MixCount);
-    device->ClockBase += nanoseconds{seconds{device->SamplesDone}} / device->Frequency;
-    device->SamplesDone = 0;
-    IncrementRef(device->MixCount);
+    const auto mixLock = device->getWriteMixLock();
+
+    auto samplesDone = device->mSamplesDone.load(std::memory_order_relaxed);
+    auto clockBase = device->mClockBase.load(std::memory_order_relaxed);
+
+    clockBase += nanoseconds{seconds{samplesDone}} / device->Frequency;
+    device->mClockBase.store(clockBase, std::memory_order_relaxed);
+    device->mSamplesDone.store(0, std::memory_order_relaxed);
 }
 
 /**
@@ -2504,9 +2508,10 @@ ALC_API void ALC_APIENTRY alcGetInteger64vSOFT(ALCdevice *device, ALCenum pname,
             nanoseconds basecount;
             do {
                 refcount = dev->waitForMix();
-                basecount = dev->ClockBase;
-                samplecount = dev->SamplesDone;
-            } while(refcount != ReadRef(dev->MixCount));
+                basecount = dev->mClockBase.load(std::memory_order_relaxed);
+                samplecount = dev->mSamplesDone.load(std::memory_order_relaxed);
+                std::atomic_thread_fence(std::memory_order_acquire);
+            } while(refcount != dev->mMixCount.load(std::memory_order_relaxed));
             basecount += nanoseconds{seconds{samplecount}} / dev->Frequency;
             *values = basecount.count();
         }

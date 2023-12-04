@@ -52,18 +52,6 @@ enum class BackendType {
 };
 
 
-/* Helper to get the current clock time from the device's ClockBase, and
- * SamplesDone converted from the sample rate.
- */
-inline std::chrono::nanoseconds GetDeviceClockTime(DeviceBase *device)
-{
-    using std::chrono::seconds;
-    using std::chrono::nanoseconds;
-
-    auto ns = nanoseconds{seconds{device->SamplesDone}} / device->Frequency;
-    return device->ClockBase + ns;
-}
-
 /* Helper to get the device latency from the backend, including any fixed
  * latency from post-processing.
  */
@@ -103,8 +91,8 @@ class backend_exception final : public base_exception {
     backend_error mErrorCode;
 
 public:
-#ifdef __USE_MINGW_ANSI_STDIO
-    [[gnu::format(gnu_printf, 3, 4)]]
+#ifdef __MINGW32__
+    [[gnu::format(__MINGW_PRINTF_FORMAT, 3, 4)]]
 #else
     [[gnu::format(printf, 3, 4)]]
 #endif

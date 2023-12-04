@@ -202,7 +202,7 @@ int64_t GetSourceSampleOffset(ALsource *Source, ALCcontext *context, nanoseconds
 
     do {
         refcount = device->waitForMix();
-        *clocktime = GetDeviceClockTime(device);
+        *clocktime = device->getClockTime();
         voice = GetSourceVoice(Source, context);
         if(voice)
         {
@@ -212,7 +212,7 @@ int64_t GetSourceSampleOffset(ALsource *Source, ALCcontext *context, nanoseconds
             readPos += voice->mPositionFrac.load(std::memory_order_relaxed);
         }
         std::atomic_thread_fence(std::memory_order_acquire);
-    } while(refcount != device->MixCount.load(std::memory_order_relaxed));
+    } while(refcount != device->mMixCount.load(std::memory_order_relaxed));
 
     if(!voice)
         return 0;
@@ -242,7 +242,7 @@ double GetSourceSecOffset(ALsource *Source, ALCcontext *context, nanoseconds *cl
 
     do {
         refcount = device->waitForMix();
-        *clocktime = GetDeviceClockTime(device);
+        *clocktime = device->getClockTime();
         voice = GetSourceVoice(Source, context);
         if(voice)
         {
@@ -252,7 +252,7 @@ double GetSourceSecOffset(ALsource *Source, ALCcontext *context, nanoseconds *cl
             readPos += voice->mPositionFrac.load(std::memory_order_relaxed);
         }
         std::atomic_thread_fence(std::memory_order_acquire);
-    } while(refcount != device->MixCount.load(std::memory_order_relaxed));
+    } while(refcount != device->mMixCount.load(std::memory_order_relaxed));
 
     if(!voice)
         return 0.0f;
@@ -302,7 +302,7 @@ NOINLINE T GetSourceOffset(ALsource *Source, ALenum name, ALCcontext *context)
             readPosFrac = voice->mPositionFrac.load(std::memory_order_relaxed);
         }
         std::atomic_thread_fence(std::memory_order_acquire);
-    } while(refcount != device->MixCount.load(std::memory_order_relaxed));
+    } while(refcount != device->mMixCount.load(std::memory_order_relaxed));
 
     if(!voice)
         return T{0};
@@ -1604,10 +1604,11 @@ NOINLINE void SetProperty(ALsource *const Source, ALCcontext *const Context, con
                 if(!buffer) UNLIKELY
                     return Context->setError(AL_INVALID_VALUE, "Invalid buffer ID %s",
                         std::to_string(values[0]).c_str());
-                if(buffer->MappedAccess && !(buffer->MappedAccess&AL_MAP_PERSISTENT_BIT_SOFT)) UNLIKELY
+                if(buffer->MappedAccess
+                    && !(buffer->MappedAccess&AL_MAP_PERSISTENT_BIT_SOFT)) UNLIKELY
                     return Context->setError(AL_INVALID_OPERATION,
                         "Setting non-persistently mapped buffer %u", buffer->id);
-                if(buffer->mCallback && ReadRef(buffer->ref) != 0) UNLIKELY
+                if(buffer->mCallback && buffer->ref.load(std::memory_order_relaxed) != 0) UNLIKELY
                     return Context->setError(AL_INVALID_OPERATION,
                         "Setting already-set callback buffer %u", buffer->id);
 

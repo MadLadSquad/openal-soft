@@ -218,8 +218,8 @@ struct DeviceBase {
      */
     NfcFilter mNFCtrlFilter{};
 
-    uint SamplesDone{0u};
-    std::chrono::nanoseconds ClockBase{0};
+    std::atomic<uint> mSamplesDone{0u};
+    std::atomic<std::chrono::nanoseconds> mClockBase{std::chrono::nanoseconds{}};
     std::chrono::nanoseconds FixedLatency{0};
 
     AmbiRotateMatrix mAmbiRotateMatrix{};
@@ -284,7 +284,7 @@ struct DeviceBase {
      * the end, so the bottom bit indicates if the device is currently mixing
      * and the upper bits indicates how many mixes have been done.
      */
-    RefCount MixCount{0u};
+    std::atomic<uint> mMixCount{0u};
 
     // Contexts created on this device
     std::atomic<al::FlexArray<ContextBase*>*> mContexts{nullptr};
@@ -299,12 +299,50 @@ struct DeviceBase {
     uint channelsFromFmt() const noexcept { return ChannelsFromDevFmt(FmtChans, mAmbiOrder); }
     uint frameSizeFromFmt() const noexcept { return bytesFromFmt() * channelsFromFmt(); }
 
+    struct MixLock {
+        std::atomic<uint> &mCount;
+        const uint mLastVal;
+
+        MixLock(std::atomic<uint> &count, const uint last_val) noexcept
+            : mCount{count}, mLastVal{last_val}
+        { }
+        /* Increment the mix count when the lock goes out of scope to "release"
+         * it (lsb should be 0).
+         */
+        ~MixLock() { mCount.store(mLastVal+2, std::memory_order_release); }
+    };
+    auto getWriteMixLock() noexcept
+    {
+        /* Increment the mix count at the start of mixing and writing clock
+         * info (lsb should be 1).
+         */
+        const auto mixCount = mMixCount.load(std::memory_order_relaxed);
+        mMixCount.store(mixCount+1, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_release);
+        return MixLock{mMixCount, mixCount};
+    }
+
+    /** Waits for the mixer to not be mixing or updating the clock. */
     uint waitForMix() const noexcept
     {
         uint refcount;
-        while((refcount=MixCount.load(std::memory_order_acquire))&1) {
+        while((refcount=mMixCount.load(std::memory_order_acquire))&1) {
         }
         return refcount;
+    }
+
+    /**
+     * Helper to get the current clock time from the device's ClockBase, and
+     * SamplesDone converted from the sample rate. Should only be called while
+     * watching the MixCount.
+     */
+    std::chrono::nanoseconds getClockTime() const noexcept
+    {
+        using std::chrono::seconds;
+        using std::chrono::nanoseconds;
+
+        auto ns = nanoseconds{seconds{mSamplesDone.load(std::memory_order_relaxed)}} / Frequency;
+        return mClockBase.load(std::memory_order_relaxed) + ns;
     }
 
     void ProcessHrtf(const size_t SamplesToDo);
@@ -320,8 +358,8 @@ struct DeviceBase {
     void renderSamples(void *outBuffer, const uint numSamples, const size_t frameStep);
 
     /* Caller must lock the device state, and the mixer must not be running. */
-#ifdef __USE_MINGW_ANSI_STDIO
-    [[gnu::format(gnu_printf,2,3)]]
+#ifdef __MINGW32__
+    [[gnu::format(__MINGW_PRINTF_FORMAT,2,3)]]
 #else
     [[gnu::format(printf,2,3)]]
 #endif

@@ -1590,7 +1590,7 @@ bool PipeWirePlayback::reset()
     }
     mStreamListener = {};
     mRateMatch = nullptr;
-    mTimeBase = GetDeviceClockTime(mDevice);
+    mTimeBase = mDevice->getClockTime();
 
     /* If connecting to a specific device, update various device parameters to
      * match its format.
@@ -1824,10 +1824,10 @@ ClockLatency PipeWirePlayback::getClockLatency()
     uint refcount;
     do {
         refcount = mDevice->waitForMix();
-        mixtime = GetDeviceClockTime(mDevice);
+        mixtime = mDevice->getClockTime();
         clock_gettime(CLOCK_MONOTONIC, &tspec);
         std::atomic_thread_fence(std::memory_order_acquire);
-    } while(refcount != ReadRef(mDevice->MixCount));
+    } while(refcount != mDevice->mMixCount.load(std::memory_order_relaxed));
 
     /* Convert the monotonic clock, stream ticks, and stream delay to
      * nanoseconds.

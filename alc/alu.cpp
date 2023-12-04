@@ -1910,8 +1910,9 @@ void ProcessContexts(DeviceBase *device, const uint SamplesToDo)
 {
     ASSUME(SamplesToDo > 0);
 
-    const nanoseconds curtime{device->ClockBase +
-        nanoseconds{seconds{device->SamplesDone}}/device->Frequency};
+    const nanoseconds curtime{device->mClockBase.load(std::memory_order_relaxed) +
+        nanoseconds{seconds{device->mSamplesDone.load(std::memory_order_relaxed)}}/
+        device->Frequency};
 
     for(ContextBase *ctx : *device->mContexts.load(std::memory_order_acquire))
     {
@@ -2134,22 +2135,22 @@ uint DeviceBase::renderSamples(const uint numSamples)
     for(FloatBufferLine &buffer : MixBuffer)
         buffer.fill(0.0f);
 
-    /* Increment the mix count at the start (lsb should now be 1). */
-    IncrementRef(MixCount);
+    {
+        const auto mixLock = getWriteMixLock();
 
-    /* Process and mix each context's sources and effects. */
-    ProcessContexts(this, samplesToDo);
+        /* Process and mix each context's sources and effects. */
+        ProcessContexts(this, samplesToDo);
 
-    /* Increment the clock time. Every second's worth of samples is converted
-     * and added to clock base so that large sample counts don't overflow
-     * during conversion. This also guarantees a stable conversion.
-     */
-    SamplesDone += samplesToDo;
-    ClockBase += std::chrono::seconds{SamplesDone / Frequency};
-    SamplesDone %= Frequency;
-
-    /* Increment the mix count at the end (lsb should now be 0). */
-    IncrementRef(MixCount);
+        /* Every second's worth of samples is converted and added to clock base
+         * so that large sample counts don't overflow during conversion. This
+         * also guarantees a stable conversion.
+         */
+        auto samplesDone = mSamplesDone.load(std::memory_order_relaxed) + samplesToDo;
+        auto clockBase = mClockBase.load(std::memory_order_relaxed) +
+            std::chrono::seconds{samplesDone/Frequency};
+        mSamplesDone.store(samplesDone%Frequency, std::memory_order_relaxed);
+        mClockBase.store(clockBase, std::memory_order_relaxed);
+    }
 
     /* Apply any needed post-process for finalizing the Dry mix to the RealOut
      * (Ambisonic decode, UHJ encode, etc).
@@ -2225,7 +2226,8 @@ void DeviceBase::renderSamples(void *outBuffer, const uint numSamples, const siz
 
 void DeviceBase::handleDisconnect(const char *msg, ...)
 {
-    IncrementRef(MixCount);
+    const auto mixLock = getWriteMixLock();
+
     if(Connected.exchange(false, std::memory_order_acq_rel))
     {
         AsyncEvent evt{std::in_place_type<AsyncDisconnectEvent>};
@@ -2267,5 +2269,4 @@ void DeviceBase::handleDisconnect(const char *msg, ...)
             std::for_each(voicelist.begin(), voicelist.end(), stop_voice);
         }
     }
-    IncrementRef(MixCount);
 }
