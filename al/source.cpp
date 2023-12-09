@@ -171,7 +171,7 @@ void UpdateSourceProps(const ALsource *source, Voice *voice, ALCcontext *context
         ret.LFReference = srcsend.LFReference;
         return ret;
     };
-    std::transform(source->Send.cbegin(), source->Send.cend(), props->Send, copy_send);
+    std::transform(source->Send.cbegin(), source->Send.cend(), props->Send.begin(), copy_send);
     if(!props->Send[0].Slot && context->mDefaultSlot)
         props->Send[0].Slot = context->mDefaultSlot->mSlot;
 
@@ -575,7 +575,7 @@ void SendVoiceChanges(ALCcontext *ctx, VoiceChange *tail)
     oldhead->mNext.store(tail, std::memory_order_release);
 
     const bool connected{device->Connected.load(std::memory_order_acquire)};
-    device->waitForMix();
+    std::ignore = device->waitForMix();
     if(!connected) UNLIKELY
     {
         if(ctx->mStopVoicesOnDisconnect.load(std::memory_order_acquire))
@@ -681,7 +681,7 @@ bool SetVoiceOffset(Voice *oldvoice, const VoicePos &vpos, ALsource *source, ALC
         return true;
 
     /* Otherwise, wait for any current mix to finish and check one last time. */
-    device->waitForMix();
+    std::ignore = device->waitForMix();
     if(newvoice->mPlayState.load(std::memory_order_acquire) != Voice::Pending)
         return true;
     /* The change-over failed because the old voice stopped before the new
@@ -1316,11 +1316,11 @@ constexpr ALuint DoubleValsByProp(ALenum prop)
 struct check_exception : std::exception {
 };
 struct check_size_exception final : check_exception {
-    const char *what() const noexcept override
+    [[nodiscard]] auto what() const noexcept -> const char* override
     { return "check_size_exception"; }
 };
 struct check_value_exception final : check_exception {
-    const char *what() const noexcept override
+    [[nodiscard]] auto what() const noexcept -> const char* override
     { return "check_value_exception"; }
 };
 
@@ -1371,21 +1371,22 @@ struct PropType<ALfloat> { static const char *Name() { return "float"; } };
 template<>
 struct PropType<ALdouble> { static const char *Name() { return "double"; } };
 
-template<typename T>
 struct HexPrinter {
-    char mStr[sizeof(T)*2 + 3]{};
+    std::array<char,32> mStr{};
+
+    template<typename T>
     HexPrinter(T value)
     {
         using ST = std::make_signed_t<std::remove_cv_t<T>>;
         if constexpr(std::is_same_v<ST,int>)
-            std::snprintf(mStr, std::size(mStr), "0x%x", value);
+            std::snprintf(mStr.data(), mStr.size(), "0x%x", value);
         else if constexpr(std::is_same_v<ST,long>)
-            std::snprintf(mStr, std::size(mStr), "0x%lx", value);
+            std::snprintf(mStr.data(), mStr.size(), "0x%lx", value);
         else if constexpr(std::is_same_v<ST,long long>)
-            std::snprintf(mStr, std::size(mStr), "0x%llx", value);
+            std::snprintf(mStr.data(), mStr.size(), "0x%llx", value);
     }
 
-    const char *c_str() const noexcept { return mStr; }
+    [[nodiscard]] auto c_str() const noexcept -> const char* { return mStr.data(); }
 };
 
 
@@ -1579,7 +1580,7 @@ NOINLINE void SetProperty(ALsource *const Source, ALCcontext *const Context, con
                  * to ensure it isn't currently looping back or reaching the
                  * end.
                  */
-                device->waitForMix();
+                std::ignore = device->waitForMix();
             }
             return;
         }
@@ -3917,27 +3918,30 @@ void ALsource::eax4_translate(const Eax4Props& src, Eax5Props& dst) noexcept
 
     // Active FX slots.
     //
-    for (auto i = 0; i < EAX50_MAX_ACTIVE_FXSLOTS; ++i) {
+    for(size_t i{0};i < EAX50_MAX_ACTIVE_FXSLOTS;++i)
+    {
         auto& dst_id = dst.active_fx_slots.guidActiveFXSlots[i];
 
-        if (i < EAX40_MAX_ACTIVE_FXSLOTS) {
+        if(i < EAX40_MAX_ACTIVE_FXSLOTS)
+        {
             const auto& src_id = src.active_fx_slots.guidActiveFXSlots[i];
 
-            if (src_id == EAX_NULL_GUID)
+            if(src_id == EAX_NULL_GUID)
                 dst_id = EAX_NULL_GUID;
-            else if (src_id == EAX_PrimaryFXSlotID)
+            else if(src_id == EAX_PrimaryFXSlotID)
                 dst_id = EAX_PrimaryFXSlotID;
-            else if (src_id == EAXPROPERTYID_EAX40_FXSlot0)
+            else if(src_id == EAXPROPERTYID_EAX40_FXSlot0)
                 dst_id = EAXPROPERTYID_EAX50_FXSlot0;
-            else if (src_id == EAXPROPERTYID_EAX40_FXSlot1)
+            else if(src_id == EAXPROPERTYID_EAX40_FXSlot1)
                 dst_id = EAXPROPERTYID_EAX50_FXSlot1;
-            else if (src_id == EAXPROPERTYID_EAX40_FXSlot2)
+            else if(src_id == EAXPROPERTYID_EAX40_FXSlot2)
                 dst_id = EAXPROPERTYID_EAX50_FXSlot2;
-            else if (src_id == EAXPROPERTYID_EAX40_FXSlot3)
+            else if(src_id == EAXPROPERTYID_EAX40_FXSlot3)
                 dst_id = EAXPROPERTYID_EAX50_FXSlot3;
             else
                 assert(false && "Unknown active FX slot ID.");
-        } else
+        }
+        else
             dst_id = EAX_NULL_GUID;
     }
 
@@ -4359,7 +4363,7 @@ void ALsource::eax4_set(const EaxCall& call, Eax4Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax4_defer_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots);
+            eax4_defer_active_fx_slot_id(call, al::span{props.active_fx_slots.guidActiveFXSlots});
             break;
 
         default:
@@ -4440,7 +4444,7 @@ void ALsource::eax5_set(const EaxCall& call, Eax5Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax5_defer_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots);
+            eax5_defer_active_fx_slot_id(call, al::span{props.active_fx_slots.guidActiveFXSlots});
             break;
 
         case EAXSOURCE_MACROFXFACTOR:
@@ -4730,7 +4734,8 @@ void ALsource::eax4_get(const EaxCall& call, const Eax4Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax_get_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots, EAX40_MAX_ACTIVE_FXSLOTS);
+            eax_get_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots.data(),
+                EAX40_MAX_ACTIVE_FXSLOTS);
             break;
 
         default:
@@ -4802,7 +4807,8 @@ void ALsource::eax5_get(const EaxCall& call, const Eax5Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax_get_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots, EAX50_MAX_ACTIVE_FXSLOTS);
+            eax_get_active_fx_slot_id(call, props.active_fx_slots.guidActiveFXSlots.data(),
+                EAX50_MAX_ACTIVE_FXSLOTS);
             break;
 
         case EAXSOURCE_MACROFXFACTOR:
