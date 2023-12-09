@@ -660,7 +660,7 @@ void alc_initconfig(void)
             {
                 if(len == strlen(effectitem.name) &&
                    strncmp(effectitem.name, str, len) == 0)
-                    DisabledEffects[effectitem.type] = true;
+                    DisabledEffects.set(effectitem.type);
             }
         } while(next++);
     }
@@ -683,15 +683,15 @@ void alc_initconfig(void)
         else
             eax_g_is_enabled = true;
 
-        if((DisabledEffects[EAXREVERB_EFFECT] || DisabledEffects[CHORUS_EFFECT])
+        if((DisabledEffects.test(EAXREVERB_EFFECT) || DisabledEffects.test(CHORUS_EFFECT))
             && eax_g_is_enabled)
         {
             eax_g_is_enabled = false;
             TRACE("EAX disabled because %s disabled.\n",
-                (DisabledEffects[EAXREVERB_EFFECT] && DisabledEffects[CHORUS_EFFECT])
+                (DisabledEffects.test(EAXREVERB_EFFECT) && DisabledEffects.test(CHORUS_EFFECT))
                     ? "EAXReverb and Chorus are" :
-                DisabledEffects[EAXREVERB_EFFECT] ? "EAXReverb is" :
-                DisabledEffects[CHORUS_EFFECT] ? "Chorus is" : "");
+                DisabledEffects.test(EAXREVERB_EFFECT) ? "EAXReverb is" :
+                DisabledEffects.test(CHORUS_EFFECT) ? "Chorus is" : "");
         }
     }
 #endif // ALSOFT_EAX
@@ -1008,8 +1008,8 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
     std::optional<DevFmtType> opttype;
     std::optional<DevAmbiLayout> optlayout;
     std::optional<DevAmbiScaling> optscale;
-    uint period_size{DEFAULT_UPDATE_SIZE};
-    uint buffer_size{DEFAULT_UPDATE_SIZE * DEFAULT_NUM_UPDATES};
+    uint period_size{DefaultUpdateSize};
+    uint buffer_size{DefaultUpdateSize * DefaultNumUpdates};
     int hrtf_id{-1};
     uint aorder{0u};
 
@@ -1019,9 +1019,9 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
         if(auto freqopt = device->configValue<uint>(nullptr, "frequency"))
         {
-            optsrate = clampu(*freqopt, MIN_OUTPUT_RATE, MAX_OUTPUT_RATE);
+            optsrate = clampu(*freqopt, MinOutputRate, MaxOutputRate);
 
-            const double scale{static_cast<double>(*optsrate) / DEFAULT_OUTPUT_RATE};
+            const double scale{static_cast<double>(*optsrate) / double{DefaultOutputRate}};
             period_size = static_cast<uint>(period_size*scale + 0.5);
         }
 
@@ -1030,7 +1030,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         if(auto numperopt = device->configValue<uint>(nullptr, "periods"))
             buffer_size = clampu(*numperopt, 2, 16) * period_size;
         else
-            buffer_size = period_size * DEFAULT_NUM_UPDATES;
+            buffer_size = period_size * uint{DefaultNumUpdates};
 
         if(auto typeopt = device->configValue<std::string>(nullptr, "sample-type"))
         {
@@ -1201,7 +1201,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             case ATTRIBUTE(ALC_MAX_AUXILIARY_SENDS)
                 numSends = static_cast<uint>(attrList[attrIdx + 1]);
                 if(numSends > INT_MAX) numSends = 0;
-                else numSends = minu(numSends, MAX_SENDS);
+                else numSends = minu(numSends, MaxSendCount);
                 break;
 
             case ATTRIBUTE(ALC_HRTF_SOFT)
@@ -1244,7 +1244,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         {
             if(!optchans || !opttype)
                 return ALC_INVALID_VALUE;
-            if(freqAttr < MIN_OUTPUT_RATE || freqAttr > MAX_OUTPUT_RATE)
+            if(freqAttr < int{MinOutputRate} || freqAttr > int{MaxOutputRate})
                 return ALC_INVALID_VALUE;
             if(*optchans == DevFmtAmbi3D)
             {
@@ -1321,8 +1321,8 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
             if(freqAttr)
             {
-                uint oldrate = optsrate.value_or(DEFAULT_OUTPUT_RATE);
-                freqAttr = clampi(freqAttr, MIN_OUTPUT_RATE, MAX_OUTPUT_RATE);
+                uint oldrate = optsrate.value_or(DefaultOutputRate);
+                freqAttr = clampi(freqAttr, MinOutputRate, MaxOutputRate);
 
                 const double scale{static_cast<double>(freqAttr) / oldrate};
                 period_size = static_cast<uint>(period_size*scale + 0.5);
@@ -1397,7 +1397,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         device->mAmbiOrder = 0;
         device->BufferSize = buffer_size;
         device->UpdateSize = period_size;
-        device->Frequency = optsrate.value_or(DEFAULT_OUTPUT_RATE);
+        device->Frequency = optsrate.value_or(DefaultOutputRate);
         device->Flags.set(FrequencyRequest, optsrate.has_value())
             .set(ChannelsRequest, optchans.has_value())
             .set(SampleTypeRequest, opttype.has_value());
@@ -1500,7 +1500,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
     device->NumStereoSources = numStereo;
 
     if(auto sendsopt = device->configValue<int>(nullptr, "sends"))
-        numSends = minu(numSends, static_cast<uint>(clampi(*sendsopt, 0, MAX_SENDS)));
+        numSends = minu(numSends, static_cast<uint>(clampi(*sendsopt, 0, MaxSendCount)));
     device->NumAuxSends = numSends;
 
     TRACE("Max sources: %d (%d + %d), effect slots: %d, sends: %d\n",
@@ -1628,9 +1628,10 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         std::unique_lock<std::mutex> slotlock{context->mEffectSlotLock};
 
         /* Clear out unused effect slot clusters. */
-        auto slot_cluster_not_in_use = [](ContextBase::EffectSlotCluster &cluster)
+        auto slot_cluster_not_in_use = [](ContextBase::EffectSlotCluster &clusterptr)
         {
-            for(size_t i{0};i < ContextBase::EffectSlotClusterSize;++i)
+            const auto cluster = al::span{*clusterptr};
+            for(size_t i{0};i < cluster.size();++i)
             {
                 if(cluster[i].InUse)
                     return false;
@@ -1644,13 +1645,14 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         /* Free all wet buffers. Any in use will be reallocated with an updated
          * configuration in aluInitEffectPanning.
          */
-        for(auto&& slots : context->mEffectSlotClusters)
+        for(auto& clusterptr : context->mEffectSlotClusters)
         {
-            for(size_t i{0};i < ContextBase::EffectSlotClusterSize;++i)
+            const auto cluster = al::span{*clusterptr};
+            for(size_t i{0};i < cluster.size();++i)
             {
-                slots[i].mWetBuffer.clear();
-                slots[i].mWetBuffer.shrink_to_fit();
-                slots[i].Wet.Buffer = {};
+                cluster[i].mWetBuffer.clear();
+                cluster[i].mWetBuffer.shrink_to_fit();
+                cluster[i].Wet.Buffer = {};
             }
         }
 
@@ -1781,7 +1783,7 @@ bool ResetDeviceParams(ALCdevice *device, const int *attrList)
     if(!device->Connected.load(std::memory_order_relaxed)) UNLIKELY
     {
         /* Make sure disconnection is finished before continuing on. */
-        device->waitForMix();
+        std::ignore = device->waitForMix();
 
         for(ContextBase *ctxbase : *device->mContexts.load(std::memory_order_acquire))
         {
@@ -2101,7 +2103,7 @@ static size_t GetIntegerv(ALCdevice *device, ALCenum param, const al::span<int> 
             values[0] = alcEFXMinorVersion;
             return 1;
         case ALC_MAX_AUXILIARY_SENDS:
-            values[0] = MAX_SENDS;
+            values[0] = MaxSendCount;
             return 1;
 
         case ALC_ATTRIBUTES_SIZE:
@@ -2720,7 +2722,7 @@ ALC_API ALCcontext* ALC_APIENTRY alcCreateContext(ALCdevice *device, const ALCin
         dev->mContexts.store(newarray.release());
         if(oldarray != &DeviceBase::sEmptyContextArray)
         {
-            dev->waitForMix();
+            std::ignore = dev->waitForMix();
             delete oldarray;
         }
     }
@@ -2892,7 +2894,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *deviceName) noexcep
 #ifdef ALSOFT_EAX
         eax_g_is_enabled ? uint{EAX_MAX_FXSLOTS} :
 #endif // ALSOFT_EAX
-        DEFAULT_SENDS
+        uint{DefaultSendCount}
     };
 
     DeviceRef device{new ALCdevice{DeviceType::Playback}};
@@ -2900,9 +2902,9 @@ ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *deviceName) noexcep
     /* Set output format */
     device->FmtChans = DevFmtChannelsDefault;
     device->FmtType = DevFmtTypeDefault;
-    device->Frequency = DEFAULT_OUTPUT_RATE;
-    device->UpdateSize = DEFAULT_UPDATE_SIZE;
-    device->BufferSize = DEFAULT_UPDATE_SIZE * DEFAULT_NUM_UPDATES;
+    device->Frequency = DefaultOutputRate;
+    device->UpdateSize = DefaultUpdateSize;
+    device->BufferSize = DefaultUpdateSize * DefaultNumUpdates;
 
     device->SourcesMax = 256;
     device->NumStereoSources = 1;
@@ -3199,7 +3201,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcLoopbackOpenDeviceSOFT(const ALCchar *deviceN
 #ifdef ALSOFT_EAX
         eax_g_is_enabled ? uint{EAX_MAX_FXSLOTS} :
 #endif // ALSOFT_EAX
-        DEFAULT_SENDS
+        uint{DefaultSendCount}
     };
 
     DeviceRef device{new ALCdevice{DeviceType::Loopback}};
@@ -3212,7 +3214,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcLoopbackOpenDeviceSOFT(const ALCchar *deviceN
     device->BufferSize = 0;
     device->UpdateSize = 0;
 
-    device->Frequency = DEFAULT_OUTPUT_RATE;
+    device->Frequency = DefaultOutputRate;
     device->FmtChans = DevFmtChannelsDefault;
     device->FmtType = DevFmtTypeDefault;
 
@@ -3255,7 +3257,7 @@ ALC_API ALCboolean ALC_APIENTRY alcIsRenderFormatSupportedSOFT(ALCdevice *device
     else
     {
         if(DevFmtTypeFromEnum(type).has_value() && DevFmtChannelsFromEnum(channels).has_value()
-            && freq >= MIN_OUTPUT_RATE && freq <= MAX_OUTPUT_RATE)
+            && freq >= int{MinOutputRate} && freq <= int{MaxOutputRate})
             return ALC_TRUE;
     }
 
