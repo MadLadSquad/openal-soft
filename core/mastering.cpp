@@ -21,8 +21,8 @@
 static_assert((BufferLineSize & (BufferLineSize-1)) == 0, "BufferLineSize is not a power of 2");
 
 struct SlidingHold {
-    alignas(16) float mValues[BufferLineSize];
-    uint mExpiries[BufferLineSize];
+    alignas(16) FloatBufferLine mValues;
+    std::array<uint,BufferLineSize> mExpiries;
     uint mLowerIndex;
     uint mUpperIndex;
     uint mLength;
@@ -44,8 +44,8 @@ float UpdateSlidingHold(SlidingHold *Hold, const uint i, const float in)
 {
     static constexpr uint mask{BufferLineSize - 1};
     const uint length{Hold->mLength};
-    float (&values)[BufferLineSize] = Hold->mValues;
-    uint (&expiries)[BufferLineSize] = Hold->mExpiries;
+    const al::span values{Hold->mValues};
+    const al::span expiries{Hold->mExpiries};
     uint lowerIndex{Hold->mLowerIndex};
     uint upperIndex{Hold->mUpperIndex};
 
@@ -110,7 +110,8 @@ void LinkChannels(Compressor *Comp, const uint SamplesToDo, const FloatBufferLin
     auto fill_max = [SamplesToDo,side_begin](const FloatBufferLine &input) -> void
     {
         const float *RESTRICT buffer{al::assume_aligned<16>(input.data())};
-        auto max_abs = std::bind(maxf, _1, std::bind(static_cast<float(&)(float)>(std::fabs), _2));
+        auto max_abs = [](const float s0, const float s1) noexcept -> float
+        { return std::max(s0, std::fabs(s1)); };
         std::transform(side_begin, side_begin+SamplesToDo, buffer, side_begin, max_abs);
     };
     std::for_each(OutBuffer, OutBuffer+numChans, fill_max);
@@ -198,7 +199,7 @@ void GainCompressor(Compressor *Comp, const uint SamplesToDo)
     const float release{Comp->mRelease};
     const float c_est{Comp->mGainEstimate};
     const float a_adp{Comp->mAdaptCoeff};
-    const float *crestFactor{Comp->mCrestFactor};
+    const float *crestFactor{Comp->mCrestFactor.data()};
     float postGain{Comp->mPostGain};
     float knee{Comp->mKnee};
     float t_att{attack};
@@ -211,7 +212,7 @@ void GainCompressor(Compressor *Comp, const uint SamplesToDo)
 
     ASSUME(SamplesToDo > 0);
 
-    for(float &sideChain : al::span<float>{Comp->mSideChain, SamplesToDo})
+    for(float &sideChain : al::span{Comp->mSideChain.data(), SamplesToDo})
     {
         if(autoKnee)
             knee = maxf(0.0f, 2.5f * (c_dev + c_est));
@@ -424,16 +425,16 @@ void Compressor::process(const uint SamplesToDo, FloatBufferLine *OutBuffer)
     if(mDelay)
         SignalDelay(this, SamplesToDo, OutBuffer);
 
-    const float (&sideChain)[BufferLineSize*2] = mSideChain;
-    auto apply_comp = [SamplesToDo,&sideChain](FloatBufferLine &input) noexcept -> void
+    const auto sideChain = al::span{mSideChain};
+    auto apply_comp = [SamplesToDo,sideChain](FloatBufferLine &input) noexcept -> void
     {
         float *buffer{al::assume_aligned<16>(input.data())};
-        const float *gains{al::assume_aligned<16>(&sideChain[0])};
+        const float *gains{al::assume_aligned<16>(sideChain.data())};
         std::transform(gains, gains+SamplesToDo, buffer, buffer,
-            [](float g, float s) { return g * s; });
+            [](const float g, const float s) noexcept { return g * s; });
     };
     std::for_each(OutBuffer, OutBuffer+numChans, apply_comp);
 
-    auto side_begin = std::begin(mSideChain) + SamplesToDo;
-    std::copy(side_begin, side_begin+mLookAhead, std::begin(mSideChain));
+    auto side_begin = mSideChain.begin() + SamplesToDo;
+    std::copy(side_begin, side_begin+mLookAhead, mSideChain.begin());
 }

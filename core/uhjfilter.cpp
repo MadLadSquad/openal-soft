@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <vector>
 
 #include "alcomplex.h"
 #include "alnumeric.h"
@@ -19,11 +20,6 @@ UhjQualityType UhjEncodeQuality{UhjQualityType::Default};
 
 
 namespace {
-
-struct PFFFTSetupDeleter {
-    void operator()(PFFFT_Setup *ptr) { pffft_destroy_setup(ptr); }
-};
-using PFFFTSetupPtr = std::unique_ptr<PFFFT_Setup,PFFFTSetupDeleter>;
 
 /* Convolution is implemented using a segmented overlap-add method. The filter
  * response is broken up into multiple segments of 128 samples, and each
@@ -57,13 +53,11 @@ struct SegmentedFilter {
     static_assert(N >= sFftLength);
     static_assert((N % sSampleLength) == 0);
 
-    PFFFTSetupPtr mFft;
+    PFFFTSetup mFft;
     alignas(16) std::array<float,sFftLength*sNumSegments> mFilterData;
 
-    SegmentedFilter()
+    SegmentedFilter() : mFft{sFftLength, PFFFT_REAL}
     {
-        mFft = PFFFTSetupPtr{pffft_new_setup(sFftLength, PFFFT_REAL)};
-
         using complex_d = std::complex<double>;
         constexpr size_t fft_size{N};
         constexpr size_t half_size{fft_size / 2};
@@ -71,8 +65,7 @@ struct SegmentedFilter {
         /* To set up the filter, we need to generate the desired response.
          * Start with a pure delay that passes all frequencies through.
          */
-        auto fftBuffer = std::make_unique<complex_d[]>(fft_size);
-        std::fill_n(fftBuffer.get(), fft_size, complex_d{});
+        auto fftBuffer = std::vector<complex_d>(fft_size, complex_d{});
         fftBuffer[half_size] = 1.0;
 
         /* Convert to the frequency domain, shift the phase of each bin by +90
@@ -82,27 +75,27 @@ struct SegmentedFilter {
          * To maintain that and their phase (0 or pi), they're heavily
          * attenuated instead of shifted like the others.
          */
-        forward_fft(al::span{fftBuffer.get(), fft_size});
+        forward_fft(al::span{fftBuffer});
         fftBuffer[0] *= std::numeric_limits<double>::epsilon();
         for(size_t i{1};i < half_size;++i)
             fftBuffer[i] = complex_d{-fftBuffer[i].imag(), fftBuffer[i].real()};
         fftBuffer[half_size] *= std::numeric_limits<double>::epsilon();
         for(size_t i{half_size+1};i < fft_size;++i)
             fftBuffer[i] = std::conj(fftBuffer[fft_size - i]);
-        inverse_fft(al::span{fftBuffer.get(), fft_size});
+        inverse_fft(al::span{fftBuffer});
 
         /* The segments of the filter are converted back to the frequency
          * domain, each on their own (0 stuffed).
          */
-        auto fftBuffer2 = std::make_unique<complex_d[]>(sFftLength);
+        auto fftBuffer2 = std::vector<complex_d>(sFftLength);
         auto fftTmp = al::vector<float,16>(sFftLength);
         float *filter{mFilterData.data()};
         for(size_t s{0};s < sNumSegments;++s)
         {
             for(size_t i{0};i < sSampleLength;++i)
                 fftBuffer2[i] = fftBuffer[sSampleLength*s + i].real() / double{fft_size};
-            std::fill_n(fftBuffer2.get()+sSampleLength, sSampleLength, complex_d{});
-            forward_fft(al::span{fftBuffer2.get(), sFftLength});
+            std::fill_n(fftBuffer2.data()+sSampleLength, sSampleLength, complex_d{});
+            forward_fft(al::span{fftBuffer2});
 
             /* Convert to zdomain data for PFFFT, scaled by the FFT length so
              * the iFFT result will be normalized.
@@ -113,7 +106,7 @@ struct SegmentedFilter {
                 fftTmp[i*2 + 1] = static_cast<float>((i == 0) ? fftBuffer2[sSampleLength].real()
                     : fftBuffer2[i].imag()) / float{sFftLength};
             }
-            pffft_zreorder(mFft.get(), fftTmp.data(), filter, PFFFT_BACKWARD);
+            mFft.zreorder(fftTmp.data(), filter, PFFFT_BACKWARD);
             filter += sFftLength;
         }
     }
@@ -246,7 +239,7 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         std::copy_n(mWXInOut.begin(), sSegmentSize, input);
         std::fill_n(input+sSegmentSize, sSegmentSize, 0.0f);
 
-        pffft_transform(Filter.mFft.get(), input, input, mWorkData.data(), PFFFT_FORWARD);
+        Filter.mFft.transform(input, input, mWorkData.data(), PFFFT_FORWARD);
 
         /* Convolve each input segment with its IR filter counterpart (aligned
          * in time, from newest to oldest).
@@ -255,14 +248,14 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         const float *filter{Filter.mFilterData.data()};
         for(size_t s{curseg};s < sNumSegments;++s)
         {
-            pffft_zconvolve_accumulate(Filter.mFft.get(), input, filter, mFftBuffer.data());
+            Filter.mFft.zconvolve_accumulate(input, filter, mFftBuffer.data());
             input += sFftLength;
             filter += sFftLength;
         }
         input = mWXHistory.data();
         for(size_t s{0};s < curseg;++s)
         {
-            pffft_zconvolve_accumulate(Filter.mFft.get(), input, filter, mFftBuffer.data());
+            Filter.mFft.zconvolve_accumulate(input, filter, mFftBuffer.data());
             input += sFftLength;
             filter += sFftLength;
         }
@@ -270,8 +263,8 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         /* Convert back to samples, writing to the output and storing the extra
          * for next time.
          */
-        pffft_transform(Filter.mFft.get(), mFftBuffer.data(), mFftBuffer.data(),
-            mWorkData.data(), PFFFT_BACKWARD);
+        Filter.mFft.transform(mFftBuffer.data(), mFftBuffer.data(), mWorkData.data(),
+            PFFFT_BACKWARD);
 
         for(size_t i{0};i < sSegmentSize;++i)
             mWXInOut[i] = mFftBuffer[i] + mWXInOut[sSegmentSize+i];
