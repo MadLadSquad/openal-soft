@@ -146,12 +146,11 @@ void Resample_<LerpTag,NEONTag>(const InterpState*, const float *RESTRICT src, u
     const int32x4_t increment4 = vdupq_n_s32(static_cast<int>(increment*4));
     const float32x4_t fracOne4 = vdupq_n_f32(1.0f/MixerFracOne);
     const int32x4_t fracMask4 = vdupq_n_s32(MixerFracMask);
-    alignas(16) uint pos_[4], frac_[4];
-    int32x4_t pos4, frac4;
 
+    alignas(16) std::array<uint,4> pos_, frac_;
     InitPosArrays(frac, increment, al::span{frac_}, al::span{pos_});
-    frac4 = vld1q_s32(reinterpret_cast<int*>(frac_));
-    pos4 = vld1q_s32(reinterpret_cast<int*>(pos_));
+    int32x4_t frac4 = vld1q_s32(reinterpret_cast<int*>(frac_.data()));
+    int32x4_t pos4 = vld1q_s32(reinterpret_cast<int*>(pos_.data()));
 
     auto dst_iter = dst.begin();
     for(size_t todo{dst.size()>>2};todo;--todo)
@@ -209,8 +208,8 @@ void Resample_<CubicTag,NEONTag>(const InterpState *state, const float *RESTRICT
         /* Apply the phase interpolated filter. */
 
         /* f = fil + pf*phd */
-        const float32x4_t f4 = vmlaq_f32(vld1q_f32(filter[pi].mCoeffs), pf4,
-            vld1q_f32(filter[pi].mDeltas));
+        const float32x4_t f4 = vmlaq_f32(vld1q_f32(filter[pi].mCoeffs.data()), pf4,
+            vld1q_f32(filter[pi].mDeltas.data()));
         /* r = f*src */
         float32x4_t r4{vmulq_f32(f4, vld1q_f32(src))};
 

@@ -5,11 +5,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <stddef.h>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -32,6 +32,7 @@
 #include "core/voice.h"
 #include "core/voice_change.h"
 #include "device.h"
+#include "flexarray.h"
 #include "ringbuffer.h"
 #include "vecmat.h"
 
@@ -163,9 +164,13 @@ void ALCcontext::init()
     else
     {
         auxslots = EffectSlot::CreatePtrArray(1);
-        (*auxslots)[0] = mDefaultSlot->mSlot;
-        mDefaultSlot->mState = SlotState::Playing;
+        if(auxslots)
+        {
+            (*auxslots)[0] = mDefaultSlot->mSlot;
+            mDefaultSlot->mState = SlotState::Playing;
+        }
     }
+    if(!auxslots) throw std::bad_alloc{};
     mActiveAuxSlots.store(auxslots, std::memory_order_relaxed);
 
     allocVoiceChanges();
