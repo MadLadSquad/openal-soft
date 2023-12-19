@@ -20,28 +20,15 @@ void *al_malloc(size_t alignment, size_t size);
 void *al_calloc(size_t alignment, size_t size);
 
 
-#define DISABLE_ALLOC()                                                       \
+#define DISABLE_ALLOC                                                         \
     void *operator new(size_t) = delete;                                      \
     void *operator new[](size_t) = delete;                                    \
     void operator delete(void*) noexcept = delete;                            \
     void operator delete[](void*) noexcept = delete;
 
-#define DEF_NEWDEL(T)                                                         \
-    void *operator new(size_t size)                                           \
-    {                                                                         \
-        static_assert(&operator new == &T::operator new,                      \
-            "Incorrect container type specified");                            \
-        if(void *ret{al_malloc(alignof(T), size)})                            \
-            return ret;                                                       \
-        throw std::bad_alloc();                                               \
-    }                                                                         \
-    void *operator new[](size_t size) { return operator new(size); }          \
-    void operator delete(void *block) noexcept { al_free(block); }            \
-    void operator delete[](void *block) noexcept { operator delete(block); }
-
-#define DEF_PLACE_NEWDEL()                                                    \
-    void *operator new(size_t /*size*/, void *ptr) noexcept { return ptr; }   \
-    void *operator new[](size_t /*size*/, void *ptr) noexcept { return ptr; } \
+#define DEF_PLACE_NEWDEL                                                      \
+    void *operator new(size_t) = delete;                                      \
+    void *operator new[](size_t) = delete;                                    \
     void operator delete(void *block, void*) noexcept { al_free(block); }     \
     void operator delete(void *block) noexcept { al_free(block); }            \
     void operator delete[](void *block, void*) noexcept { al_free(block); }   \
@@ -65,7 +52,7 @@ enum FamCount : size_t { };
         throw std::bad_alloc();                                               \
     }                                                                         \
     void *operator new[](size_t /*size*/) = delete;                           \
-    void operator delete(void *block, FamCount) { al_free(block); }           \
+    void operator delete(void *block, FamCount) noexcept { al_free(block); }  \
     void operator delete(void *block) noexcept { al_free(block); }            \
     void operator delete[](void* /*block*/) = delete;
 

@@ -2,6 +2,7 @@
 #define AL_FLEXARRAY_H
 
 #include <cstddef>
+#include <stdexcept>
 #include <type_traits>
 
 #include "almalloc.h"
@@ -19,7 +20,9 @@ struct FlexArrayStorage {
     static constexpr size_t Sizeof(size_t count, size_t base=0u) noexcept
     { return sizeof(FlexArrayStorage) + sizeof(T)*count + base; }
 
-    FlexArrayStorage(size_t size) : mData{::new(static_cast<void*>(this+1)) T[size], size} { }
+    FlexArrayStorage(size_t size) noexcept(std::is_nothrow_constructible_v<T>)
+        : mData{::new(static_cast<void*>(this+1)) T[size], size}
+    { }
     ~FlexArrayStorage() = default;
 
     FlexArrayStorage(const FlexArrayStorage&) = delete;
@@ -33,7 +36,9 @@ struct FlexArrayStorage<T,alignment,false> {
     static constexpr size_t Sizeof(size_t count, size_t base=0u) noexcept
     { return sizeof(FlexArrayStorage) + sizeof(T)*count + base; }
 
-    FlexArrayStorage(size_t size) : mData{::new(static_cast<void*>(this+1)) T[size], size} { }
+    FlexArrayStorage(size_t size) noexcept(std::is_nothrow_constructible_v<T>)
+        : mData{::new(static_cast<void*>(this+1)) T[size], size}
+    { }
     ~FlexArrayStorage() { std::destroy(mData.begin(), mData.end()); }
 
     FlexArrayStorage(const FlexArrayStorage&) = delete;
@@ -69,11 +74,22 @@ struct FlexArray {
     { return Storage_t_::Sizeof(count, base); }
     static std::unique_ptr<FlexArray> Create(index_type count)
     {
-        void *ptr{al_calloc(alignof(FlexArray), Sizeof(count))};
-        return std::unique_ptr<FlexArray>{al::construct_at(static_cast<FlexArray*>(ptr), count)};
+        if(void *ptr{al_calloc(alignof(FlexArray), Sizeof(count))})
+        {
+            try {
+                return std::unique_ptr<FlexArray>{::new(ptr) FlexArray{count}};
+            }
+            catch(...) {
+                al_free(ptr);
+                throw;
+            }
+        }
+        throw std::bad_alloc();
     }
 
-    FlexArray(index_type size) : mStore{size} { }
+    FlexArray(index_type size) noexcept(std::is_nothrow_constructible_v<Storage_t_>)
+        : mStore{size}
+    { }
     ~FlexArray() = default;
 
     [[nodiscard]] auto size() const noexcept -> index_type { return mStore.mData.size(); }
@@ -105,7 +121,7 @@ struct FlexArray {
     [[nodiscard]] auto rend() const noexcept -> const_reverse_iterator { return begin(); }
     [[nodiscard]] auto crend() const noexcept -> const_reverse_iterator { return cbegin(); }
 
-    DEF_PLACE_NEWDEL()
+    DEF_PLACE_NEWDEL
 };
 
 } // namespace al
