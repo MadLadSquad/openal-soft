@@ -261,15 +261,15 @@ ResamplerFunc PrepareResampler(Resampler resampler, uint increment, InterpState 
     case Resampler::Linear:
         break;
     case Resampler::Cubic:
-        state->cubic.filter = gCubicSpline.Tab.data();
+        state->emplace<CubicState>().filter = gCubicSpline.Tab.data();
         break;
     case Resampler::FastBSinc12:
     case Resampler::BSinc12:
-        BsincPrepare(increment, &state->bsinc, &gBSinc12);
+        BsincPrepare(increment, &state->emplace<BsincState>(), &gBSinc12);
         break;
     case Resampler::FastBSinc24:
     case Resampler::BSinc24:
-        BsincPrepare(increment, &state->bsinc, &gBSinc24);
+        BsincPrepare(increment, &state->emplace<BsincState>(), &gBSinc24);
         break;
     }
     return SelectResampler(resampler, increment);
@@ -1967,16 +1967,13 @@ void ProcessContexts(DeviceBase *device, const uint SamplesToDo)
         }
 
         /* Process effects. */
-        if(const size_t num_slots{auxslots.size()})
+        if(!auxslots.empty())
         {
-            auto slots = auxslots.data();
-            auto slots_end = slots + num_slots;
-
             /* Sort the slots into extra storage, so that effect slots come
              * before their effect slot target (or their targets' target).
              */
-            const al::span<EffectSlot*> sorted_slots{const_cast<EffectSlot**>(slots_end),
-                num_slots};
+            const al::span sorted_slots{const_cast<EffectSlot**>(al::to_address(auxslots.end())),
+                auxslots.size()};
             /* Skip sorting if it has already been done. */
             if(!sorted_slots[0])
             {
@@ -1984,7 +1981,7 @@ void ProcessContexts(DeviceBase *device, const uint SamplesToDo)
                  * sorted list so that all slots without a target slot go to
                  * the end.
                  */
-                std::copy(slots, slots_end, sorted_slots.begin());
+                std::copy(auxslots.begin(), auxslots.end(), sorted_slots.begin());
                 auto split_point = std::partition(sorted_slots.begin(), sorted_slots.end(),
                     [](const EffectSlot *slot) noexcept -> bool
                     { return slot->Target != nullptr; });
@@ -2071,11 +2068,12 @@ void ApplyDistanceComp(const al::span<FloatBufferLine> Samples, const size_t Sam
 void ApplyDither(const al::span<FloatBufferLine> Samples, uint *dither_seed,
     const float quant_scale, const size_t SamplesToDo)
 {
+    static constexpr double invRNGRange{1.0 / std::numeric_limits<uint>::max()};
     ASSUME(SamplesToDo > 0);
 
     /* Dithering. Generate whitenoise (uniform distribution of random values
      * between -1 and +1) and add it to the sample values, after scaling up to
-     * the desired quantization depth amd before rounding.
+     * the desired quantization depth and before rounding.
      */
     const float invscale{1.0f / quant_scale};
     uint seed{*dither_seed};
@@ -2084,7 +2082,7 @@ void ApplyDither(const al::span<FloatBufferLine> Samples, uint *dither_seed,
         float val{sample * quant_scale};
         uint rng0{dither_rng(&seed)};
         uint rng1{dither_rng(&seed)};
-        val += static_cast<float>(rng0*(1.0/UINT_MAX) - rng1*(1.0/UINT_MAX));
+        val += static_cast<float>(rng0*invRNGRange - rng1*invRNGRange);
         return fast_roundf(val) * invscale;
     };
     for(FloatBufferLine &inout : Samples)
