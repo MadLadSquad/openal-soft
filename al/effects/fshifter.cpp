@@ -197,10 +197,9 @@ template<>
     throw Exception{message};
 }
 
-template<>
-bool FrequencyShifterCommitter::commit(const EaxEffectProps &props)
+bool EaxFrequencyShifterCommitter::commit(const EAXFREQUENCYSHIFTERPROPERTIES &props)
 {
-    if(props == mEaxProps)
+    if(auto *cur = std::get_if<EAXFREQUENCYSHIFTERPROPERTIES>(&mEaxProps); cur && *cur == props)
         return false;
 
     mEaxProps = props;
@@ -214,16 +213,14 @@ bool FrequencyShifterCommitter::commit(const EaxEffectProps &props)
         return FShifterDirection::Off;
     };
 
-    auto &eaxprops = std::get<EAXFREQUENCYSHIFTERPROPERTIES>(props);
-    mAlProps.Fshifter.Frequency = eaxprops.flFrequency;
-    mAlProps.Fshifter.LeftDirection = get_direction(eaxprops.ulLeftDirection);
-    mAlProps.Fshifter.RightDirection = get_direction(eaxprops.ulRightDirection);
+    mAlProps.Fshifter.Frequency = props.flFrequency;
+    mAlProps.Fshifter.LeftDirection = get_direction(props.ulLeftDirection);
+    mAlProps.Fshifter.RightDirection = get_direction(props.ulRightDirection);
 
     return true;
 }
 
-template<>
-void FrequencyShifterCommitter::SetDefaults(EaxEffectProps &props)
+void EaxFrequencyShifterCommitter::SetDefaults(EaxEffectProps &props)
 {
     static constexpr EAXFREQUENCYSHIFTERPROPERTIES defprops{[]
     {
@@ -236,10 +233,8 @@ void FrequencyShifterCommitter::SetDefaults(EaxEffectProps &props)
     props = defprops;
 }
 
-template<>
-void FrequencyShifterCommitter::Get(const EaxCall &call, const EaxEffectProps &props_)
+void EaxFrequencyShifterCommitter::Get(const EaxCall &call, const EAXFREQUENCYSHIFTERPROPERTIES &props)
 {
-    auto &props = std::get<EAXFREQUENCYSHIFTERPROPERTIES>(props_);
     switch(call.get_property_id())
     {
     case EAXFREQUENCYSHIFTER_NONE: break;
@@ -251,10 +246,8 @@ void FrequencyShifterCommitter::Get(const EaxCall &call, const EaxEffectProps &p
     }
 }
 
-template<>
-void FrequencyShifterCommitter::Set(const EaxCall &call, EaxEffectProps &props_)
+void EaxFrequencyShifterCommitter::Set(const EaxCall &call, EAXFREQUENCYSHIFTERPROPERTIES &props)
 {
-    auto &props = std::get<EAXFREQUENCYSHIFTERPROPERTIES>(props_);
     switch(call.get_property_id())
     {
     case EAXFREQUENCYSHIFTER_NONE: break;
