@@ -2,7 +2,8 @@
 #define CORE_EFFECTS_BASE_H
 
 #include <array>
-#include <stddef.h>
+#include <cstddef>
+#include <variant>
 
 #include "almalloc.h"
 #include "alspan.h"
@@ -101,6 +102,15 @@ struct ChorusProps {
     float Delay;
 };
 
+struct FlangerProps {
+    ChorusWaveform Waveform;
+    int Phase;
+    float Rate;
+    float Depth;
+    float Feedback;
+    float Delay;
+};
+
 struct CompressorProps {
     bool OnOff;
 };
@@ -136,7 +146,7 @@ struct EqualizerProps {
     float HighGain;
 };
 
-struct FshiterProps {
+struct FshifterProps {
     float Frequency;
     FShifterDirection LeftDirection;
     FShifterDirection RightDirection;
@@ -162,7 +172,11 @@ struct VmorpherProps {
     VMorpherWaveform Waveform;
 };
 
-struct DedicatedProps {
+struct DedicatedDialogProps {
+    float Gain;
+};
+
+struct DedicatedLfeProps {
     float Gain;
 };
 
@@ -171,21 +185,22 @@ struct ConvolutionProps {
     std::array<float,3> OrientUp;
 };
 
-union EffectProps {
-    ReverbProps Reverb;
-    AutowahProps Autowah;
-    ChorusProps Chorus; /* Also Flanger */
-    CompressorProps Compressor;
-    DistortionProps Distortion;
-    EchoProps Echo;
-    EqualizerProps Equalizer;
-    FshiterProps Fshifter;
-    ModulatorProps Modulator;
-    PshifterProps Pshifter;
-    VmorpherProps Vmorpher;
-    DedicatedProps Dedicated;
-    ConvolutionProps Convolution;
-};
+using EffectProps = std::variant<std::monostate,
+    ReverbProps,
+    AutowahProps,
+    ChorusProps,
+    FlangerProps,
+    CompressorProps,
+    DistortionProps,
+    EchoProps,
+    EqualizerProps,
+    FshifterProps,
+    ModulatorProps,
+    PshifterProps,
+    VmorpherProps,
+    DedicatedDialogProps,
+    DedicatedLfeProps,
+    ConvolutionProps>;
 
 
 struct EffectTarget {
