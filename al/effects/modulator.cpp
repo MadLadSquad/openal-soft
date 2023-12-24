@@ -203,10 +203,9 @@ template<>
     throw Exception{message};
 }
 
-template<>
-bool ModulatorCommitter::commit(const EaxEffectProps &props)
+bool EaxModulatorCommitter::commit(const EAXRINGMODULATORPROPERTIES &props)
 {
-    if(props == mEaxProps)
+    if(auto *cur = std::get_if<EAXRINGMODULATORPROPERTIES>(&mEaxProps); cur && *cur == props)
         return false;
 
     mEaxProps = props;
@@ -222,16 +221,14 @@ bool ModulatorCommitter::commit(const EaxEffectProps &props)
         return ModulatorWaveform::Sinusoid;
     };
 
-    auto &eaxprops = std::get<EAXRINGMODULATORPROPERTIES>(props);
-    mAlProps.Modulator.Frequency = eaxprops.flFrequency;
-    mAlProps.Modulator.HighPassCutoff = eaxprops.flHighPassCutOff;
-    mAlProps.Modulator.Waveform = get_waveform(eaxprops.ulWaveform);
+    mAlProps.Modulator.Frequency = props.flFrequency;
+    mAlProps.Modulator.HighPassCutoff = props.flHighPassCutOff;
+    mAlProps.Modulator.Waveform = get_waveform(props.ulWaveform);
 
     return true;
 }
 
-template<>
-void ModulatorCommitter::SetDefaults(EaxEffectProps &props)
+void EaxModulatorCommitter::SetDefaults(EaxEffectProps &props)
 {
     static constexpr EAXRINGMODULATORPROPERTIES defprops{[]
     {
@@ -244,10 +241,8 @@ void ModulatorCommitter::SetDefaults(EaxEffectProps &props)
     props = defprops;
 }
 
-template<>
-void ModulatorCommitter::Get(const EaxCall &call, const EaxEffectProps &props_)
+void EaxModulatorCommitter::Get(const EaxCall &call, const EAXRINGMODULATORPROPERTIES &props)
 {
-    auto &props = std::get<EAXRINGMODULATORPROPERTIES>(props_);
     switch(call.get_property_id())
     {
     case EAXRINGMODULATOR_NONE: break;
@@ -259,11 +254,9 @@ void ModulatorCommitter::Get(const EaxCall &call, const EaxEffectProps &props_)
     }
 }
 
-template<>
-void ModulatorCommitter::Set(const EaxCall &call, EaxEffectProps &props_)
+void EaxModulatorCommitter::Set(const EaxCall &call, EAXRINGMODULATORPROPERTIES &props)
 {
-    auto &props = std::get<EAXRINGMODULATORPROPERTIES>(props_);
-    switch (call.get_property_id())
+    switch(call.get_property_id())
     {
     case EAXRINGMODULATOR_NONE: break;
     case EAXRINGMODULATOR_ALLPARAMETERS: defer<AllValidator>(call, props); break;

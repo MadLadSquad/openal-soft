@@ -204,26 +204,23 @@ template<>
     throw Exception{message};
 }
 
-template<>
-bool DistortionCommitter::commit(const EaxEffectProps &props)
+bool EaxDistortionCommitter::commit(const EAXDISTORTIONPROPERTIES &props)
 {
-    if(props == mEaxProps)
+    if(auto *cur = std::get_if<EAXDISTORTIONPROPERTIES>(&mEaxProps); cur && *cur == props)
         return false;
 
     mEaxProps = props;
 
-    auto &eaxprops = std::get<EAXDISTORTIONPROPERTIES>(props);
-    mAlProps.Distortion.Edge = eaxprops.flEdge;
-    mAlProps.Distortion.Gain = level_mb_to_gain(static_cast<float>(eaxprops.lGain));
-    mAlProps.Distortion.LowpassCutoff = eaxprops.flLowPassCutOff;
-    mAlProps.Distortion.EQCenter = eaxprops.flEQCenter;
-    mAlProps.Distortion.EQBandwidth = eaxprops.flEdge;
+    mAlProps.Distortion.Edge = props.flEdge;
+    mAlProps.Distortion.Gain = level_mb_to_gain(static_cast<float>(props.lGain));
+    mAlProps.Distortion.LowpassCutoff = props.flLowPassCutOff;
+    mAlProps.Distortion.EQCenter = props.flEQCenter;
+    mAlProps.Distortion.EQBandwidth = props.flEdge;
 
     return true;
 }
 
-template<>
-void DistortionCommitter::SetDefaults(EaxEffectProps &props)
+void EaxDistortionCommitter::SetDefaults(EaxEffectProps &props)
 {
     static constexpr EAXDISTORTIONPROPERTIES defprops{[]
     {
@@ -238,10 +235,8 @@ void DistortionCommitter::SetDefaults(EaxEffectProps &props)
     props = defprops;
 }
 
-template<>
-void DistortionCommitter::Get(const EaxCall &call, const EaxEffectProps &props_)
+void EaxDistortionCommitter::Get(const EaxCall &call, const EAXDISTORTIONPROPERTIES &props)
 {
-    auto &props = std::get<EAXDISTORTIONPROPERTIES>(props_);
     switch(call.get_property_id())
     {
     case EAXDISTORTION_NONE: break;
@@ -255,10 +250,8 @@ void DistortionCommitter::Get(const EaxCall &call, const EaxEffectProps &props_)
     }
 }
 
-template<>
-void DistortionCommitter::Set(const EaxCall &call, EaxEffectProps &props_)
+void EaxDistortionCommitter::Set(const EaxCall &call, EAXDISTORTIONPROPERTIES &props)
 {
-    auto &props = std::get<EAXDISTORTIONPROPERTIES>(props_);
     switch(call.get_property_id())
     {
     case EAXDISTORTION_NONE: break;
