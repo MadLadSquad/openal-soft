@@ -565,8 +565,6 @@ if(HAVE_INTRIN_H)
         }" HAVE_CPUID_INTRINSIC)
 endif()
 
-check_symbol_exists(posix_memalign   stdlib.h HAVE_POSIX_MEMALIGN)
-check_symbol_exists(_aligned_malloc  malloc.h HAVE__ALIGNED_MALLOC)
 check_symbol_exists(proc_pidpath     libproc.h HAVE_PROC_PIDPATH)
 
 if(NOT WIN32)
@@ -612,7 +610,6 @@ set(COMMON_OBJS
     common/alcomplex.h
     common/alfstream.cpp
     common/alfstream.h
-    common/almalloc.cpp
     common/almalloc.h
     common/alnumbers.h
     common/alnumeric.h
