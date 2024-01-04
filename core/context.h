@@ -95,7 +95,7 @@ struct ContextBase {
      */
     std::atomic<ContextProps*> mFreeContextProps{nullptr};
     std::atomic<VoicePropsItem*> mFreeVoiceProps{nullptr};
-    std::atomic<EffectSlotProps*> mFreeEffectslotProps{nullptr};
+    std::atomic<EffectSlotProps*> mFreeEffectSlotProps{nullptr};
 
     /* The voice change tail is the beginning of the "free" elements, up to and
      * *excluding* the current. If tail==current, there's no free elements and
@@ -107,7 +107,8 @@ struct ContextBase {
 
     void allocVoiceChanges();
     void allocVoiceProps();
-
+    void allocEffectSlotProps();
+    void allocContextProps();
 
     ContextParams mParams;
 
@@ -156,6 +157,15 @@ struct ContextBase {
 
     using EffectSlotCluster = std::unique_ptr<std::array<EffectSlot,4>>;
     std::vector<EffectSlotCluster> mEffectSlotClusters;
+
+    using EffectSlotPropsCluster = std::unique_ptr<std::array<EffectSlotProps,4>>;
+    std::vector<EffectSlotPropsCluster> mEffectSlotPropClusters;
+
+    /* This could be greater than 2, but there should be no way there can be
+     * more than two context property updates in use simultaneously.
+     */
+    using ContextPropsCluster = std::unique_ptr<std::array<ContextProps,2>>;
+    std::vector<ContextPropsCluster> mContextPropClusters;
 
 
     ContextBase(DeviceBase *device);

@@ -174,7 +174,7 @@ BOOL APIENTRY DllMain(HINSTANCE module, DWORD reason, LPVOID /*reserved*/)
     case DLL_PROCESS_ATTACH:
         /* Pin the DLL so we won't get unloaded until the process terminates */
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            al::bit_cast<WCHAR*>(module), &module);
+            reinterpret_cast<WCHAR*>(module), &module);
         break;
     }
     return TRUE;
@@ -1667,12 +1667,16 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
         if(ALeffectslot *slot{context->mDefaultSlot.get()})
         {
-            aluInitEffectPanning(slot->mSlot, context);
+            auto *slotbase = slot->mSlot;
+            aluInitEffectPanning(slotbase, context);
+
+            if(auto *props = slotbase->Update.exchange(nullptr, std::memory_order_relaxed))
+                AtomicReplaceHead(context->mFreeEffectSlotProps, props);
 
             EffectState *state{slot->Effect.State.get()};
             state->mOutTarget = device->Dry.Buffer;
             state->deviceUpdate(device, slot->Buffer);
-            slot->updateProps(context);
+            slot->mPropsDirty = true;
         }
 
         if(EffectSlotArray *curarray{context->mActiveAuxSlots.load(std::memory_order_relaxed)})
@@ -1686,14 +1690,21 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
                 auto &slot = (*sublist.EffectSlots)[idx];
                 usemask &= ~(1_u64 << idx);
 
-                aluInitEffectPanning(slot.mSlot, context);
+                auto *slotbase = slot.mSlot;
+                aluInitEffectPanning(slotbase, context);
+
+                if(auto *props = slotbase->Update.exchange(nullptr, std::memory_order_relaxed))
+                    AtomicReplaceHead(context->mFreeEffectSlotProps, props);
 
                 EffectState *state{slot.Effect.State.get()};
                 state->mOutTarget = device->Dry.Buffer;
                 state->deviceUpdate(device, slot.Buffer);
-                slot.updateProps(context);
+                slot.mPropsDirty = true;
             }
         }
+        /* Clear all effect slot props to let them get allocated again. */
+        context->mEffectSlotPropClusters.clear();
+        context->mFreeEffectSlotProps.store(nullptr, std::memory_order_relaxed);
         slotlock.unlock();
 
         const uint num_sends{device->NumAuxSends};
@@ -1725,8 +1736,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             }
         }
 
-        auto voicelist = context->getVoicesSpan();
-        for(Voice *voice : voicelist)
+        for(Voice *voice : context->getVoicesSpan())
         {
             /* Clear extraneous property set sends. */
             std::fill(std::begin(voice->mProps.Send)+num_sends, std::end(voice->mProps.Send),
@@ -1758,6 +1768,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
 
         context->mPropsDirty = false;
         UpdateContextProps(context);
+        UpdateAllEffectSlotProps(context);
         UpdateAllSourceProps(context);
     }
     mixer_mode.leave();
@@ -2046,7 +2057,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *Device, ALCenum para
             ProbeAllDevicesList();
 
         /* Copy first entry as default. */
-        alcDefaultAllDevicesSpecifier = alcAllDevicesList.c_str();
+        alcDefaultAllDevicesSpecifier = alcAllDevicesList.substr(0, alcAllDevicesList.find('\0'));
         value = alcDefaultAllDevicesSpecifier.c_str();
         break;
 
@@ -2055,7 +2066,8 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *Device, ALCenum para
             ProbeCaptureDeviceList();
 
         /* Copy first entry as default. */
-        alcCaptureDefaultDeviceSpecifier = alcCaptureDeviceList.c_str();
+        alcCaptureDefaultDeviceSpecifier = alcCaptureDeviceList.substr(0,
+            alcCaptureDeviceList.find('\0'));
         value = alcCaptureDefaultDeviceSpecifier.c_str();
         break;
 

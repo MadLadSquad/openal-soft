@@ -109,13 +109,9 @@ jack_options_t ClientOptions = JackNullOption;
 
 bool jack_load()
 {
-    bool error{false};
-
 #ifdef HAVE_DYNLOAD
     if(!jack_handle)
     {
-        std::string missing_funcs;
-
 #ifdef _WIN32
 #define JACKLIB "libjack.dll"
 #else
@@ -128,31 +124,29 @@ bool jack_load()
             return false;
         }
 
-        error = false;
+        std::string missing_funcs;
 #define LOAD_FUNC(f) do {                                                     \
-    p##f = al::bit_cast<decltype(p##f)>(GetSymbol(jack_handle, #f));          \
-    if(p##f == nullptr) {                                                     \
-        error = true;                                                         \
-        missing_funcs += "\n" #f;                                             \
-    }                                                                         \
+    p##f = reinterpret_cast<decltype(p##f)>(GetSymbol(jack_handle, #f));      \
+    if(p##f == nullptr) missing_funcs += "\n" #f;                             \
 } while(0)
         JACK_FUNCS(LOAD_FUNC);
 #undef LOAD_FUNC
         /* Optional symbols. These don't exist in all versions of JACK. */
-#define LOAD_SYM(f) p##f = al::bit_cast<decltype(p##f)>(GetSymbol(jack_handle, #f))
+#define LOAD_SYM(f) p##f = reinterpret_cast<decltype(p##f)>(GetSymbol(jack_handle, #f))
         LOAD_SYM(jack_error_callback);
 #undef LOAD_SYM
 
-        if(error)
+        if(!missing_funcs.empty())
         {
             WARN("Missing expected functions:%s\n", missing_funcs.c_str());
             CloseLib(jack_handle);
             jack_handle = nullptr;
+            return false;
         }
     }
 #endif
 
-    return !error;
+    return true;
 }
 
 
@@ -377,7 +371,7 @@ int JackPlayback::process(jack_nframes_t numframes) noexcept
         jack_nframes_t todo{minu(numframes, static_cast<uint>(data.first.len))};
         auto write_first = [&data,numchans,todo](float *outbuf) -> float*
         {
-            const float *RESTRICT in = reinterpret_cast<float*>(data.first.buf);
+            const auto *RESTRICT in = reinterpret_cast<const float*>(data.first.buf);
             auto deinterlace_input = [&in,numchans]() noexcept -> float
             {
                 float ret{*in};
@@ -396,7 +390,7 @@ int JackPlayback::process(jack_nframes_t numframes) noexcept
         {
             auto write_second = [&data,numchans,todo](float *outbuf) -> float*
             {
-                const float *RESTRICT in = reinterpret_cast<float*>(data.second.buf);
+                const auto *RESTRICT in = reinterpret_cast<const float*>(data.second.buf);
                 auto deinterlace_input = [&in,numchans]() noexcept -> float
                 {
                     float ret{*in};
