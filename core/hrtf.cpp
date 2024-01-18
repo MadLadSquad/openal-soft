@@ -40,6 +40,8 @@
 
 namespace {
 
+using std::string_view_literals::operator""sv;
+
 struct HrtfEntry {
     std::string mDispName;
     std::string mFilename;
@@ -89,12 +91,12 @@ constexpr uint HrirDelayFracHalf{HrirDelayFracOne >> 1};
 
 static_assert(MaxHrirDelay*HrirDelayFracOne < 256, "MAX_HRIR_DELAY or DELAY_FRAC too large");
 
-/* NOLINTBEGIN(*-avoid-c-arrays) */
-constexpr char magicMarker00[8]{'M','i','n','P','H','R','0','0'};
-constexpr char magicMarker01[8]{'M','i','n','P','H','R','0','1'};
-constexpr char magicMarker02[8]{'M','i','n','P','H','R','0','2'};
-constexpr char magicMarker03[8]{'M','i','n','P','H','R','0','3'};
-/* NOLINTEND(*-avoid-c-arrays) */
+
+[[nodiscard]] constexpr auto GetMarker00Name() noexcept { return "MinPHR00"sv; }
+[[nodiscard]] constexpr auto GetMarker01Name() noexcept { return "MinPHR01"sv; }
+[[nodiscard]] constexpr auto GetMarker02Name() noexcept { return "MinPHR02"sv; }
+[[nodiscard]] constexpr auto GetMarker03Name() noexcept { return "MinPHR03"sv; }
+
 
 /* First value for pass-through coefficients (remaining are 0), used for omni-
  * directional sounds. */
@@ -936,12 +938,13 @@ std::unique_ptr<HrtfStore> LoadHrtf02(std::istream &data, const char *filename)
         auto copy_irs = [&elevs,&coeffs,&delays,&coeffs_end,&delays_end](
             const ptrdiff_t ebase, const HrtfStore::Field &field) -> ptrdiff_t
         {
-            auto accum_az = [](int count, const HrtfStore::Elevation &elev) noexcept -> int
+            auto accum_az = [](const ptrdiff_t count, const HrtfStore::Elevation &elev) noexcept
+                -> ptrdiff_t
             { return count + elev.azCount; };
-            const auto elevs_mid = elevs.cbegin() + ebase;
-            const auto elevs_end = elevs_mid + field.evCount;
-            const int abase{std::accumulate(elevs.cbegin(), elevs_mid, 0, accum_az)};
-            const int num_azs{std::accumulate(elevs_mid, elevs_end, 0, accum_az)};
+            const auto elev_mid = elevs.cbegin() + ebase;
+            const auto abase = std::accumulate(elevs.cbegin(), elev_mid, ptrdiff_t{0}, accum_az);
+            const auto num_azs = std::accumulate(elev_mid, elev_mid + field.evCount, ptrdiff_t{0},
+                accum_az);
 
             coeffs_end = std::copy_backward(coeffs.cbegin() + abase,
                 coeffs.cbegin() + (abase+num_azs), coeffs_end);
@@ -1236,7 +1239,7 @@ al::span<const char> GetResource(int name)
 
 std::vector<std::string> EnumerateHrtf(std::optional<std::string> pathopt)
 {
-    std::lock_guard<std::mutex> _{EnumeratedHrtfLock};
+    std::lock_guard<std::mutex> enumlock{EnumeratedHrtfLock};
     EnumeratedHrtfs.clear();
 
     bool usedefaults{true};
@@ -1342,26 +1345,26 @@ HrtfStorePtr GetLoadedHrtf(const std::string &name, const uint devrate)
     }
 
     std::unique_ptr<HrtfStore> hrtf;
-    std::array<char,sizeof(magicMarker03)> magic{};
+    std::array<char,GetMarker03Name().size()> magic{};
     stream->read(magic.data(), magic.size());
-    if(stream->gcount() < static_cast<std::streamsize>(sizeof(magicMarker03)))
+    if(stream->gcount() < static_cast<std::streamsize>(GetMarker03Name().size()))
         ERR("%s data is too short (%zu bytes)\n", name.c_str(), stream->gcount());
-    else if(memcmp(magic.data(), magicMarker03, sizeof(magicMarker03)) == 0)
+    else if(GetMarker03Name() == std::string_view{magic.data(), magic.size()})
     {
         TRACE("Detected data set format v3\n");
         hrtf = LoadHrtf03(*stream, name.c_str());
     }
-    else if(memcmp(magic.data(), magicMarker02, sizeof(magicMarker02)) == 0)
+    else if(GetMarker02Name() == std::string_view{magic.data(), magic.size()})
     {
         TRACE("Detected data set format v2\n");
         hrtf = LoadHrtf02(*stream, name.c_str());
     }
-    else if(memcmp(magic.data(), magicMarker01, sizeof(magicMarker01)) == 0)
+    else if(GetMarker01Name() == std::string_view{magic.data(), magic.size()})
     {
         TRACE("Detected data set format v1\n");
         hrtf = LoadHrtf01(*stream, name.c_str());
     }
-    else if(memcmp(magic.data(), magicMarker00, sizeof(magicMarker00)) == 0)
+    else if(GetMarker00Name() == std::string_view{magic.data(), magic.size()})
     {
         TRACE("Detected data set format v0\n");
         hrtf = LoadHrtf00(*stream, name.c_str());
@@ -1469,7 +1472,7 @@ void HrtfStore::dec_ref()
     TRACE("HrtfStore %p decreasing refcount to %u\n", decltype(std::declval<void*>()){this}, ref);
     if(ref == 0)
     {
-        std::lock_guard<std::mutex> _{LoadedHrtfLock};
+        std::lock_guard<std::mutex> loadlock{LoadedHrtfLock};
 
         /* Go through and remove all unused HRTFs. */
         auto remove_unused = [](LoadedHrtf &hrtf) -> bool
