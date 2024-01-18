@@ -102,9 +102,6 @@ decltype(jack_error_callback) * pjack_error_callback;
 #endif
 
 
-/* NOLINTNEXTLINE(*-avoid-c-arrays) */
-constexpr char JackDefaultAudioType[] = JACK_DEFAULT_AUDIO_TYPE;
-
 jack_options_t ClientOptions = JackNullOption;
 
 bool jack_load()
@@ -172,7 +169,7 @@ void EnumerateDevices(jack_client_t *client, std::vector<DeviceEntry> &list)
 {
     std::remove_reference_t<decltype(list)>{}.swap(list);
 
-    if(JackPortsPtr ports{jack_get_ports(client, nullptr, JackDefaultAudioType, JackPortIsInput)})
+    if(JackPortsPtr ports{jack_get_ports(client, nullptr, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput)})
     {
         for(size_t i{0};ports[i];++i)
         {
@@ -442,7 +439,7 @@ int JackPlayback::mixerProc()
         const auto len1 = static_cast<uint>(minz(data.first.len, todo));
         const auto len2 = static_cast<uint>(minz(data.second.len, todo-len1));
 
-        std::lock_guard<std::mutex> _{mMutex};
+        std::lock_guard<std::mutex> dlock{mMutex};
         mDevice->renderSamples(data.first.buf, len1, frame_step);
         if(len2 > 0)
             mDevice->renderSamples(data.second.buf, len2, frame_step);
@@ -536,7 +533,7 @@ bool JackPlayback::reset()
     while(bad_port != ports_end)
     {
         std::string name{"channel_" + std::to_string(++port_num)};
-        *bad_port = jack_port_register(mClient, name.c_str(), JackDefaultAudioType,
+        *bad_port = jack_port_register(mClient, name.c_str(), JACK_DEFAULT_AUDIO_TYPE,
             JackPortIsOutput | JackPortIsTerminal, 0);
         if(!*bad_port) break;
         ++bad_port;
@@ -574,7 +571,7 @@ void JackPlayback::start()
     const std::string_view devname{mDevice->DeviceName};
     if(ConfigValueBool(devname, "jack", "connect-ports").value_or(true))
     {
-        JackPortsPtr pnames{jack_get_ports(mClient, mPortPattern.c_str(), JackDefaultAudioType,
+        JackPortsPtr pnames{jack_get_ports(mClient, mPortPattern.c_str(), JACK_DEFAULT_AUDIO_TYPE,
             JackPortIsInput)};
         if(!pnames)
         {
@@ -649,7 +646,7 @@ ClockLatency JackPlayback::getClockLatency()
 {
     ClockLatency ret;
 
-    std::lock_guard<std::mutex> _{mMutex};
+    std::lock_guard<std::mutex> dlock{mMutex};
     ret.ClockTime = mDevice->getClockTime();
     ret.Latency  = std::chrono::seconds{mRing ? mRing->readSpace() : mDevice->UpdateSize};
     ret.Latency /= mDevice->Frequency;
