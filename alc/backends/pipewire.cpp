@@ -169,6 +169,7 @@ public:
 #define PW_KEY_NODE_RATE "node.rate"
 #endif
 
+using namespace std::string_view_literals;
 using std::chrono::seconds;
 using std::chrono::milliseconds;
 using std::chrono::nanoseconds;
@@ -967,8 +968,6 @@ void DeviceNode::parseChannelCount(const spa_pod *value, bool force_update) noex
 }
 
 
-using std::literals::string_view_literals::operator""sv;
-
 [[nodiscard]] constexpr auto GetMonitorPrefix() noexcept { return "Monitor of "sv; }
 [[nodiscard]] constexpr auto GetAudioSinkClassName() noexcept { return "Audio/Sink"sv; }
 [[nodiscard]] constexpr auto GetAudioSourceClassName() noexcept { return "Audio/Source"sv; }
@@ -1408,7 +1407,7 @@ spa_audio_info_raw make_spa_info(DeviceBase *device, bool is51rear, use_f32p_e u
     if(!map.empty())
     {
         info.channels = static_cast<uint32_t>(map.size());
-        std::copy(map.begin(), map.end(), info.position);
+        std::copy(map.begin(), map.end(), std::begin(info.position));
     }
 
     return info;
