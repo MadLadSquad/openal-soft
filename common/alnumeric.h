@@ -27,6 +27,16 @@ constexpr auto operator "" _uz(unsigned long long n) noexcept { return static_ca
 constexpr auto operator "" _zu(unsigned long long n) noexcept { return static_cast<size_t>(n); }
 
 
+constexpr auto GetCounterSuffix(size_t count) noexcept -> const char*
+{
+    auto &suffix = (((count%100)/10) == 1) ? "th" :
+        ((count%10) == 1) ? "st" :
+        ((count%10) == 2) ? "nd" :
+        ((count%10) == 3) ? "rd" : "th";
+    return std::data(suffix);
+}
+
+
 constexpr inline float minf(float a, float b) noexcept
 { return ((a > b) ? b : a); }
 constexpr inline float maxf(float a, float b) noexcept
@@ -135,21 +145,18 @@ inline int fastf2i(float f) noexcept
 #if defined(HAVE_SSE_INTRINSICS)
     return _mm_cvt_ss2si(_mm_set_ss(f));
 
-#elif defined(_MSC_VER) && defined(_M_IX86_FP)
+#elif defined(_MSC_VER) && defined(_M_IX86_FP) && _M_IX86_FP == 0
 
     int i;
     __asm fld f
     __asm fistp i
     return i;
 
-#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__)) \
+    && !defined(__SSE_MATH__)
 
     int i;
-#ifdef __SSE_MATH__
-    __asm__("cvtss2si %1, %0" : "=r"(i) : "x"(f));
-#else
     __asm__ __volatile__("fistpl %0" : "=m"(i) : "t"(f) : "st");
-#endif
     return i;
 
 #else
@@ -269,10 +276,14 @@ inline float fast_roundf(float f) noexcept
      * optimize this out because of non-associative rules on floating-point
      * math (as long as you don't use -fassociative-math,
      * -funsafe-math-optimizations, -ffast-math, or -Ofast, in which case this
-     * may break).
+     * may break without __builtin_assoc_barrier support).
      */
+#if HAS_BUILTIN(__builtin_assoc_barrier)
+    return __builtin_assoc_barrier(f + ilim[sign]) - ilim[sign];
+#else
     f += ilim[sign];
     return f - ilim[sign];
+#endif
 #endif
 }
 

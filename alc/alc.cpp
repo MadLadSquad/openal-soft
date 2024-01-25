@@ -183,10 +183,9 @@ BOOL APIENTRY DllMain(HINSTANCE module, DWORD reason, LPVOID /*reserved*/)
 
 namespace {
 
-using namespace std::placeholders;
+using namespace std::string_view_literals;
 using std::chrono::seconds;
 using std::chrono::nanoseconds;
-using std::string_view_literals::operator""sv;
 
 using voidp = void*;
 using float2 = std::array<float,2>;
@@ -666,7 +665,7 @@ void alc_initconfig()
             std::for_each(gEffectList.cbegin(), gEffectList.cend(),
                 [entry](const EffectList &effectitem) noexcept
                 {
-                    if(entry == effectitem.name)
+                    if(entry == std::data(effectitem.name))
                         DisabledEffects.set(effectitem.type);
                 });
         }
@@ -1421,11 +1420,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
                     || device->mAmbiScale == DevAmbiScaling::FuMa))
             {
                 ERR("FuMa is incompatible with %d%s order ambisonics (up to 3rd order only)\n",
-                    device->mAmbiOrder,
-                    (((device->mAmbiOrder%100)/10) == 1) ? "th" :
-                    ((device->mAmbiOrder%10) == 1) ? "st" :
-                    ((device->mAmbiOrder%10) == 2) ? "nd" :
-                    ((device->mAmbiOrder%10) == 3) ? "rd" : "th");
+                    device->mAmbiOrder, GetCounterSuffix(device->mAmbiOrder));
                 device->mAmbiOrder = 3;
             }
         }
