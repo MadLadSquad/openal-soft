@@ -37,6 +37,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -44,6 +45,7 @@
 #include "alc/alconfig.h"
 #include "almalloc.h"
 #include "alnumeric.h"
+#include "alstring.h"
 #include "althrd_setname.h"
 #include "core/device.h"
 #include "core/helpers.h"
@@ -187,13 +189,13 @@ void ALCossListPopulate(std::vector<DevMap> &devlist, int type_flag)
     FileHandle file;
     if(!file.open("/dev/mixer", O_RDONLY))
     {
-        TRACE("Could not open /dev/mixer: %s\n", strerror(errno));
+        TRACE("Could not open /dev/mixer: %s\n", std::generic_category().message(errno).c_str());
         goto done;
     }
 
     if(ioctl(file.get(), SNDCTL_SYSINFO, &si) == -1)
     {
-        TRACE("SNDCTL_SYSINFO failed: %s\n", strerror(errno));
+        TRACE("SNDCTL_SYSINFO failed: %s\n", std::generic_category().message(errno).c_str());
         goto done;
     }
 
@@ -203,7 +205,8 @@ void ALCossListPopulate(std::vector<DevMap> &devlist, int type_flag)
         ai.dev = i;
         if(ioctl(file.get(), SNDCTL_AUDIOINFO, &ai) == -1)
         {
-            ERR("SNDCTL_AUDIOINFO (%d) failed: %s\n", i, strerror(errno));
+            ERR("SNDCTL_AUDIOINFO (%d) failed: %s\n", i,
+                std::generic_category().message(errno).c_str());
             continue;
         }
         if(!(ai.caps&type_flag) || ai.devnode[0] == '\0')
@@ -299,8 +302,9 @@ int OSSPlayback::mixerProc()
         {
             if(errno == EINTR || errno == EAGAIN)
                 continue;
-            ERR("poll failed: %s\n", strerror(errno));
-            mDevice->handleDisconnect("Failed waiting for playback buffer: %s", strerror(errno));
+            const auto errstr = std::generic_category().message(errno);
+            ERR("poll failed: %s\n", errstr.c_str());
+            mDevice->handleDisconnect("Failed waiting for playback buffer: %s", errstr.c_str());
             break;
         }
         else if(pret == 0)
@@ -319,8 +323,9 @@ int OSSPlayback::mixerProc()
             {
                 if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                     continue;
-                ERR("write failed: %s\n", strerror(errno));
-                mDevice->handleDisconnect("Failed writing playback samples: %s", strerror(errno));
+                const auto errstr = std::generic_category().message(errno);
+                ERR("write failed: %s\n", errstr.c_str());
+                mDevice->handleDisconnect("Failed writing playback samples: %s", errstr.c_str());
                 break;
             }
 
@@ -349,14 +354,14 @@ void OSSPlayback::open(std::string_view name)
         );
         if(iter == PlaybackDevices.cend())
             throw al::backend_exception{al::backend_error::NoDevice,
-                "Device name \"%.*s\" not found", static_cast<int>(name.length()), name.data()};
+                "Device name \"%.*s\" not found", al::sizei(name), name.data()};
         devname = iter->device_name.c_str();
     }
 
     int fd{::open(devname, O_WRONLY)};
     if(fd == -1)
         throw al::backend_exception{al::backend_error::NoDevice, "Could not open %s: %s", devname,
-            strerror(errno)};
+            std::generic_category().message(errno).c_str()};
 
     if(mFd != -1)
         ::close(mFd);
@@ -397,7 +402,8 @@ bool OSSPlayback::reset()
 
     audio_buf_info info{};
 #define CHECKERR(func) if((func) < 0)                                         \
-    throw al::backend_exception{al::backend_error::DeviceError, "%s failed: %s\n", #func, strerror(errno)};
+    throw al::backend_exception{al::backend_error::DeviceError, "%s failed: %s\n", #func, \
+        std::generic_category().message(errno).c_str()};
 
     /* Don't fail if SETFRAGMENT fails. We can handle just about anything
      * that's reported back via GETOSPACE */
@@ -454,7 +460,7 @@ void OSSPlayback::stop()
     mThread.join();
 
     if(ioctl(mFd, SNDCTL_DSP_RESET) != 0)
-        ERR("Error resetting device: %s\n", strerror(errno));
+        ERR("Error resetting device: %s\n", std::generic_category().message(errno).c_str());
 }
 
 
@@ -503,8 +509,9 @@ int OSScapture::recordProc()
         {
             if(errno == EINTR || errno == EAGAIN)
                 continue;
-            ERR("poll failed: %s\n", strerror(errno));
-            mDevice->handleDisconnect("Failed to check capture samples: %s", strerror(errno));
+            const auto errstr = std::generic_category().message(errno);
+            ERR("poll failed: %s\n", errstr.c_str());
+            mDevice->handleDisconnect("Failed to check capture samples: %s", errstr.c_str());
             break;
         }
         else if(sret == 0)
@@ -519,8 +526,9 @@ int OSScapture::recordProc()
             ssize_t amt{read(mFd, vec.first.buf, vec.first.len*frame_size)};
             if(amt < 0)
             {
-                ERR("read failed: %s\n", strerror(errno));
-                mDevice->handleDisconnect("Failed reading capture samples: %s", strerror(errno));
+                const auto errstr = std::generic_category().message(errno);
+                ERR("read failed: %s\n", errstr.c_str());
+                mDevice->handleDisconnect("Failed reading capture samples: %s", errstr.c_str());
                 break;
             }
             mRing->writeAdvance(static_cast<size_t>(amt)/frame_size);
@@ -547,14 +555,14 @@ void OSScapture::open(std::string_view name)
         );
         if(iter == CaptureDevices.cend())
             throw al::backend_exception{al::backend_error::NoDevice,
-                "Device name \"%.*s\" not found", static_cast<int>(name.length()), name.data()};
+                "Device name \"%.*s\" not found", al::sizei(name), name.data()};
         devname = iter->device_name.c_str();
     }
 
     mFd = ::open(devname, O_RDONLY);
     if(mFd == -1)
         throw al::backend_exception{al::backend_error::NoDevice, "Could not open %s: %s", devname,
-            strerror(errno)};
+            std::generic_category().message(errno).c_str()};
 
     int ossFormat{};
     switch(mDevice->FmtType)
@@ -587,7 +595,7 @@ void OSScapture::open(std::string_view name)
     audio_buf_info info{};
 #define CHECKERR(func) if((func) < 0) {                                       \
     throw al::backend_exception{al::backend_error::DeviceError, #func " failed: %s", \
-        strerror(errno)};                                                     \
+        std::generic_category().message(errno).c_str()};                      \
 }
     CHECKERR(ioctl(mFd, SNDCTL_DSP_SETFRAGMENT, &numFragmentsLogSize));
     CHECKERR(ioctl(mFd, SNDCTL_DSP_SETFMT, &ossFormat));
@@ -632,7 +640,7 @@ void OSScapture::stop()
     mThread.join();
 
     if(ioctl(mFd, SNDCTL_DSP_RESET) != 0)
-        ERR("Error resetting device: %s\n", strerror(errno));
+        ERR("Error resetting device: %s\n", std::generic_category().message(errno).c_str());
 }
 
 void OSScapture::captureSamples(std::byte *buffer, uint samples)
