@@ -256,7 +256,7 @@ std::vector<DevMap> PlaybackDevices;
 std::vector<DevMap> CaptureDevices;
 
 
-const std::string_view prefix_name(snd_pcm_stream_t stream)
+std::string_view prefix_name(snd_pcm_stream_t stream) noexcept
 {
     if(stream == SND_PCM_STREAM_PLAYBACK)
         return "device-prefix"sv;
@@ -494,7 +494,7 @@ AlsaPlayback::~AlsaPlayback()
 int AlsaPlayback::mixerProc()
 {
     SetRTPriority();
-    althrd_setname(MIXER_THREAD_NAME);
+    althrd_setname(GetMixerThreadName());
 
     const snd_pcm_uframes_t update_size{mDevice->UpdateSize};
     const snd_pcm_uframes_t buffer_size{mDevice->BufferSize};
@@ -577,7 +577,7 @@ int AlsaPlayback::mixerProc()
 int AlsaPlayback::mixerNoMMapProc()
 {
     SetRTPriority();
-    althrd_setname(MIXER_THREAD_NAME);
+    althrd_setname(GetMixerThreadName());
 
     const snd_pcm_uframes_t update_size{mDevice->UpdateSize};
     const snd_pcm_uframes_t buffer_size{mDevice->BufferSize};

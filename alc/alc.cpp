@@ -1585,7 +1585,7 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             break;
         }
     }
-    if(optlimit.value_or(false) == false)
+    if(!optlimit.value_or(false))
         TRACE("Output limiter disabled\n");
     else
     {
@@ -1870,7 +1870,7 @@ FORCE_ALIGN void ALC_APIENTRY alsoft_set_log_callback(LPALSOFTLOGCALLBACK callba
 }
 
 /** Returns a new reference to the currently active context for this thread. */
-ContextRef GetContextRef()
+ContextRef GetContextRef() noexcept
 {
     ALCcontext *context{ALCcontext::getThreadContext()};
     if(context)
