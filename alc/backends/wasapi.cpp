@@ -1494,9 +1494,9 @@ void WasapiPlayback::prepareFormat(WAVEFORMATEXTENSIBLE &OutputType)
 void WasapiPlayback::finalizeFormat(WAVEFORMATEXTENSIBLE &OutputType)
 {
     if(!GetConfigValueBool(mDevice->DeviceName, "wasapi", "allow-resampler", true))
-        mDevice->Frequency = OutputType.Format.nSamplesPerSec;
+        mDevice->Frequency = uint(OutputType.Format.nSamplesPerSec);
     else
-        mDevice->Frequency = minu(mDevice->Frequency, OutputType.Format.nSamplesPerSec);
+        mDevice->Frequency = std::min(mDevice->Frequency, uint(OutputType.Format.nSamplesPerSec));
 
     const uint32_t chancount{OutputType.Format.nChannels};
     const DWORD chanmask{OutputType.dwChannelMask};
@@ -1773,9 +1773,10 @@ HRESULT WasapiPlayback::resetProxy()
         if(streamParams.StaticObjectTypeMask == ChannelMask_Stereo)
             mDevice->FmtChans = DevFmtStereo;
         if(!GetConfigValueBool(mDevice->DeviceName, "wasapi", "allow-resampler", true))
-            mDevice->Frequency = OutputType.Format.nSamplesPerSec;
+            mDevice->Frequency = uint(OutputType.Format.nSamplesPerSec);
         else
-            mDevice->Frequency = minu(mDevice->Frequency, OutputType.Format.nSamplesPerSec);
+            mDevice->Frequency = std::min(mDevice->Frequency,
+                uint(OutputType.Format.nSamplesPerSec));
 
         setDefaultWFXChannelOrder();
 
@@ -1937,15 +1938,16 @@ no_spatial:
 
     /* Find the nearest multiple of the period size to the update size */
     if(min_per < per_time)
-        min_per *= maxi64((per_time + min_per/2) / min_per, 1);
+        min_per *= std::max<int64_t>((per_time + min_per/2) / min_per, 1_i64);
 
     mOrigBufferSize = buffer_len;
-    mOrigUpdateSize = minu(RefTime2Samples(min_per, mFormat.Format.nSamplesPerSec), buffer_len/2);
+    mOrigUpdateSize = std::min(RefTime2Samples(min_per, mFormat.Format.nSamplesPerSec),
+        buffer_len/2u);
 
     mDevice->BufferSize = static_cast<uint>(uint64_t{buffer_len} * mDevice->Frequency /
         mFormat.Format.nSamplesPerSec);
-    mDevice->UpdateSize = minu(RefTime2Samples(min_per, mDevice->Frequency),
-        mDevice->BufferSize/2);
+    mDevice->UpdateSize = std::min(RefTime2Samples(min_per, mDevice->Frequency),
+        mDevice->BufferSize/2u);
 
     mResampler = nullptr;
     mResampleBuffer.clear();
@@ -2172,11 +2174,12 @@ FORCE_ALIGN int WasapiCapture::recordProc()
                 size_t dstframes;
                 if(mSampleConv)
                 {
+                    static constexpr auto lenlimit = size_t{std::numeric_limits<int>::max()};
                     const void *srcdata{rdata};
                     uint srcframes{numsamples};
 
                     dstframes = mSampleConv->convert(&srcdata, &srcframes, data.first.buf,
-                        static_cast<uint>(minz(data.first.len, INT_MAX)));
+                        static_cast<uint>(std::min(data.first.len, lenlimit)));
                     if(srcframes > 0 && dstframes == data.first.len && data.second.len > 0)
                     {
                         /* If some source samples remain, all of the first dest
@@ -2184,14 +2187,14 @@ FORCE_ALIGN int WasapiCapture::recordProc()
                          * dest block, do another run for the second block.
                          */
                         dstframes += mSampleConv->convert(&srcdata, &srcframes, data.second.buf,
-                            static_cast<uint>(minz(data.second.len, INT_MAX)));
+                            static_cast<uint>(std::min(data.second.len, lenlimit)));
                     }
                 }
                 else
                 {
                     const uint framesize{mDevice->frameSizeFromFmt()};
-                    size_t len1{minz(data.first.len, numsamples)};
-                    size_t len2{minz(data.second.len, numsamples-len1)};
+                    size_t len1{std::min(data.first.len, size_t{numsamples})};
+                    size_t len2{std::min(data.second.len, numsamples-len1)};
 
                     memcpy(data.first.buf, rdata, len1*framesize);
                     if(len2 > 0)

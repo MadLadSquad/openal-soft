@@ -53,7 +53,7 @@
 
 namespace {
 
-using SubListAllocator = typename al::allocator<std::array<ALeffectslot,64>>;
+using SubListAllocator = al::allocator<std::array<ALeffectslot,64>>;
 
 struct FactoryItem {
     EffectSlotType Type;
@@ -250,7 +250,7 @@ bool EnsureEffectSlots(ALCcontext *context, size_t needed)
             sublist.FreeMask = ~0_u64;
             sublist.EffectSlots = SubListAllocator{}.allocate(1);
             context->mEffectSlotList.emplace_back(std::move(sublist));
-            count += 64;
+            count += std::tuple_size_v<SubListAllocator::value_type>;
         }
     }
     catch(...) {
@@ -1477,7 +1477,7 @@ void ALeffectslot::eax_set_efx_slot_gain(ALfloat gain)
     if(gain < 0.0f || gain > 1.0f)
         ERR(EAX_PREFIX "Gain out of range (%f)\n", gain);
 
-    Gain = clampf(gain, 0.0f, 1.0f);
+    Gain = std::clamp(gain, 0.0f, 1.0f);
     mPropsDirty = true;
 
 #undef EAX_PREFIX
