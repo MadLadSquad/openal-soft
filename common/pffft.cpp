@@ -57,12 +57,15 @@
 
 #include "pffft.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <new>
+#include <utility>
 #include <vector>
 
 #include "albit.h"
@@ -73,10 +76,9 @@
 #include "opthelpers.h"
 
 
-namespace {
-
 using uint = unsigned int;
 
+namespace {
 
 /* Vector support macros: the rest of the code is independent of
  * SSE/Altivec/NEON -- adding support for other platforms with 4-element
@@ -343,52 +345,85 @@ force_inline void vcplxmulconj(v4sf &ar, v4sf &ai, v4sf br, v4sf bi) noexcept
 
 #if !defined(PFFFT_SIMD_DISABLE)
 
-#define assertv4(v,f0,f1,f2,f3) assert(v##_f[0] == (f0) && v##_f[1] == (f1) && v##_f[2] == (f2) && v##_f[3] == (f3))
+inline void assertv4(const al::span<float,4> v_f [[maybe_unused]], const float f0 [[maybe_unused]],
+    const float f1 [[maybe_unused]], const float f2 [[maybe_unused]],
+    const float f3 [[maybe_unused]])
+{ assert(v_f[0] == f0 && v_f[1] == f1 && v_f[2] == f2 && v_f[3] == f3); }
+
+template<typename T, T ...N>
+constexpr auto make_float_array(std::integer_sequence<T,N...>)
+{ return std::array{static_cast<float>(N)...}; }
 
 /* detect bugs with the vector support macros */
 [[maybe_unused]] void validate_pffft_simd()
 {
     using float4 = std::array<float,4>;
-    static constexpr std::array<float,16> f{{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}};
+    static constexpr auto f = make_float_array(std::make_index_sequence<16>{});
 
-    float4 a0_f, a1_f, a2_f, a3_f, t_f, u_f;
-    v4sf a0_v, a1_v, a2_v, a3_v, t_v, u_v;
-    std::memcpy(&a0_v, f.data(), 4*sizeof(float));
-    std::memcpy(&a1_v, f.data()+4, 4*sizeof(float));
-    std::memcpy(&a2_v, f.data()+8, 4*sizeof(float));
-    std::memcpy(&a3_v, f.data()+12, 4*sizeof(float));
+    v4sf a0_v{vset4(f[ 0], f[ 1], f[ 2], f[ 3])};
+    v4sf a1_v{vset4(f[ 4], f[ 5], f[ 6], f[ 7])};
+    v4sf a2_v{vset4(f[ 8], f[ 9], f[10], f[11])};
+    v4sf a3_v{vset4(f[12], f[13], f[14], f[15])};
+    v4sf u_v{};
 
-    t_v = vzero(); t_f = al::bit_cast<float4>(t_v);
-    printf("VZERO=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]); assertv4(t, 0, 0, 0, 0);
-    t_v = vadd(a1_v, a2_v); t_f = al::bit_cast<float4>(t_v);
-    printf("VADD(4:7,8:11)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]); assertv4(t, 12, 14, 16, 18);
-    t_v = vmul(a1_v, a2_v); t_f = al::bit_cast<float4>(t_v);
-    printf("VMUL(4:7,8:11)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]); assertv4(t, 32, 45, 60, 77);
-    t_v = vmadd(a1_v, a2_v,a0_v); t_f = al::bit_cast<float4>(t_v);
-    printf("VMADD(4:7,8:11,0:3)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]); assertv4(t, 32, 46, 62, 80);
+    auto t_v = vzero();
+    auto t_f = al::bit_cast<float4>(t_v);
+    printf("VZERO=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
+    assertv4(t_f, 0, 0, 0, 0);
 
-    interleave2(a1_v,a2_v,t_v,u_v); t_f = al::bit_cast<float4>(t_v); u_f = al::bit_cast<float4>(u_v);
-    printf("INTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3], u_f[0], u_f[1], u_f[2], u_f[3]);
-    assertv4(t, 4, 8, 5, 9); assertv4(u, 6, 10, 7, 11);
-    uninterleave2(a1_v,a2_v,t_v,u_v); t_f = al::bit_cast<float4>(t_v); u_f = al::bit_cast<float4>(u_v);
-    printf("UNINTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3], u_f[0], u_f[1], u_f[2], u_f[3]);
-    assertv4(t, 4, 6, 8, 10); assertv4(u, 5, 7, 9, 11);
+    t_v = vadd(a1_v, a2_v);
+    t_f = al::bit_cast<float4>(t_v);
+    printf("VADD(4:7,8:11)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
+    assertv4(t_f, 12, 14, 16, 18);
 
-    t_v=ld_ps1(f[15]); t_f = al::bit_cast<float4>(t_v);
+    t_v = vmul(a1_v, a2_v);
+    t_f = al::bit_cast<float4>(t_v);
+    printf("VMUL(4:7,8:11)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
+    assertv4(t_f, 32, 45, 60, 77);
+
+    t_v = vmadd(a1_v, a2_v, a0_v);
+    t_f = al::bit_cast<float4>(t_v);
+    printf("VMADD(4:7,8:11,0:3)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
+    assertv4(t_f, 32, 46, 62, 80);
+
+    interleave2(a1_v, a2_v, t_v, u_v);
+    t_f = al::bit_cast<float4>(t_v);
+    auto u_f = al::bit_cast<float4>(u_v);
+    printf("INTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n",
+        t_f[0], t_f[1], t_f[2], t_f[3], u_f[0], u_f[1], u_f[2], u_f[3]);
+    assertv4(t_f, 4, 8, 5, 9);
+    assertv4(u_f, 6, 10, 7, 11);
+
+    uninterleave2(a1_v, a2_v, t_v, u_v);
+    t_f = al::bit_cast<float4>(t_v);
+    u_f = al::bit_cast<float4>(u_v);
+    printf("UNINTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n",
+        t_f[0], t_f[1], t_f[2], t_f[3], u_f[0], u_f[1], u_f[2], u_f[3]);
+    assertv4(t_f, 4, 6, 8, 10);
+    assertv4(u_f, 5, 7, 9, 11);
+
+    t_v = ld_ps1(f[15]);
+    t_f = al::bit_cast<float4>(t_v);
     printf("LD_PS1(15)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
-    assertv4(t, 15, 15, 15, 15);
-    t_v = vswaphl(a1_v, a2_v); t_f = al::bit_cast<float4>(t_v);
+    assertv4(t_f, 15, 15, 15, 15);
+
+    t_v = vswaphl(a1_v, a2_v);
+    t_f = al::bit_cast<float4>(t_v);
     printf("VSWAPHL(4:7,8:11)=[%2g %2g %2g %2g]\n", t_f[0], t_f[1], t_f[2], t_f[3]);
-    assertv4(t, 8, 9, 6, 7);
+    assertv4(t_f, 8, 9, 6, 7);
+
     vtranspose4(a0_v, a1_v, a2_v, a3_v);
-    a0_f = al::bit_cast<float4>(a0_v);
-    a1_f = al::bit_cast<float4>(a1_v);
-    a2_f = al::bit_cast<float4>(a2_v);
-    a3_f = al::bit_cast<float4>(a3_v);
+    auto a0_f = al::bit_cast<float4>(a0_v);
+    auto a1_f = al::bit_cast<float4>(a1_v);
+    auto a2_f = al::bit_cast<float4>(a2_v);
+    auto a3_f = al::bit_cast<float4>(a3_v);
     printf("VTRANSPOSE4(0:3,4:7,8:11,12:15)=[%2g %2g %2g %2g] [%2g %2g %2g %2g] [%2g %2g %2g %2g] [%2g %2g %2g %2g]\n",
           a0_f[0], a0_f[1], a0_f[2], a0_f[3], a1_f[0], a1_f[1], a1_f[2], a1_f[3],
           a2_f[0], a2_f[1], a2_f[2], a2_f[3], a3_f[0], a3_f[1], a3_f[2], a3_f[3]);
-    assertv4(a0, 0, 4, 8, 12); assertv4(a1, 1, 5, 9, 13); assertv4(a2, 2, 6, 10, 14); assertv4(a3, 3, 7, 11, 15);
+    assertv4(a0_f, 0, 4, 8, 12);
+    assertv4(a1_f, 1, 5, 9, 13);
+    assertv4(a2_f, 2, 6, 10, 14);
+    assertv4(a3_f, 3, 7, 11, 15);
 }
 #endif //!PFFFT_SIMD_DISABLE
 
@@ -1427,7 +1462,7 @@ struct PFFFT_Setup {
     alignas(V4sfAlignment) std::byte end;
 };
 
-gsl::owner<PFFFT_Setup*> pffft_new_setup(unsigned int N, pffft_transform_t transform)
+PFFFTSetupPtr pffft_new_setup(unsigned int N, pffft_transform_t transform)
 {
     assert(transform == PFFFT_REAL || transform == PFFFT_COMPLEX);
     assert(N > 0);
@@ -1447,7 +1482,7 @@ gsl::owner<PFFFT_Setup*> pffft_new_setup(unsigned int N, pffft_transform_t trans
     auto storage = static_cast<gsl::owner<std::byte*>>(::operator new[](storelen, V4sfAlignVal));
     al::span extrastore{&storage[offsetof(PFFFT_Setup, end)], 2_zu*Ncvec*sizeof(v4sf)};
 
-    gsl::owner<PFFFT_Setup*> s{::new(storage) PFFFT_Setup{}};
+    PFFFTSetupPtr s{::new(storage) PFFFT_Setup{}};
     s->N = N;
     s->transform = transform;
     s->Ncvec = Ncvec;
@@ -1483,10 +1518,7 @@ gsl::owner<PFFFT_Setup*> pffft_new_setup(unsigned int N, pffft_transform_t trans
         m *= s->ifac[2+k];
 
     if(m != N/SimdSize)
-    {
-        pffft_destroy_setup(s);
         s = nullptr;
-    }
 
     return s;
 }
@@ -2122,8 +2154,7 @@ void pffft_transform_ordered(const PFFFT_Setup *setup, const float *input, float
 
 namespace {
 
-#define pffft_transform_internal_nosimd pffft_transform_internal
-void pffft_transform_internal_nosimd(const PFFFT_Setup *setup, const float *input, float *output,
+void pffft_transform_internal(const PFFFT_Setup *setup, const float *input, float *output,
     float *scratch, const pffft_direction_t direction, bool ordered)
 {
     const size_t Ncvec{setup->Ncvec};
@@ -2179,8 +2210,7 @@ void pffft_transform_internal_nosimd(const PFFFT_Setup *setup, const float *inpu
 
 } // namespace
 
-#define pffft_zreorder_nosimd pffft_zreorder
-void pffft_zreorder_nosimd(const PFFFT_Setup *setup, const float *in, float *RESTRICT out,
+void pffft_zreorder(const PFFFT_Setup *setup, const float *in, float *RESTRICT out,
     pffft_direction_t direction)
 {
     const size_t N{setup->N};
