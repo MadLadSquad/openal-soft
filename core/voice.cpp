@@ -785,14 +785,6 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
     std::transform(Device->mSampleData.end() - mChans.size(), Device->mSampleData.end(),
         MixingSamples.begin(), get_bufferline);
 
-    /* If there's a matching sample step and no phase offset, use a simple copy
-     * for resampling.
-     */
-    const ResamplerFunc Resample{(increment == MixerFracOne && DataPosFrac == 0)
-        ? ResamplerFunc{[](const InterpState*, const float *RESTRICT src, uint, const uint,
-            const al::span<float> dst) { std::copy_n(src, dst.size(), dst.begin()); }}
-        : mResampler};
-
     /* UHJ2 and SuperStereo only have 2 buffer channels, but 3 mixing channels
      * (3rd channel is generated from decoding).
      */
@@ -800,12 +792,12 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
         : MixingSamples.size()};
     for(size_t chan{0};chan < realChannels;++chan)
     {
-        using ResBufType = decltype(DeviceBase::mResampleData);
-        static constexpr uint srcSizeMax{static_cast<uint>(ResBufType{}.size()-MaxResamplerEdge)};
+        static constexpr uint ResBufSize{std::tuple_size_v<decltype(DeviceBase::mResampleData)>};
+        static constexpr uint srcSizeMax{ResBufSize - MaxResamplerEdge};
 
         const al::span prevSamples{mPrevSamples[chan]};
-        const auto resampleBuffer = std::copy(prevSamples.cbegin(), prevSamples.cend(),
-            Device->mResampleData.begin()) - MaxResamplerEdge;
+        std::copy(prevSamples.cbegin(), prevSamples.cend(), Device->mResampleData.begin());
+        const auto resampleBuffer = Device->mResampleData.begin() + MaxResamplerEdge;
         int intPos{DataPosInt};
         uint fracPos{DataPosFrac};
 
@@ -860,8 +852,8 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
             /* Load the necessary samples from the given buffer(s). */
             if(!BufferListItem)
             {
-                const uint avail{std::min(srcBufferSize, uint{MaxResamplerEdge})};
-                const uint tofill{std::max(srcBufferSize, uint{MaxResamplerEdge})};
+                const uint avail{std::min(srcBufferSize, MaxResamplerEdge)};
+                const uint tofill{std::max(srcBufferSize, MaxResamplerEdge)};
 
                 /* When loading from a voice that ended prematurely, only take
                  * the samples that get closest to 0 amplitude. This helps
@@ -931,8 +923,14 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                         mFrameStep, srcSampleDelay, srcBufferSize, al::to_address(resampleBuffer));
             }
 
-            Resample(&mResampleState, al::to_address(resampleBuffer), fracPos, increment,
-                {MixingSamples[chan]+samplesLoaded, dstBufferSize});
+            /* If there's a matching sample step and no phase offset, use a
+             * simple copy for resampling.
+             */
+            if(increment == MixerFracOne && fracPos == 0)
+                std::copy_n(resampleBuffer, dstBufferSize, MixingSamples[chan]+samplesLoaded);
+            else
+                mResampler(&mResampleState, al::to_address(resampleBuffer), fracPos, increment,
+                    {MixingSamples[chan]+samplesLoaded, dstBufferSize});
 
             /* Store the last source samples used for next time. */
             if(vstate == Playing) LIKELY
