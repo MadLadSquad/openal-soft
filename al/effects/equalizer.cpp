@@ -9,6 +9,7 @@
 
 #ifdef ALSOFT_EAX
 #include "alnumeric.h"
+#include "al/eax/effect.h"
 #include "al/eax/exception.h"
 #include "al/eax/utils.h"
 #endif // ALSOFT_EAX
@@ -112,7 +113,7 @@ void EffectHandler::SetParamf(EqualizerProps &props, ALenum param, float val)
     }
 }
 void EffectHandler::SetParamfv(EqualizerProps &props, ALenum param, const float *vals)
-{ SetParamf(props, param, vals[0]); }
+{ SetParamf(props, param, *vals); }
 
 void EffectHandler::GetParami(const EqualizerProps&, ALenum param, int*)
 { throw effect_exception{AL_INVALID_ENUM, "Invalid equalizer integer property 0x%04x", param}; }

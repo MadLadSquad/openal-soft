@@ -9,6 +9,7 @@
 
 #ifdef ALSOFT_EAX
 #include "alnumeric.h"
+#include "al/eax/effect.h"
 #include "al/eax/exception.h"
 #include "al/eax/utils.h"
 #endif // ALSOFT_EAX
@@ -77,7 +78,7 @@ void EffectHandler::SetParamf(DistortionProps &props, ALenum param, float val)
     }
 }
 void EffectHandler::SetParamfv(DistortionProps &props, ALenum param, const float *vals)
-{ SetParamf(props, param, vals[0]); }
+{ SetParamf(props, param, *vals); }
 
 void EffectHandler::GetParami(const DistortionProps&, ALenum param, int*)
 { throw effect_exception{AL_INVALID_ENUM, "Invalid distortion integer property 0x%04x", param}; }

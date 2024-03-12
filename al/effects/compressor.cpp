@@ -9,6 +9,7 @@
 
 #ifdef ALSOFT_EAX
 #include "alnumeric.h"
+#include "al/eax/effect.h"
 #include "al/eax/exception.h"
 #include "al/eax/utils.h"
 #endif // ALSOFT_EAX
@@ -43,7 +44,7 @@ void EffectHandler::SetParami(CompressorProps &props, ALenum param, int val)
     }
 }
 void EffectHandler::SetParamiv(CompressorProps &props, ALenum param, const int *vals)
-{ SetParami(props, param, vals[0]); }
+{ SetParami(props, param, *vals); }
 void EffectHandler::SetParamf(CompressorProps&, ALenum param, float)
 { throw effect_exception{AL_INVALID_ENUM, "Invalid compressor float property 0x%04x", param}; }
 void EffectHandler::SetParamfv(CompressorProps&, ALenum param, const float*)
