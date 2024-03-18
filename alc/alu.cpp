@@ -296,7 +296,7 @@ void DeviceBase::ProcessHrtf(const size_t SamplesToDo)
 
 void DeviceBase::ProcessAmbiDec(const size_t SamplesToDo)
 {
-    AmbiDecoder->process(RealOut.Buffer, Dry.Buffer.data(), SamplesToDo);
+    AmbiDecoder->process(RealOut.Buffer, Dry.Buffer, SamplesToDo);
 }
 
 void DeviceBase::ProcessAmbiDecStablized(const size_t SamplesToDo)
@@ -306,8 +306,7 @@ void DeviceBase::ProcessAmbiDecStablized(const size_t SamplesToDo)
     const size_t ridx{RealOut.ChannelIndex[FrontRight]};
     const size_t cidx{RealOut.ChannelIndex[FrontCenter]};
 
-    AmbiDecoder->processStablize(RealOut.Buffer, Dry.Buffer.data(), lidx, ridx, cidx,
-        SamplesToDo);
+    AmbiDecoder->processStablize(RealOut.Buffer, Dry.Buffer, lidx, ridx, cidx, SamplesToDo);
 }
 
 void DeviceBase::ProcessUhj(const size_t SamplesToDo)
@@ -324,7 +323,7 @@ void DeviceBase::ProcessUhj(const size_t SamplesToDo)
 void DeviceBase::ProcessBs2b(const size_t SamplesToDo)
 {
     /* First, decode the ambisonic mix to the "real" output. */
-    AmbiDecoder->process(RealOut.Buffer, Dry.Buffer.data(), SamplesToDo);
+    AmbiDecoder->process(RealOut.Buffer, Dry.Buffer, SamplesToDo);
 
     /* BS2B is stereo output only. */
     const size_t lidx{RealOut.ChannelIndex[FrontLeft]};
@@ -357,21 +356,22 @@ inline uint dither_rng(uint *seed) noexcept
 void UpsampleBFormatTransform(
     const al::span<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> output,
     const al::span<const std::array<float,MaxAmbiChannels>> upsampler,
-    const al::span<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> rotator, size_t coeffs_order)
+    const al::span<const std::array<float,MaxAmbiChannels>,MaxAmbiChannels> rotator,
+    size_t ambi_order)
 {
-    const size_t num_chans{AmbiChannelsFromOrder(coeffs_order)};
+    const size_t num_chans{AmbiChannelsFromOrder(ambi_order)};
     for(size_t i{0};i < upsampler.size();++i)
         output[i].fill(0.0f);
     for(size_t i{0};i < upsampler.size();++i)
     {
         for(size_t k{0};k < num_chans;++k)
         {
-            float *RESTRICT out{output[i].data()};
+            const float a{upsampler[i][k]};
             /* Write the full number of channels. The compiler will have an
              * easier time optimizing if it has a fixed length.
              */
-            for(size_t j{0};j < MaxAmbiChannels;++j)
-                out[j] += upsampler[i][k] * rotator[k][j];
+            std::transform(rotator[k].cbegin(), rotator[k].cend(), output[i].cbegin(),
+                output[i].begin(), [a](float rot, float dst) noexcept { return rot*a + dst; });
         }
     }
 }
@@ -1059,9 +1059,9 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
             /* Convert the rotation matrix for input ordering and scaling, and
              * whether input is 2D or 3D.
              */
-            const uint8_t *index_map{Is2DAmbisonic(voice->mFmtChannels) ?
-                GetAmbi2DLayout(voice->mAmbiLayout).data() :
-                GetAmbiLayout(voice->mAmbiLayout).data()};
+            const auto index_map = Is2DAmbisonic(voice->mFmtChannels) ?
+                GetAmbi2DLayout(voice->mAmbiLayout).subspan(0) :
+                GetAmbiLayout(voice->mAmbiLayout).subspan(0);
 
             /* Scale the panned W signal inversely to coverage (full coverage
              * means no panned signal), and according to the channel scaling.
@@ -1078,8 +1078,9 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                  * to the coverage amount) with the directional pan. For all
                  * other channels, use just the (scaled) B-Format signal.
                  */
-                for(size_t x{0};x < MaxAmbiChannels;++x)
-                    coeffs[x] += mixmatrix[acn][x] * scale;
+                std::transform(mixmatrix[acn].cbegin(), mixmatrix[acn].cend(), coeffs.begin(),
+                    coeffs.begin(), [scale](const float in, const float coeff) noexcept
+                    { return in*scale + coeff; });
 
                 ComputePanGains(&Device->Dry, coeffs, DryGain.Base,
                     voice->mChans[c].mDryParams.Gains.Target);
@@ -2136,34 +2137,32 @@ template<> inline uint16_t SampleConv(float val) noexcept
 template<> inline uint8_t SampleConv(float val) noexcept
 { return static_cast<uint8_t>(SampleConv<int8_t>(val) + 128); }
 
-template<DevFmtType T>
+template<typename T>
 void Write(const al::span<const FloatBufferLine> InBuffer, void *OutBuffer, const size_t Offset,
     const size_t SamplesToDo, const size_t FrameStep)
 {
     ASSUME(FrameStep > 0);
     ASSUME(SamplesToDo > 0);
 
-    DevFmtType_t<T> *outbase{static_cast<DevFmtType_t<T>*>(OutBuffer) + Offset*FrameStep};
+    const auto output = al::span{static_cast<T*>(OutBuffer), (Offset+SamplesToDo)*FrameStep}
+        .subspan(Offset*FrameStep);
     size_t c{0};
     for(const FloatBufferLine &inbuf : InBuffer)
     {
-        DevFmtType_t<T> *out{outbase++};
-        auto conv_sample = [FrameStep,&out](const float s) noexcept -> void
+        auto out = output.begin();
+        auto conv_sample = [FrameStep,c,&out](const float s) noexcept
         {
-            *out = SampleConv<DevFmtType_t<T>>(s);
-            out += FrameStep;
+            out[c] = SampleConv<T>(s);
+            out += ptrdiff_t(FrameStep);
         };
-        std::for_each(inbuf.begin(), inbuf.begin()+SamplesToDo, conv_sample);
+        std::for_each_n(inbuf.cbegin(), SamplesToDo, conv_sample);
         ++c;
     }
     if(const size_t extra{FrameStep - c})
     {
-        const auto silence = SampleConv<DevFmtType_t<T>>(0.0f);
+        const auto silence = SampleConv<T>(0.0f);
         for(size_t i{0};i < SamplesToDo;++i)
-        {
-            std::fill_n(outbase, extra, silence);
-            outbase += FrameStep;
-        }
+            std::fill_n(&output[i*FrameStep + c], extra, silence);
     }
 }
 
@@ -2223,10 +2222,11 @@ void DeviceBase::renderSamples(const al::span<float*> outBuffers, const uint num
     {
         const uint samplesToDo{renderSamples(todo)};
 
-        auto *srcbuf = RealOut.Buffer.data();
+        auto srcbuf = RealOut.Buffer.cbegin();
         for(auto *dstbuf : outBuffers)
         {
-            std::copy_n(srcbuf->data(), samplesToDo, dstbuf + total);
+            const auto dst = al::span{dstbuf, numSamples}.subspan(total);
+            std::copy_n(srcbuf->cbegin(), samplesToDo, dst.begin());
             ++srcbuf;
         }
 
@@ -2250,7 +2250,7 @@ void DeviceBase::renderSamples(void *outBuffer, const uint numSamples, const siz
             switch(FmtType)
             {
 #define HANDLE_WRITE(T) case T:                                               \
-    Write<T>(RealOut.Buffer, outBuffer, total, samplesToDo, frameStep); break;
+    Write<DevFmtType_t<T>>(RealOut.Buffer, outBuffer, total, samplesToDo, frameStep); break;
             HANDLE_WRITE(DevFmtByte)
             HANDLE_WRITE(DevFmtUByte)
             HANDLE_WRITE(DevFmtShort)
