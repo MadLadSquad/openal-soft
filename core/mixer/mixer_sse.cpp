@@ -43,32 +43,30 @@ constexpr uint CubicPhaseDiffMask{CubicPhaseDiffOne - 1u};
 force_inline __m128 vmadd(const __m128 x, const __m128 y, const __m128 z) noexcept
 { return _mm_add_ps(x, _mm_mul_ps(y, z)); }
 
-inline void ApplyCoeffs(float2 *RESTRICT Values, const size_t IrSize, const ConstHrirSpan Coeffs,
-    const float left, const float right)
+inline void ApplyCoeffs(const al::span<float2> Values, const size_t IrSize,
+    const ConstHrirSpan Coeffs, const float left, const float right)
 {
-    const __m128 lrlr{_mm_setr_ps(left, right, left, right)};
-
     ASSUME(IrSize >= MinIrLength);
+    ASSUME(IrSize <= HrirLength);
+    const auto lrlr = _mm_setr_ps(left, right, left, right);
+
     /* This isn't technically correct to test alignment, but it's true for
      * systems that support SSE, which is the only one that needs to know the
      * alignment of Values (which alternates between 8- and 16-byte aligned).
      */
-    if(!(reinterpret_cast<uintptr_t>(Values)&15))
+    if(!(reinterpret_cast<uintptr_t>(Values.data())&15))
     {
-        for(size_t i{0};i < IrSize;i += 2)
-        {
-            const __m128 coeffs{_mm_load_ps(Coeffs[i].data())};
-            __m128 vals{_mm_load_ps(Values[i].data())};
-            vals = vmadd(vals, lrlr, coeffs);
-            _mm_store_ps(Values[i].data(), vals);
-        }
+        const auto vals4 = al::span{reinterpret_cast<__m128*>(Values[0].data()), IrSize/2};
+        const auto coeffs4 = al::span{reinterpret_cast<const __m128*>(Coeffs[0].data()), IrSize/2};
+        std::transform(vals4.cbegin(), vals4.cend(), coeffs4.cbegin(), vals4.begin(),
+            [lrlr](const __m128 &val, const __m128 &coeff) -> __m128
+            { return vmadd(val, coeff, lrlr); });
     }
     else
     {
-        __m128 imp0, imp1;
-        __m128 coeffs{_mm_load_ps(Coeffs[0].data())};
-        __m128 vals{_mm_loadl_pi(_mm_setzero_ps(), reinterpret_cast<__m64*>(Values[0].data()))};
-        imp0 = _mm_mul_ps(lrlr, coeffs);
+        auto coeffs = _mm_load_ps(Coeffs[0].data());
+        auto vals = _mm_loadl_pi(_mm_setzero_ps(), reinterpret_cast<__m64*>(Values[0].data()));
+        auto imp0 = _mm_mul_ps(lrlr, coeffs);
         vals = _mm_add_ps(imp0, vals);
         _mm_storel_pi(reinterpret_cast<__m64*>(Values[0].data()), vals);
         size_t td{((IrSize+1)>>1) - 1};
@@ -76,7 +74,7 @@ inline void ApplyCoeffs(float2 *RESTRICT Values, const size_t IrSize, const Cons
         do {
             coeffs = _mm_load_ps(Coeffs[i+1].data());
             vals = _mm_load_ps(Values[i].data());
-            imp1 = _mm_mul_ps(lrlr, coeffs);
+            const auto imp1 = _mm_mul_ps(lrlr, coeffs);
             imp0 = _mm_shuffle_ps(imp0, imp1, _MM_SHUFFLE(1, 0, 3, 2));
             vals = _mm_add_ps(imp0, vals);
             _mm_store_ps(Values[i].data(), vals);
@@ -90,18 +88,16 @@ inline void ApplyCoeffs(float2 *RESTRICT Values, const size_t IrSize, const Cons
     }
 }
 
-force_inline void MixLine(const al::span<const float> InSamples, float *RESTRICT dst,
+force_inline void MixLine(const al::span<const float> InSamples, const al::span<float> dst,
     float &CurrentGain, const float TargetGain, const float delta, const size_t min_len,
     const size_t aligned_len, size_t Counter)
 {
-    float gain{CurrentGain};
-    const float step{(TargetGain-gain) * delta};
+    const float step{(TargetGain-CurrentGain) * delta};
 
     size_t pos{0};
-    if(!(std::abs(step) > std::numeric_limits<float>::epsilon()))
-        gain = TargetGain;
-    else
+    if(std::abs(step) > std::numeric_limits<float>::epsilon())
     {
+        const float gain{CurrentGain};
         float step_count{0.0f};
         /* Mix with applying gain steps in aligned multiples of 4. */
         if(size_t todo{min_len >> 2})
@@ -133,22 +129,23 @@ force_inline void MixLine(const al::span<const float> InSamples, float *RESTRICT
             dst[pos] += InSamples[pos] * (gain + step*step_count);
             step_count += 1.0f;
         }
-        if(pos == Counter)
-            gain = TargetGain;
-        else
-            gain += step*step_count;
+        if(min_len < Counter)
+        {
+            CurrentGain = gain + step*step_count;
+            return;
+        }
 
         /* Mix until pos is aligned with 4 or the mix is done. */
         for(size_t leftover{aligned_len&3};leftover;++pos,--leftover)
-            dst[pos] += InSamples[pos] * gain;
+            dst[pos] += InSamples[pos] * TargetGain;
     }
-    CurrentGain = gain;
+    CurrentGain = TargetGain;
 
-    if(!(std::abs(gain) > GainSilenceThreshold))
+    if(!(std::abs(TargetGain) > GainSilenceThreshold))
         return;
     if(size_t todo{(InSamples.size()-pos) >> 2})
     {
-        const __m128 gain4{_mm_set1_ps(gain)};
+        const __m128 gain4{_mm_set1_ps(TargetGain)};
         do {
             const __m128 val4{_mm_load_ps(&InSamples[pos])};
             __m128 dry4{_mm_load_ps(&dst[pos])};
@@ -157,8 +154,8 @@ force_inline void MixLine(const al::span<const float> InSamples, float *RESTRICT
             pos += 4;
         } while(--todo);
     }
-    for(size_t leftover{(InSamples.size()-pos)&3};leftover;++pos,--leftover)
-        dst[pos] += InSamples[pos] * gain;
+    for(size_t leftover{InSamples.size()&3};leftover;++pos,--leftover)
+        dst[pos] += InSamples[pos] * TargetGain;
 }
 
 } // namespace
@@ -294,50 +291,53 @@ void Resample_<FastBSincTag,SSETag>(const InterpState *state, const float *src, 
 
 
 template<>
-void MixHrtf_<SSETag>(const float *InSamples, float2 *AccumSamples, const uint IrSize,
-    const MixHrtfFilter *hrtfparams, const size_t BufferSize)
-{ MixHrtfBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, hrtfparams, BufferSize); }
+void MixHrtf_<SSETag>(const al::span<const float> InSamples, const al::span<float2> AccumSamples,
+    const uint IrSize, const MixHrtfFilter *hrtfparams, const size_t SamplesToDo)
+{ MixHrtfBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, hrtfparams, SamplesToDo); }
 
 template<>
-void MixHrtfBlend_<SSETag>(const float *InSamples, float2 *AccumSamples, const uint IrSize,
-    const HrtfFilter *oldparams, const MixHrtfFilter *newparams, const size_t BufferSize)
+void MixHrtfBlend_<SSETag>(const al::span<const float> InSamples,
+    const al::span<float2> AccumSamples, const uint IrSize, const HrtfFilter *oldparams,
+    const MixHrtfFilter *newparams, const size_t SamplesToDo)
 {
     MixHrtfBlendBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, oldparams, newparams,
-        BufferSize);
+        SamplesToDo);
 }
 
 template<>
 void MixDirectHrtf_<SSETag>(const FloatBufferSpan LeftOut, const FloatBufferSpan RightOut,
-    const al::span<const FloatBufferLine> InSamples, float2 *AccumSamples,
-    const al::span<float,BufferLineSize> TempBuf, HrtfChannelState *ChanState, const size_t IrSize,
-    const size_t BufferSize)
+    const al::span<const FloatBufferLine> InSamples, const al::span<float2> AccumSamples,
+    const al::span<float,BufferLineSize> TempBuf, const al::span<HrtfChannelState> ChanState,
+    const size_t IrSize, const size_t SamplesToDo)
 {
     MixDirectHrtfBase<ApplyCoeffs>(LeftOut, RightOut, InSamples, AccumSamples, TempBuf, ChanState,
-        IrSize, BufferSize);
+        IrSize, SamplesToDo);
 }
 
 
 template<>
 void Mix_<SSETag>(const al::span<const float> InSamples, const al::span<FloatBufferLine> OutBuffer,
-    float *CurrentGains, const float *TargetGains, const size_t Counter, const size_t OutPos)
+    const al::span<float> CurrentGains, const al::span<const float> TargetGains,
+    const size_t Counter, const size_t OutPos)
 {
     const float delta{(Counter > 0) ? 1.0f / static_cast<float>(Counter) : 0.0f};
     const auto min_len = std::min(Counter, InSamples.size());
     const auto aligned_len = std::min((min_len+3_uz) & ~3_uz, InSamples.size()) - min_len;
 
+    auto curgains = CurrentGains.begin();
+    auto targetgains = TargetGains.cbegin();
     for(FloatBufferLine &output : OutBuffer)
-        MixLine(InSamples, al::assume_aligned<16>(output.data()+OutPos), *CurrentGains++,
-            *TargetGains++, delta, min_len, aligned_len, Counter);
+        MixLine(InSamples, al::span{output}.subspan(OutPos), *curgains++, *targetgains++, delta,
+            min_len, aligned_len, Counter);
 }
 
 template<>
-void Mix_<SSETag>(const al::span<const float> InSamples, float *OutBuffer, float &CurrentGain,
-    const float TargetGain, const size_t Counter)
+void Mix_<SSETag>(const al::span<const float> InSamples, const al::span<float> OutBuffer,
+    float &CurrentGain, const float TargetGain, const size_t Counter)
 {
     const float delta{(Counter > 0) ? 1.0f / static_cast<float>(Counter) : 0.0f};
     const auto min_len = std::min(Counter, InSamples.size());
     const auto aligned_len = std::min((min_len+3_uz) & ~3_uz, InSamples.size()) - min_len;
 
-    MixLine(InSamples, al::assume_aligned<16>(OutBuffer), CurrentGain, TargetGain, delta, min_len,
-        aligned_len, Counter);
+    MixLine(InSamples, OutBuffer, CurrentGain, TargetGain, delta, min_len, aligned_len, Counter);
 }

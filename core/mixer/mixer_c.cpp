@@ -123,46 +123,53 @@ void DoResample(const U istate, const float *src, uint frac, const uint incremen
     });
 }
 
-constexpr void ApplyCoeffs(float2 *RESTRICT Values, const size_t IrSize,
+inline void ApplyCoeffs(const al::span<float2> Values, const size_t IrSize,
     const ConstHrirSpan Coeffs, const float left, const float right) noexcept
 {
     ASSUME(IrSize >= MinIrLength);
-    for(size_t c{0};c < IrSize;++c)
-    {
-        Values[c][0] += Coeffs[c][0] * left;
-        Values[c][1] += Coeffs[c][1] * right;
-    }
+    ASSUME(IrSize <= HrirLength);
+
+    auto mix_impulse = [left,right](const float2 &value, const float2 &coeff) noexcept -> float2
+    { return float2{{value[0] + coeff[0]*left, value[1] + coeff[1]*right}}; };
+    std::transform(Values.cbegin(), Values.cbegin()+ptrdiff_t(IrSize), Coeffs.cbegin(),
+        Values.begin(), mix_impulse);
 }
 
-force_inline void MixLine(const al::span<const float> InSamples, float *RESTRICT dst,
+force_inline void MixLine(const al::span<const float> InSamples, const al::span<float> dst,
     float &CurrentGain, const float TargetGain, const float delta, const size_t min_len,
     size_t Counter)
 {
-    float gain{CurrentGain};
-    const float step{(TargetGain-gain) * delta};
+    const float step{(TargetGain-CurrentGain) * delta};
 
-    size_t pos{0};
-    if(!(std::abs(step) > std::numeric_limits<float>::epsilon()))
-        gain = TargetGain;
-    else
+    auto output = dst.begin();
+    auto input = InSamples.cbegin();
+    if(std::abs(step) > std::numeric_limits<float>::epsilon())
     {
+        const float gain{CurrentGain};
         float step_count{0.0f};
-        for(;pos != min_len;++pos)
-        {
-            dst[pos] += InSamples[pos] * (gain + step*step_count);
-            step_count += 1.0f;
-        }
-        if(pos == Counter)
-            gain = TargetGain;
-        else
-            gain += step*step_count;
-    }
-    CurrentGain = gain;
+        output = std::transform(output, output+ptrdiff_t(min_len), input, output,
+            [gain,step,&step_count](float out, const float in) noexcept -> float
+            {
+                out += in * (gain + step*step_count);
+                step_count += 1.0f;
+                return out;
+            });
+        input += ptrdiff_t(min_len);
 
-    if(!(std::abs(gain) > GainSilenceThreshold))
+        if(min_len < Counter)
+        {
+            CurrentGain = gain + step*step_count;
+            return;
+        }
+    }
+    CurrentGain = TargetGain;
+
+    if(!(std::abs(TargetGain) > GainSilenceThreshold))
         return;
-    for(;pos != InSamples.size();++pos)
-        dst[pos] += InSamples[pos] * gain;
+
+    std::transform(output, dst.end(), input, output,
+        [TargetGain](float out, const float in) noexcept -> float
+        { return out + in*TargetGain; });
 }
 
 } // namespace
@@ -200,48 +207,51 @@ void Resample_<FastBSincTag,CTag>(const InterpState *state, const float *src, ui
 
 
 template<>
-void MixHrtf_<CTag>(const float *InSamples, float2 *AccumSamples, const uint IrSize,
-    const MixHrtfFilter *hrtfparams, const size_t BufferSize)
-{ MixHrtfBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, hrtfparams, BufferSize); }
+void MixHrtf_<CTag>(const al::span<const float> InSamples, const al::span<float2> AccumSamples,
+    const uint IrSize, const MixHrtfFilter *hrtfparams, const size_t SamplesToDo)
+{ MixHrtfBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, hrtfparams, SamplesToDo); }
 
 template<>
-void MixHrtfBlend_<CTag>(const float *InSamples, float2 *AccumSamples, const uint IrSize,
-    const HrtfFilter *oldparams, const MixHrtfFilter *newparams, const size_t BufferSize)
+void MixHrtfBlend_<CTag>(const al::span<const float> InSamples,const al::span<float2> AccumSamples,
+    const uint IrSize, const HrtfFilter *oldparams, const MixHrtfFilter *newparams,
+    const size_t SamplesToDo)
 {
     MixHrtfBlendBase<ApplyCoeffs>(InSamples, AccumSamples, IrSize, oldparams, newparams,
-        BufferSize);
+        SamplesToDo);
 }
 
 template<>
 void MixDirectHrtf_<CTag>(const FloatBufferSpan LeftOut, const FloatBufferSpan RightOut,
-    const al::span<const FloatBufferLine> InSamples, float2 *AccumSamples,
-    const al::span<float,BufferLineSize> TempBuf, HrtfChannelState *ChanState, const size_t IrSize,
-    const size_t BufferSize)
+    const al::span<const FloatBufferLine> InSamples, const al::span<float2> AccumSamples,
+    const al::span<float,BufferLineSize> TempBuf, const al::span<HrtfChannelState> ChanState,
+    const size_t IrSize, const size_t SamplesToDo)
 {
     MixDirectHrtfBase<ApplyCoeffs>(LeftOut, RightOut, InSamples, AccumSamples, TempBuf, ChanState,
-        IrSize, BufferSize);
+        IrSize, SamplesToDo);
 }
 
 
 template<>
 void Mix_<CTag>(const al::span<const float> InSamples, const al::span<FloatBufferLine> OutBuffer,
-    float *CurrentGains, const float *TargetGains, const size_t Counter, const size_t OutPos)
+    const al::span<float> CurrentGains, const al::span<const float> TargetGains,
+    const size_t Counter, const size_t OutPos)
 {
     const float delta{(Counter > 0) ? 1.0f / static_cast<float>(Counter) : 0.0f};
     const auto min_len = std::min(Counter, InSamples.size());
 
+    auto curgains = CurrentGains.begin();
+    auto targetgains = TargetGains.cbegin();
     for(FloatBufferLine &output : OutBuffer)
-        MixLine(InSamples, al::assume_aligned<16>(output.data()+OutPos), *CurrentGains++,
-            *TargetGains++, delta, min_len, Counter);
+        MixLine(InSamples, al::span{output}.subspan(OutPos), *curgains++, *targetgains++, delta,
+            min_len, Counter);
 }
 
 template<>
-void Mix_<CTag>(const al::span<const float> InSamples, float *OutBuffer, float &CurrentGain,
-    const float TargetGain, const size_t Counter)
+void Mix_<CTag>(const al::span<const float> InSamples, const al::span<float> OutBuffer,
+    float &CurrentGain, const float TargetGain, const size_t Counter)
 {
     const float delta{(Counter > 0) ? 1.0f / static_cast<float>(Counter) : 0.0f};
     const auto min_len = std::min(Counter, InSamples.size());
 
-    MixLine(InSamples, al::assume_aligned<16>(OutBuffer), CurrentGain,
-        TargetGain, delta, min_len, Counter);
+    MixLine(InSamples, OutBuffer, CurrentGain, TargetGain, delta, min_len, Counter);
 }

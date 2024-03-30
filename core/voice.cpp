@@ -57,19 +57,18 @@ static_assert((BufferLineSize-1)/MaxPitch > 0, "MaxPitch is too large for Buffer
 static_assert((INT_MAX>>MixerFracBits)/MaxPitch > BufferLineSize,
     "MaxPitch and/or BufferLineSize are too large for MixerFracBits!");
 
-Resampler ResamplerDefault{Resampler::Cubic};
-
 namespace {
 
 using uint = unsigned int;
 using namespace std::chrono;
 using namespace std::string_view_literals;
 
-using HrtfMixerFunc = void(*)(const float *InSamples, float2 *AccumSamples, const uint IrSize,
-    const MixHrtfFilter *hrtfparams, const size_t BufferSize);
-using HrtfMixerBlendFunc = void(*)(const float *InSamples, float2 *AccumSamples,
-    const uint IrSize, const HrtfFilter *oldparams, const MixHrtfFilter *newparams,
-    const size_t BufferSize);
+using HrtfMixerFunc = void(*)(const al::span<const float> InSamples,
+    const al::span<float2> AccumSamples, const uint IrSize, const MixHrtfFilter *hrtfparams,
+    const size_t SamplesToDo);
+using HrtfMixerBlendFunc = void(*)(const al::span<const float> InSamples,
+    const al::span<float2> AccumSamples, const uint IrSize, const HrtfFilter *oldparams,
+    const MixHrtfFilter *newparams, const size_t SamplesToDo);
 
 HrtfMixerFunc MixHrtfSamples{MixHrtf_<CTag>};
 HrtfMixerBlendFunc MixHrtfBlendSamples{MixHrtfBlend_<CTag>};
@@ -619,8 +618,10 @@ void DoHrtfMix(const al::span<const float> samples, DirectParams &parms, const f
     std::copy_n(samples.begin(), samples.size(), src_iter);
     /* Copy the last used samples back into the history buffer for later. */
     if(IsPlaying) LIKELY
-        std::copy_n(HrtfSamples.begin() + ptrdiff_t(samples.size()), parms.Hrtf.History.size(),
-            parms.Hrtf.History.begin());
+    {
+        const auto endsamples = HrtfSamples.subspan(samples.size(), parms.Hrtf.History.size());
+        std::copy_n(endsamples.cbegin(), endsamples.size(), parms.Hrtf.History.begin());
+    }
 
     /* If fading and this is the first mixing pass, fade between the IRs. */
     size_t fademix{0};
@@ -645,8 +646,8 @@ void DoHrtfMix(const al::span<const float> samples, DirectParams &parms, const f
             parms.Hrtf.Target.Coeffs,
             parms.Hrtf.Target.Delay,
             0.0f, gain / static_cast<float>(fademix)};
-        MixHrtfBlendSamples(HrtfSamples.data(), AccumSamples.data()+OutPos, IrSize,
-            &parms.Hrtf.Old, &hrtfparams, fademix);
+        MixHrtfBlendSamples(HrtfSamples, AccumSamples.subspan(OutPos), IrSize, &parms.Hrtf.Old,
+            &hrtfparams, fademix);
 
         /* Update the old parameters with the result. */
         parms.Hrtf.Old = parms.Hrtf.Target;
@@ -673,8 +674,8 @@ void DoHrtfMix(const al::span<const float> samples, DirectParams &parms, const f
             parms.Hrtf.Target.Delay,
             parms.Hrtf.Old.Gain,
             (gain - parms.Hrtf.Old.Gain) / static_cast<float>(todo)};
-        MixHrtfSamples(HrtfSamples.data()+fademix, AccumSamples.data()+OutPos, IrSize, &hrtfparams,
-            todo);
+        MixHrtfSamples(HrtfSamples.subspan(fademix), AccumSamples.subspan(OutPos), IrSize,
+            &hrtfparams, todo);
 
         /* Store the now-current gain for next time. */
         parms.Hrtf.Old.Gain = gain;
@@ -689,24 +690,23 @@ void DoNfcMix(const al::span<const float> samples, al::span<FloatBufferLine> Out
     static constexpr std::array<FilterProc,MaxAmbiOrder+1> NfcProcess{{
         nullptr, &NfcFilter::process1, &NfcFilter::process2, &NfcFilter::process3}};
 
-    auto CurrentGains = parms.Gains.Current.begin();
-    auto TargetGains = OutGains.cbegin();
-    MixSamples(samples, OutBuffer.first<1>(), al::to_address(CurrentGains),
-        al::to_address(TargetGains), Counter, OutPos);
-    OutBuffer = OutBuffer.subspan<1>();
-    ++CurrentGains;
-    ++TargetGains;
+    auto CurrentGains = al::span{parms.Gains.Current}.subspan(0);
+    auto TargetGains = OutGains.subspan(0);
+    MixSamples(samples, OutBuffer.first(1), CurrentGains, TargetGains, Counter, OutPos);
+    OutBuffer = OutBuffer.subspan(1);
+    CurrentGains = CurrentGains.subspan(1);
+    TargetGains = TargetGains.subspan(1);
 
-    const auto nfcsamples = al::span{Device->ExtraSampleData.begin(), samples.size()};
+    const auto nfcsamples = al::span{Device->ExtraSampleData}.subspan(samples.size());
     size_t order{1};
     while(const size_t chancount{Device->NumChannelsPerOrder[order]})
     {
         (parms.NFCtrlFilter.*NfcProcess[order])(samples, nfcsamples);
-        MixSamples(nfcsamples, OutBuffer.first(chancount), al::to_address(CurrentGains),
-            al::to_address(TargetGains), Counter, OutPos);
+        MixSamples(nfcsamples, OutBuffer.first(chancount), CurrentGains, TargetGains, Counter,
+            OutPos);
         OutBuffer = OutBuffer.subspan(chancount);
-        CurrentGains += ptrdiff_t(chancount);
-        TargetGains += ptrdiff_t(chancount);
+        CurrentGains = CurrentGains.subspan(chancount);
+        TargetGains = TargetGains.subspan(chancount);
         if(++order == MaxAmbiOrder+1)
             break;
     }
@@ -1072,8 +1072,8 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
                 if(mFlags.test(VoiceHasNfc))
                     DoNfcMix(samples, mDirect.Buffer, parms, TargetGains, Counter, OutPos, Device);
                 else
-                    MixSamples(samples, mDirect.Buffer, parms.Gains.Current.data(),
-                        TargetGains.data(), Counter, OutPos);
+                    MixSamples(samples, mDirect.Buffer, parms.Gains.Current, TargetGains, Counter,
+                        OutPos);
             }
         }
 
@@ -1086,10 +1086,10 @@ void Voice::mix(const State vstate, ContextBase *Context, const nanoseconds devi
             const auto samples = DoFilters(parms.LowPass, parms.HighPass, FilterBuf,
                 {*voiceSamples, samplesToMix}, mSend[send].FilterType);
 
-            const float *TargetGains{(vstate == Playing) ? parms.Gains.Target.data()
-                : SilentTarget.data()};
-            MixSamples(samples, mSend[send].Buffer, parms.Gains.Current.data(), TargetGains,
-                Counter, OutPos);
+            const auto TargetGains = (vstate == Playing) ? al::span{parms.Gains.Target}
+                : al::span{SilentTarget};
+            MixSamples(samples, mSend[send].Buffer, parms.Gains.Current, TargetGains, Counter,
+                OutPos);
         }
 
         ++voiceSamples;
