@@ -75,9 +75,10 @@ inline void ApplyCoeffs(const al::span<float2> Values, const size_t IrSize,
         return vcombine_f32(leftright2, leftright2);
     };
     const auto leftright4 = dup_samples();
+    const auto count4 = size_t{(IrSize+1) >> 1};
 
-    const auto vals4 = al::span{reinterpret_cast<float32x4_t*>(Values[0].data()), IrSize/2};
-    const auto coeffs4=al::span{reinterpret_cast<const float32x4_t*>(Coeffs[0].data()), IrSize/2};
+    const auto vals4 = al::span{reinterpret_cast<float32x4_t*>(Values[0].data()), count4};
+    const auto coeffs4 = al::span{reinterpret_cast<const float32x4_t*>(Coeffs[0].data()), count4};
     std::transform(vals4.cbegin(), vals4.cend(), coeffs4.cbegin(), vals4.begin(),
         [leftright4](const float32x4_t &val, const float32x4_t &coeff) -> float32x4_t
         { return vmlaq_f32(val, coeff, leftright4); });
@@ -171,7 +172,7 @@ void Resample_<LerpTag,NEONTag>(const InterpState*, const float *src, uint frac,
     uint32x4_t frac4 = vld1q_u32(frac_.data());
     uint32x4_t pos4 = vld1q_u32(pos_.data());
 
-    auto vecout = al::span<float32x4_t>{reinterpret_cast<float32x4_t*>(dst.data()), dst.size()/4};
+    auto vecout = al::span{reinterpret_cast<float32x4_t*>(dst.data()), dst.size()/4};
     std::generate(vecout.begin(), vecout.end(), [=,&pos4,&frac4]() -> float32x4_t
     {
         const uint pos0{vgetq_lane_u32(pos4, 0)};
