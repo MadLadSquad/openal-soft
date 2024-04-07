@@ -199,7 +199,8 @@ inline ResamplerFunc SelectResampler(Resampler resampler, uint increment)
             return Resample_<LerpTag,SSE2Tag>;
 #endif
         return Resample_<LerpTag,CTag>;
-    case Resampler::Cubic:
+    case Resampler::Spline:
+    case Resampler::Gaussian:
 #ifdef HAVE_NEON
         if((CPUCapFlags&CPU_CAP_NEON))
             return Resample_<CubicTag,NEONTag>;
@@ -268,7 +269,10 @@ ResamplerFunc PrepareResampler(Resampler resampler, uint increment, InterpState 
     case Resampler::Point:
     case Resampler::Linear:
         break;
-    case Resampler::Cubic:
+    case Resampler::Spline:
+        state->emplace<CubicState>(al::span{gSplineFilter.mTable});
+        break;
+    case Resampler::Gaussian:
         state->emplace<CubicState>(al::span{gGaussianFilter.mTable});
         break;
     case Resampler::FastBSinc12:
