@@ -608,6 +608,8 @@ endif()
 # Common sources used by both the OpenAL implementation library, the OpenAL
 # router, and certain tools and examples.
 set(COMMON_OBJS
+    common/alassert.cpp
+    common/alassert.h
     common/albit.h
     common/alcomplex.cpp
     common/alcomplex.h
@@ -991,17 +993,21 @@ if(NOT WIN32)
         endif()
     endif()
 
-    # Check SndIO backend
-    option(ALSOFT_BACKEND_SNDIO "Enable SndIO backend" ON)
+    # Check SndIO backend (disabled by default on non-BSDs)
+    if(BSD)
+        option(ALSOFT_BACKEND_SNDIO "Enable SndIO backend" ON)
+    else()
+        option(ALSOFT_BACKEND_SNDIO "Enable SndIO backend" OFF)
+    endif()
     option(ALSOFT_REQUIRE_SNDIO "Require SndIO backend" OFF)
     if(ALSOFT_BACKEND_SNDIO)
-        find_package(SoundIO)
-        if(SOUNDIO_FOUND)
+        find_package(SndIO)
+        if(SNDIO_FOUND)
             set(HAVE_SNDIO 1)
             set(BACKENDS  "${BACKENDS} SndIO (linked),")
             set(ALC_OBJS  ${ALC_OBJS} alc/backends/sndio.cpp alc/backends/sndio.h)
-            set(EXTRA_LIBS ${SOUNDIO_LIBRARIES} ${EXTRA_LIBS})
-            set(INC_PATHS ${INC_PATHS} ${SOUNDIO_INCLUDE_DIRS})
+            set(EXTRA_LIBS ${SNDIO_LIBRARIES} ${EXTRA_LIBS})
+            set(INC_PATHS ${INC_PATHS} ${SNDIO_INCLUDE_DIRS})
         endif()
     endif()
 endif()
