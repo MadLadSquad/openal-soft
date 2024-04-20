@@ -1418,19 +1418,16 @@ void VectorScatterRev(const float xCoeff, const float yCoeff,
 void VecAllpass::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, size_t offset,
     const float xCoeff, const float yCoeff, const size_t todo) noexcept
 {
-    const auto delayBuf = Delay.mLine;
-    const auto stride = size_t{delayBuf.size()/NUM_LINES};
+    const auto stride = size_t{Delay.mLine.size()/NUM_LINES};
     const float feedCoeff{Coeff};
 
     ASSUME(todo > 0);
 
-    std::array<size_t,NUM_LINES> vap_offset;
-    for(size_t j{0u};j < NUM_LINES;j++)
-        vap_offset[j] = offset - Offset[j];
     for(size_t i{0u};i < todo;)
     {
+        std::array<size_t,NUM_LINES> vap_offset;
         for(size_t j{0u};j < NUM_LINES;j++)
-            vap_offset[j] &= stride-1;
+            vap_offset[j] = (offset-Offset[j]) & (stride-1);
         offset &= stride-1;
 
         size_t maxoff{offset};
@@ -1438,22 +1435,25 @@ void VecAllpass::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, siz
             maxoff = std::max(maxoff, vap_offset[j]);
         size_t td{std::min(stride - maxoff, todo - i)};
 
+        auto delayIn = Delay.mLine.begin();
+        auto delayOut = Delay.mLine.begin() + ptrdiff_t(offset*NUM_LINES);
+        offset += td;
+
         do {
             std::array<float,NUM_LINES> f;
             for(size_t j{0u};j < NUM_LINES;j++)
             {
                 const float input{samples[j][i]};
-                const float out{delayBuf[vap_offset[j]*NUM_LINES + j] - feedCoeff*input};
-                ++vap_offset[j];
+                const float out{delayIn[vap_offset[j]*NUM_LINES + j] - feedCoeff*input};
                 f[j] = input + feedCoeff*out;
 
                 samples[j][i] = out;
             }
+            delayIn += NUM_LINES;
             ++i;
 
             f = VectorPartialScatter(f, xCoeff, yCoeff);
-            std::copy_n(f.cbegin(), f.size(), delayBuf.begin() + ptrdiff_t(offset*NUM_LINES));
-            ++offset;
+            delayOut = std::copy_n(f.cbegin(), f.size(), delayOut);
         } while(--td);
     }
 }
@@ -1471,6 +1471,7 @@ void Allpass4::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, const
 
     for(size_t j{0u};j < NUM_LINES;j++)
     {
+        auto smpiter = samples[j].begin();
         const auto buffer = delay.get(j);
         size_t dstoffset{offset};
         size_t vap_offset{offset - Offset[j]};
@@ -1480,15 +1481,16 @@ void Allpass4::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, const
             dstoffset &= buffer.size()-1;
 
             const size_t maxoff{std::max(dstoffset, vap_offset)};
-            size_t td{std::min(buffer.size() - maxoff, todo - i)};
+            const size_t td{std::min(buffer.size() - maxoff, todo - i)};
 
-            do {
-                const float x{samples[j][i]};
+            auto proc_sample = [buffer,feedCoeff,&vap_offset,&dstoffset](const float x) -> float
+            {
                 const float y{buffer[vap_offset++] - feedCoeff*x};
                 buffer[dstoffset++] = x + feedCoeff*y;
-
-                samples[j][i++] = y;
-            } while(--td);
+                return y;
+            };
+            smpiter = std::transform(smpiter, smpiter+td, smpiter, proc_sample);
+            i += td;
         }
     }
 }
@@ -1556,39 +1558,47 @@ void ReverbPipeline::processEarly(const DelayLineU &main_delay, size_t offset,
 
             /* Band-pass the incoming samples. */
             auto&& filter = DualBiquad{mFilter[j].Lp, mFilter[j].Hp};
-            filter.process({tempSamples[j].cbegin(), todo}, tempSamples[j]);
+            filter.process(al::span{tempSamples[j]}.first(todo), tempSamples[j]);
         }
 
         /* Apply an all-pass, to help color the initial reflections. */
         mEarly.VecAp.process(tempSamples, offset, todo);
 
-        /* Apply a delay and bounce to generate secondary reflections, combine
-         * with the primary reflections and write out the result for mixing.
-         */
+        /* Apply a delay and bounce to generate secondary reflections. */
         early_delay.writeReflected(offset, tempSamples, todo);
         for(size_t j{0u};j < NUM_LINES;j++)
         {
             const auto input = early_delay.get(j);
             size_t feedb_tap{offset - mEarly.Offset[j]};
             const float feedb_coeff{mEarly.Coeff[j]};
-            float *RESTRICT out{al::assume_aligned<16>(outSamples[j].data() + base)};
+            auto out = outSamples[j].begin() + base;
+            auto tmp = tempSamples[j].begin();
 
             for(size_t i{0u};i < todo;)
             {
                 feedb_tap &= input.size()-1;
-                size_t td{std::min(input.size() - feedb_tap, todo - i)};
-                do {
-                    float sample{input[feedb_tap++]};
-                    out[i] = tempSamples[j][i] + sample*feedb_coeff;
-                    tempSamples[j][i] = sample;
-                    ++i;
-                } while(--td);
+
+                const size_t td{std::min(input.size() - feedb_tap, todo - i)};
+                const auto delaySrc = input.subspan(feedb_tap, td);
+
+                /* Combine the main input with the attenuated delayed echo for
+                 * the early output.
+                 */
+                out = std::transform(delaySrc.begin(), delaySrc.end(), tmp, out,
+                    [feedb_coeff](const float delayspl, const float mainspl) noexcept -> float
+                    { return mainspl + delayspl*feedb_coeff; });
+
+                /* Move the (non-attenuated) delayed echo to the temp buffer
+                 * for feeding the late reverb.
+                 */
+                tmp = std::copy_n(delaySrc.begin(), delaySrc.size(), tmp);
+                feedb_tap += td;
+                i += td;
             }
         }
 
-        /* Finally, write the result to the late delay line input for the late
-         * reverb stage to pick up at the appropriate time, applying a scatter
-         * and bounce to improve the initial diffusion in the late reverb.
+        /* Finally, apply a scatter and bounce to improve the initial diffusion
+         * in the late reverb, writing the result to the late delay line input.
          */
         VectorScatterRev(mixX, mixY, tempSamples, todo);
         for(size_t j{0u};j < NUM_LINES;j++)
