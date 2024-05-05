@@ -73,20 +73,25 @@ void AddModule(HMODULE module, const std::wstring_view name)
         }
     }
 
-    DriverList.emplace_back(std::make_unique<DriverIface>(name, module));
-    DriverIface &newdrv = *DriverList.back();
+    DriverIface &newdrv = *DriverList.emplace_back(std::make_unique<DriverIface>(name, module));
 
     /* Load required functions. */
-    int err = 0;
-#define LOAD_PROC(x) do {                                                     \
-    newdrv.x = reinterpret_cast<decltype(newdrv.x)>(reinterpret_cast<void*>(  \
-        GetProcAddress(module, #x)));                                         \
-    if(!newdrv.x)                                                             \
-    {                                                                         \
-        ERR("Failed to find entry point for %s in %.*ls\n", #x, al::sizei(name), name.data()); \
-        err = 1;                                                              \
-    }                                                                         \
-} while(0)
+    bool loadok{true};
+    auto do_load = [module,name](auto &func, const char *fname) -> bool
+    {
+        using func_t = std::remove_reference_t<decltype(func)>;
+        auto ptr = GetProcAddress(module, fname);
+        if(!ptr)
+        {
+            ERR("Failed to find entry point for %s in %.*ls\n", fname, al::sizei(name),
+                name.data());
+            return false;
+        }
+
+        func = reinterpret_cast<func_t>(reinterpret_cast<void*>(ptr));
+        return true;
+    };
+#define LOAD_PROC(x) loadok &= do_load(newdrv.x, #x)
     LOAD_PROC(alcCreateContext);
     LOAD_PROC(alcMakeContextCurrent);
     LOAD_PROC(alcProcessContext);
@@ -169,7 +174,8 @@ void AddModule(HMODULE module, const std::wstring_view name)
     LOAD_PROC(alDopplerVelocity);
     LOAD_PROC(alSpeedOfSound);
     LOAD_PROC(alDistanceModel);
-    if(!err)
+#undef LOAD_PROC
+    if(loadok)
     {
         std::array<ALCint,2> alc_ver{0, 0};
         newdrv.alcGetIntegerv(nullptr, ALC_MAJOR_VERSION, 1, &alc_ver[0]);
@@ -183,54 +189,61 @@ void AddModule(HMODULE module, const std::wstring_view name)
             newdrv.ALCVer = MAKE_ALC_VER(1, 0);
         }
 
+        auto do_load2 = [module,name](auto &func, const char *fname) -> void
+        {
+            using func_t = std::remove_reference_t<decltype(func)>;
+            auto ptr = GetProcAddress(module, fname);
+            if(!ptr)
+                WARN("Failed to find optional entry point for %s in %.*ls\n", fname,
+                    al::sizei(name), name.data());
+            else
+                func = reinterpret_cast<func_t>(reinterpret_cast<void*>(ptr));
+        };
+#define LOAD_PROC(x) do_load2(newdrv.x, #x)
+        LOAD_PROC(alBufferf);
+        LOAD_PROC(alBuffer3f);
+        LOAD_PROC(alBufferfv);
+        LOAD_PROC(alBufferi);
+        LOAD_PROC(alBuffer3i);
+        LOAD_PROC(alBufferiv);
+        LOAD_PROC(alGetBufferf);
+        LOAD_PROC(alGetBuffer3f);
+        LOAD_PROC(alGetBufferfv);
+        LOAD_PROC(alGetBufferi);
+        LOAD_PROC(alGetBuffer3i);
+        LOAD_PROC(alGetBufferiv);
 #undef LOAD_PROC
-#define LOAD_PROC(x) do {                                                      \
-    newdrv.x = reinterpret_cast<decltype(newdrv.x)>(reinterpret_cast<void*>(   \
-        GetProcAddress(module, #x)));                                          \
-    if(!newdrv.x)                                                              \
-    {                                                                          \
-        WARN("Failed to find optional entry point for %s in %.*ls\n", #x, al::sizei(name), \
-            name.data());                                                      \
-    }                                                                          \
-} while(0)
-    LOAD_PROC(alBufferf);
-    LOAD_PROC(alBuffer3f);
-    LOAD_PROC(alBufferfv);
-    LOAD_PROC(alBufferi);
-    LOAD_PROC(alBuffer3i);
-    LOAD_PROC(alBufferiv);
-    LOAD_PROC(alGetBufferf);
-    LOAD_PROC(alGetBuffer3f);
-    LOAD_PROC(alGetBufferfv);
-    LOAD_PROC(alGetBufferi);
-    LOAD_PROC(alGetBuffer3i);
-    LOAD_PROC(alGetBufferiv);
 
-#undef LOAD_PROC
-#define LOAD_PROC(x) do {                                                     \
-    newdrv.x = reinterpret_cast<decltype(newdrv.x)>(                          \
-        newdrv.alcGetProcAddress(nullptr, #x));                               \
-    if(!newdrv.x)                                                             \
-    {                                                                         \
-        ERR("Failed to find entry point for %s in %.*ls\n", #x, al::sizei(name), name.data()); \
-        err = 1;                                                              \
-    }                                                                         \
-} while(0)
+        auto do_load3 = [name,&newdrv](auto &func, const char *fname) -> bool
+        {
+            using func_t = std::remove_reference_t<decltype(func)>;
+            auto ptr = newdrv.alcGetProcAddress(nullptr, fname);
+            if(!ptr)
+            {
+                ERR("Failed to find entry point for %s in %.*ls\n", fname, al::sizei(name),
+                    name.data());
+                return false;
+            }
+
+            func = reinterpret_cast<func_t>(ptr);
+            return true;
+        };
+#define LOAD_PROC(x) loadok &= do_load3(newdrv.x, #x)
         if(newdrv.alcIsExtensionPresent(nullptr, "ALC_EXT_thread_local_context"))
         {
             LOAD_PROC(alcSetThreadContext);
             LOAD_PROC(alcGetThreadContext);
         }
+#undef LOAD_PROC
     }
 
-    if(err)
+    if(!loadok)
     {
         DriverList.pop_back();
         return;
     }
     TRACE("Loaded module %p, %.*ls, ALC %d.%d\n", decltype(std::declval<void*>()){module},
         al::sizei(name), name.data(), newdrv.ALCVer>>8, newdrv.ALCVer&255);
-#undef LOAD_PROC
 }
 
 void SearchDrivers(const std::wstring_view path)
@@ -301,7 +314,8 @@ void LoadDriverList()
         while(!namelist.empty())
         {
             auto seppos = namelist.find(',');
-            gAcceptList.emplace_back(namelist.substr(0, seppos));
+            if(seppos > 0)
+                gAcceptList.emplace_back(namelist.substr(0, seppos));
             if(seppos < namelist.size())
                 namelist.remove_prefix(seppos+1);
             else
@@ -314,7 +328,8 @@ void LoadDriverList()
         while(!namelist.empty())
         {
             auto seppos = namelist.find(',');
-            gRejectList.emplace_back(namelist.substr(0, seppos));
+            if(seppos > 0)
+                gRejectList.emplace_back(namelist.substr(0, seppos));
             if(seppos < namelist.size())
                 namelist.remove_prefix(seppos+1);
             else
@@ -362,18 +377,18 @@ void LoadDriverList()
      * directory, app's path, or system path (don't want to do duplicate
      * searches, or increase the priority of the app or system path).
      */
-    if(dll_path[0] &&
-       (!cwd_path[0] || dll_path != cwd_path) &&
-       (!proc_path[0] || dll_path != proc_path) &&
-       (!sys_path[0] || dll_path != sys_path))
+    if(!dll_path.empty() &&
+       (cwd_path.empty() || dll_path != cwd_path) &&
+       (proc_path.empty() || dll_path != proc_path) &&
+       (sys_path.empty() || dll_path != sys_path))
         SearchDrivers(dll_path);
-    if(cwd_path[0] &&
-       (!proc_path[0] || cwd_path != proc_path) &&
-       (!sys_path[0] || cwd_path != sys_path))
+    if(!cwd_path.empty() &&
+       (proc_path.empty() || cwd_path != proc_path) &&
+       (sys_path.empty() || cwd_path != sys_path))
         SearchDrivers(cwd_path);
-    if(proc_path[0] && (!sys_path[0] || proc_path != sys_path))
+    if(!proc_path.empty() && (sys_path.empty() || proc_path != sys_path))
         SearchDrivers(proc_path);
-    if(sys_path[0])
+    if(!sys_path.empty())
         SearchDrivers(sys_path);
 }
 

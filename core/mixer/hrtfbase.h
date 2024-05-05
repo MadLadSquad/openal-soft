@@ -4,14 +4,14 @@
 #include <algorithm>
 #include <cmath>
 
-#include "almalloc.h"
+#include "defs.h"
 #include "hrtfdefs.h"
 #include "opthelpers.h"
 
 
 using uint = unsigned int;
 
-using ApplyCoeffsT = void(&)(const al::span<float2> Values, const size_t irSize,
+using ApplyCoeffsT = void(const al::span<float2> Values, const size_t irSize,
     const ConstHrirSpan Coeffs, const float left, const float right);
 
 template<ApplyCoeffsT ApplyCoeffs>
