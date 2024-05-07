@@ -203,31 +203,6 @@ if(NOT HAVE_STDC_FORMAT_MACROS)
     set(CPP_DEFS ${CPP_DEFS} __STDC_FORMAT_MACROS)
 endif()
 
-if(NOT WIN32)
-    # Check if _POSIX_C_SOURCE and _XOPEN_SOURCE needs to be set for POSIX functions
-    check_symbol_exists(posix_memalign stdlib.h HAVE_POSIX_MEMALIGN_DEFAULT)
-    if(NOT HAVE_POSIX_MEMALIGN_DEFAULT)
-        set(OLD_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
-        set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -D_POSIX_C_SOURCE=200112L -D_XOPEN_SOURCE=600")
-        check_symbol_exists(posix_memalign stdlib.h HAVE_POSIX_MEMALIGN_POSIX)
-        if(NOT HAVE_POSIX_MEMALIGN_POSIX)
-            set(CMAKE_REQUIRED_FLAGS ${OLD_REQUIRED_FLAGS})
-        else()
-            set(CPP_DEFS ${CPP_DEFS} _POSIX_C_SOURCE=200112L _XOPEN_SOURCE=600)
-        endif()
-    endif()
-    unset(OLD_REQUIRED_FLAGS)
-endif()
-
-# C99 has restrict, but C++ does not, so we can only utilize __restrict.
-check_cxx_source_compiles("int *__restrict foo;
-int main() { return 0; }" HAVE___RESTRICT)
-if(HAVE___RESTRICT)
-    set(CPP_DEFS ${CPP_DEFS} RESTRICT=__restrict)
-else()
-    set(CPP_DEFS ${CPP_DEFS} "RESTRICT=")
-endif()
-
 # Some systems may need libatomic for atomic functions to work
 set(OLD_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
 set(CMAKE_REQUIRED_LIBRARIES ${OLD_REQUIRED_LIBRARIES} atomic)
@@ -517,13 +492,9 @@ if(HAVE_SSE2)
 endif()
 
 
-check_include_file(malloc.h HAVE_MALLOC_H)
 check_include_file(cpuid.h HAVE_CPUID_H)
 check_include_file(intrin.h HAVE_INTRIN_H)
 check_include_file(guiddef.h HAVE_GUIDDEF_H)
-if(NOT HAVE_GUIDDEF_H)
-    check_include_file(initguid.h HAVE_INITGUID_H)
-endif()
 
 # Some systems need libm for some math functions to work
 set(MATH_LIB )
