@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checking out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@latest
         with:
           ref: master
           token: ${{ secrets.GITHUB_TOKEN }}
