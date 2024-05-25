@@ -285,7 +285,10 @@ struct DelayLineU {
     al::span<float> mLine;
 
     void realizeLineOffset(al::span<float> sampleBuffer) noexcept
-    { mLine = sampleBuffer; }
+    {
+        assert(sampleBuffer.size() > 4 && !(sampleBuffer.size() & (sampleBuffer.size()-1)));
+        mLine = sampleBuffer;
+    }
 
     static
     auto calcLineLength(const float length, const float frequency, const uint extra) -> size_t
@@ -333,7 +336,6 @@ struct DelayLineU {
         const size_t count) const noexcept
     {
         const size_t stride{mLine.size() / NUM_LINES};
-        ASSUME(count > 0);
         for(size_t i{0u};i < count;)
         {
             offset &= stride-1;
@@ -435,7 +437,7 @@ struct Modulation {
 
     void updateModulator(float modTime, float modDepth, float frequency);
 
-    void calcDelays(size_t todo);
+    auto calcDelays(size_t todo) -> al::span<const uint>;
 
     void clear() noexcept
     {
@@ -599,8 +601,6 @@ struct ReverbState final : public EffectState {
     void MixOutPlain(ReverbPipeline &pipeline, const al::span<FloatBufferLine> samplesOut,
         const size_t todo) const
     {
-        ASSUME(todo > 0);
-
         /* When not upsampling, the panning gains convert to B-Format and pan
          * at the same time.
          */
@@ -621,8 +621,6 @@ struct ReverbState final : public EffectState {
     void MixOutAmbiUp(ReverbPipeline &pipeline, const al::span<FloatBufferLine> samplesOut,
         const size_t todo)
     {
-        ASSUME(todo > 0);
-
         auto DoMixRow = [](const al::span<float> OutBuffer, const al::span<const float,4> Gains,
             const al::span<const FloatBufferLine,4> InSamples)
         {
@@ -645,8 +643,8 @@ struct ReverbState final : public EffectState {
          * so the proper HF scaling can be applied to each B-Format channel.
          * The panning gains then pan and upsample the B-Format channels.
          */
-        const al::span<float> tmpspan{al::assume_aligned<16>(mTempLine.data()), todo};
-        float hfscale{mOrderScales[0]};
+        const auto tmpspan = al::span{mTempLine}.first(todo);
+        auto hfscale = float{mOrderScales[0]};
         auto splitter = pipeline.mAmbiSplitter[0].begin();
         auto a2bcoeffs = EarlyA2B.cbegin();
         for(auto &gains : pipeline.mEarly.Gains)
@@ -1082,14 +1080,14 @@ std::array<std::array<float,4>,4> GetTransformFromVector(const al::span<const fl
      * rest of OpenAL which use right-handed. This is fixed by negating Z,
      * which cancels out with the B-Format Z negation.
      */
-    std::array<float,3> norm;
+    std::array<float,3> norm{{vec[0], vec[1], vec[2]}};
     float mag{std::sqrt(vec[0]*vec[0] + vec[1]*vec[1] + vec[2]*vec[2])};
     if(mag > 1.0f)
     {
         const float scale{al::numbers::sqrt3_v<float> / mag};
-        norm[0] = vec[0] * -scale;
-        norm[1] = vec[1] * scale;
-        norm[2] = vec[2] * scale;
+        norm[0] *= -scale;
+        norm[1] *= scale;
+        norm[2] *= scale;
         mag = 1.0f;
     }
     else
@@ -1098,9 +1096,9 @@ std::array<std::array<float,4>,4> GetTransformFromVector(const al::span<const fl
          * term. There's no need to renormalize the magnitude since it would
          * just be reapplied in the matrix.
          */
-        norm[0] = vec[0] * -al::numbers::sqrt3_v<float>;
-        norm[1] = vec[1] * al::numbers::sqrt3_v<float>;
-        norm[2] = vec[2] * al::numbers::sqrt3_v<float>;
+        norm[0] *= -al::numbers::sqrt3_v<float>;
+        norm[1] *= al::numbers::sqrt3_v<float>;
+        norm[2] *= al::numbers::sqrt3_v<float>;
     }
 
     return std::array<std::array<float,4>,4>{{
@@ -1405,7 +1403,7 @@ void VecAllpass::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, siz
 
     for(size_t i{0u};i < todo;)
     {
-        std::array<size_t,NUM_LINES> vap_offset;
+        std::array<size_t,NUM_LINES> vap_offset{};
         std::transform(Offset.cbegin(), Offset.cend(), vap_offset.begin(),
             [main_offset,mask=linelen-1](const size_t delay) noexcept -> size_t
             { return (main_offset-delay) & mask; });
@@ -1420,7 +1418,7 @@ void VecAllpass::process(const al::span<ReverbUpdateLine,NUM_LINES> samples, siz
         main_offset += td;
 
         do {
-            std::array<float,NUM_LINES> f;
+            std::array<float,NUM_LINES> f{};
             for(size_t j{0u};j < NUM_LINES;j++)
             {
                 const float input{samples[j][i]};
@@ -1500,7 +1498,6 @@ void ReverbPipeline::processEarly(const DelayLineU &main_delay, size_t offset,
     const float mixX{mMixX};
     const float mixY{mMixY};
 
-    ASSUME(samplesToDo > 0);
     ASSUME(samplesToDo <= BufferLineSize);
 
     for(size_t base{0};base < samplesToDo;)
@@ -1598,7 +1595,7 @@ void ReverbPipeline::processEarly(const DelayLineU &main_delay, size_t offset,
     }
 }
 
-void Modulation::calcDelays(size_t todo)
+auto Modulation::calcDelays(size_t todo) -> al::span<const uint>
 {
     auto idx = uint{Index};
     const auto step = uint{Step};
@@ -1617,6 +1614,7 @@ void Modulation::calcDelays(size_t todo)
         return float2uint((lfo+1.0f) * depth);
     });
     Index = idx;
+    return delays;
 }
 
 
@@ -1640,7 +1638,6 @@ void ReverbPipeline::processLate(size_t offset, const size_t samplesToDo,
     const float mixX{mMixX};
     const float mixY{mMixY};
 
-    ASSUME(samplesToDo > 0);
     ASSUME(samplesToDo <= BufferLineSize);
 
     for(size_t base{0};base < samplesToDo;)
@@ -1650,7 +1647,7 @@ void ReverbPipeline::processLate(size_t offset, const size_t samplesToDo,
         ASSUME(todo > 0);
 
         /* First, calculate the modulated delays for the late feedback. */
-        mLate.Mod.calcDelays(todo);
+        const auto delays = mLate.Mod.calcDelays(todo);
 
         /* Now load samples from the feedback delay lines. Filter the signal to
          * apply its frequency-dependent decay.
@@ -1660,7 +1657,6 @@ void ReverbPipeline::processLate(size_t offset, const size_t samplesToDo,
             const auto input = late_delay.get(j);
             const auto midGain = float{mLate.T60[j].MidGain};
             auto late_feedb_tap = size_t{offset - mLate.Offset[j]};
-            const auto delays = al::span{mLate.Mod.ModDelays}.first(todo);
 
             auto proc_sample = [input,midGain,&late_feedb_tap](const size_t idelay) -> float
             {
@@ -1671,7 +1667,9 @@ void ReverbPipeline::processLate(size_t offset, const size_t samplesToDo,
                 const auto delayoffset = size_t{idelay & gCubicTable.sTableMask};
                 ++late_feedb_tap;
 
-                /* Get the samples around the delayed offset. */
+                /* Get the samples around the delayed offset, interpolated for
+                 * output.
+                 */
                 const auto out0 = float{input[(delay  ) & (input.size()-1)]};
                 const auto out1 = float{input[(delay-1) & (input.size()-1)]};
                 const auto out2 = float{input[(delay-2) & (input.size()-1)]};
@@ -1744,7 +1742,6 @@ void ReverbState::process(const size_t samplesToDo, const al::span<const FloatBu
 {
     const size_t offset{mOffset};
 
-    ASSUME(samplesToDo > 0);
     ASSUME(samplesToDo <= BufferLineSize);
 
     auto &oldpipeline = mPipelines[!mCurrentPipeline];
@@ -1824,21 +1821,10 @@ struct ReverbStateFactory final : public EffectStateFactory {
     { return al::intrusive_ptr<EffectState>{new ReverbState{}}; }
 };
 
-struct StdReverbStateFactory final : public EffectStateFactory {
-    al::intrusive_ptr<EffectState> create() override
-    { return al::intrusive_ptr<EffectState>{new ReverbState{}}; }
-};
-
 } // namespace
 
 EffectStateFactory *ReverbStateFactory_getFactory()
 {
     static ReverbStateFactory ReverbFactory{};
-    return &ReverbFactory;
-}
-
-EffectStateFactory *StdReverbStateFactory_getFactory()
-{
-    static StdReverbStateFactory ReverbFactory{};
     return &ReverbFactory;
 }
