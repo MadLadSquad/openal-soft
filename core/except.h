@@ -17,15 +17,16 @@ protected:
 
 public:
     base_exception() = default;
+    base_exception(const base_exception&) = default;
+    base_exception(base_exception&&) = default;
     ~base_exception() override;
+
+    auto operator=(const base_exception&) -> base_exception& = default;
+    auto operator=(base_exception&&) -> base_exception& = default;
 
     [[nodiscard]] auto what() const noexcept -> const char* override { return mMessage.c_str(); }
 };
 
 } // namespace al
-
-#define START_API_FUNC try
-
-#define END_API_FUNC catch(...) { std::terminate(); }
 
 #endif /* CORE_EXCEPT_H */
