@@ -172,6 +172,13 @@ constexpr AudioObjectType ChannelMask_X714{AudioObjectType_FrontLeft | AudioObje
     | AudioObjectType_SideRight | AudioObjectType_BackLeft | AudioObjectType_BackRight
     | AudioObjectType_TopFrontLeft | AudioObjectType_TopFrontRight | AudioObjectType_TopBackLeft
     | AudioObjectType_TopBackRight};
+constexpr AudioObjectType ChannelMask_X7144{AudioObjectType_FrontLeft | AudioObjectType_FrontRight
+    | AudioObjectType_FrontCenter | AudioObjectType_LowFrequency | AudioObjectType_SideLeft
+    | AudioObjectType_SideRight | AudioObjectType_BackLeft | AudioObjectType_BackRight
+    | AudioObjectType_TopFrontLeft | AudioObjectType_TopFrontRight | AudioObjectType_TopBackLeft
+    | AudioObjectType_TopBackRight | AudioObjectType_BottomFrontLeft
+    | AudioObjectType_BottomFrontRight | AudioObjectType_BottomBackLeft
+    | AudioObjectType_BottomBackRight};
 
 
 template<typename... Ts>
@@ -216,7 +223,12 @@ struct PropVariant {
 
 public:
     PropVariant() { PropVariantInit(&mProp); }
+    PropVariant(const PropVariant &rhs) : PropVariant{} { PropVariantCopy(&mProp, &rhs.mProp); }
+    PropVariant(PropVariant&& rhs) : PropVariant{} { PropVariantCopy(&mProp, &rhs.mProp); }
     ~PropVariant() { clear(); }
+
+    void operator=(const PropVariant &rhs) { PropVariantCopy(&mProp, &rhs.mProp); }
+    void operator=(PropVariant&& rhs) { PropVariantCopy(&mProp, &rhs.mProp); }
 
     void clear() { PropVariantClear(&mProp); }
 
@@ -926,7 +938,13 @@ constexpr const char *GetMessageTypeName(MsgType type) noexcept
 
 /* Proxy interface used by the message handler. */
 struct WasapiProxy {
+    WasapiProxy() = default;
+    WasapiProxy(const WasapiProxy&) = delete;
+    WasapiProxy(WasapiProxy&&) = delete;
     virtual ~WasapiProxy() = default;
+
+    void operator=(const WasapiProxy&) = delete;
+    void operator=(WasapiProxy&&) = delete;
 
     virtual HRESULT openProxy(std::string_view name) = 0;
     virtual void closeProxy() = 0;
@@ -1479,6 +1497,9 @@ void WasapiPlayback::prepareFormat(WAVEFORMATEXTENSIBLE &OutputType)
         OutputType.Format.nChannels = 8;
         OutputType.dwChannelMask = X7DOT1;
         break;
+    case DevFmtX7144:
+        mDevice->FmtChans = DevFmtX714;
+        /*fall-through*/
     case DevFmtX714:
         OutputType.Format.nChannels = 12;
         OutputType.dwChannelMask = X7DOT1DOT4;
@@ -1565,6 +1586,7 @@ void WasapiPlayback::finalizeFormat(WAVEFORMATEXTENSIBLE &OutputType)
             break;
         case DevFmtX714:
             chansok = (chancount >= 12 && ((chanmask&X714Mask) == X7DOT1DOT4 || !chanmask));
+        case DevFmtX7144:
         case DevFmtAmbi3D:
             break;
         }
@@ -1763,6 +1785,7 @@ auto WasapiPlayback::initSpatial() -> bool
         case DevFmtX3D71:
         case DevFmtX71: return ChannelMask_X71;
         case DevFmtX714: return ChannelMask_X714;
+        case DevFmtX7144: return ChannelMask_X7144;
         case DevFmtAmbi3D:
             break;
         }
@@ -2410,6 +2433,7 @@ HRESULT WasapiCapture::resetProxy()
         InputType.dwChannelMask = X7DOT1DOT4;
         break;
 
+    case DevFmtX7144:
     case DevFmtX3D71:
     case DevFmtAmbi3D:
         return E_FAIL;
@@ -2500,6 +2524,8 @@ HRESULT WasapiCapture::resetProxy()
                 return (chancount == 8 && (chanmask == 0 || (chanmask&X71Mask) == X7DOT1));
             case DevFmtX714:
                 return (chancount == 12 && (chanmask == 0 || (chanmask&X714Mask) == X7DOT1DOT4));
+            case DevFmtX7144:
+                return (chancount == 16 && chanmask == 0);
             case DevFmtAmbi3D:
                 return (chanmask == 0 && chancount == device->channelsFromFmt());
             }
