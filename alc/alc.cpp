@@ -1983,7 +1983,7 @@ ALC_API void ALC_APIENTRY alcSuspendContext(ALCcontext *context) noexcept
         return;
     }
 
-    if(context->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
         ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium,
             "alcSuspendContext behavior is not portable -- some implementations suspend all "
             "rendering, some only defer property changes, and some are completely no-op; consider "
@@ -2006,8 +2006,8 @@ ALC_API void ALC_APIENTRY alcProcessContext(ALCcontext *context) noexcept
         return;
     }
 
-    if(context->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
-        ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium,
+    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+        ctx->debugMessage(DebugSource::API, DebugType::Portability, 1, DebugSeverity::Medium,
             "alcProcessContext behavior is not portable -- some implementations resume rendering, "
             "some apply deferred property changes, and some are completely no-op; consider using "
             "alcDeviceResumeSOFT to resume rendering, or alProcessUpdatesSOFT to apply deferred "
@@ -3633,10 +3633,8 @@ FORCE_ALIGN ALCenum ALC_APIENTRY alcEventIsSupportedSOFT(ALCenum eventType, ALCe
         if(CaptureFactory)
             supported = CaptureFactory->queryEventSupport(*etype, BackendType::Capture);
         return al::to_underlying(supported);
-
-    default:
-        WARN("Invalid device type: 0x%04x\n", deviceType);
-        alcSetError(nullptr, ALC_INVALID_ENUM);
     }
+    WARN("Invalid device type: 0x%04x\n", deviceType);
+    alcSetError(nullptr, ALC_INVALID_ENUM);
     return ALC_FALSE;
 }
