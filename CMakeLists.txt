@@ -1252,7 +1252,7 @@ if(ALSOFT_UPDATE_BUILD_VERSION AND GIT_FOUND AND EXISTS "${OpenAL_SOURCE_DIR}/.g
         VERBATIM
     )
 
-    add_custom_target(build_version DEPENDS "${OpenAL_BINARY_DIR}/version_witness.txt")
+    add_custom_target(alsoft.build_version DEPENDS "${OpenAL_BINARY_DIR}/version_witness.txt")
 else()
     set(GIT_BRANCH "UNKNOWN")
     set(GIT_COMMIT_HASH "unknown")
@@ -1339,12 +1339,12 @@ configure_file(
     @ONLY)
 
 
-add_library(alcommon STATIC EXCLUDE_FROM_ALL ${COMMON_OBJS})
-target_include_directories(alcommon PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/include
+add_library(alsoft.common STATIC EXCLUDE_FROM_ALL ${COMMON_OBJS})
+target_include_directories(alsoft.common PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/include
     PUBLIC ${OpenAL_SOURCE_DIR}/common)
-target_compile_definitions(alcommon PRIVATE ${CPP_DEFS})
-target_compile_options(alcommon PRIVATE ${C_FLAGS})
-set_target_properties(alcommon PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
+target_compile_definitions(alsoft.common PRIVATE ${CPP_DEFS})
+target_compile_options(alsoft.common PRIVATE ${C_FLAGS})
+set_target_properties(alsoft.common PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
 
 
 unset(HAS_ROUTER)
@@ -1379,7 +1379,7 @@ else()
             PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES "ALC_API=${EXPORT_DECL}"
             "AL_API=${EXPORT_DECL}" ${CPP_DEFS})
         target_compile_options(OpenAL PRIVATE ${C_FLAGS})
-        target_link_libraries(OpenAL PRIVATE alcommon ${LINKER_FLAGS})
+        target_link_libraries(OpenAL PRIVATE alsoft.common ${LINKER_FLAGS})
         target_include_directories(OpenAL
           PUBLIC
             $<BUILD_INTERFACE:${OpenAL_SOURCE_DIR}/include>
@@ -1390,8 +1390,8 @@ else()
         )
         set_target_properties(OpenAL PROPERTIES ${DEFAULT_TARGET_PROPS} PREFIX ""
             OUTPUT_NAME ${LIBNAME})
-        if(TARGET build_version)
-            add_dependencies(OpenAL build_version)
+        if(TARGET alsoft.build_version)
+            add_dependencies(OpenAL alsoft.build_version)
         endif()
         set(HAS_ROUTER 1)
 
@@ -1410,7 +1410,8 @@ else()
     if(WIN32)
         set_target_properties(${IMPL_TARGET} PROPERTIES PREFIX "")
     endif()
-    target_link_libraries(${IMPL_TARGET} PRIVATE alcommon ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
+    target_link_libraries(${IMPL_TARGET} PRIVATE alsoft.common ${LINKER_FLAGS} ${EXTRA_LIBS}
+        ${MATH_LIB})
 
     if(ALSOFT_UWP)
         set(ALSOFT_CPPWINRT_VERSION "2.0.230706.1" CACHE STRING "The soft-oal default cppwinrt version")
@@ -1496,8 +1497,8 @@ target_compile_definitions(${IMPL_TARGET}
     "ALC_API=${EXPORT_DECL}" "AL_API=${EXPORT_DECL}" ${CPP_DEFS})
 target_compile_options(${IMPL_TARGET} PRIVATE ${C_FLAGS})
 
-if(TARGET build_version)
-    add_dependencies(${IMPL_TARGET} build_version)
+if(TARGET alsoft.build_version)
+    add_dependencies(${IMPL_TARGET} alsoft.build_version)
 endif()
 
 if(WIN32 AND MINGW AND ALSOFT_BUILD_IMPORT_LIB AND NOT LIBTYPE STREQUAL "STATIC")
