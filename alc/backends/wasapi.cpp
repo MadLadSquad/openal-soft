@@ -346,22 +346,21 @@ auto GetDeviceNameAndGuid(const DeviceHandle &device) -> NameGUIDPair
     constexpr auto UnknownGuid = "Unknown Device GUID"sv;
 
 #if !defined(ALSOFT_UWP)
-    std::string name, guid;
-
-    ComPtr<IPropertyStore> ps;
-    HRESULT hr{device->OpenPropertyStore(STGM_READ, al::out_ptr(ps))};
+    auto ps = ComPtr<IPropertyStore>{};
+    auto hr = device->OpenPropertyStore(STGM_READ, al::out_ptr(ps));
     if(FAILED(hr))
     {
         WARN("OpenPropertyStore failed: 0x%08lx\n", hr);
-        return {std::string{UnknownName}, std::string{UnknownGuid}};
+        return NameGUIDPair{std::string{UnknownName}, std::string{UnknownGuid}};
     }
 
-    PropVariant pvprop;
+    auto ret = NameGUIDPair{};
+    auto pvprop = PropVariant{};
     hr = ps->GetValue(al::bit_cast<PROPERTYKEY>(DEVPKEY_Device_FriendlyName), pvprop.get());
     if(FAILED(hr))
         WARN("GetValue Device_FriendlyName failed: 0x%08lx\n", hr);
     else if(pvprop.type() == VT_LPWSTR)
-        name = wstr_to_utf8(pvprop.value<std::wstring_view>());
+        ret.mName = wstr_to_utf8(pvprop.value<std::wstring_view>());
     else
         WARN("Unexpected Device_FriendlyName PROPVARIANT type: 0x%04x\n", pvprop.type());
 
@@ -370,12 +369,12 @@ auto GetDeviceNameAndGuid(const DeviceHandle &device) -> NameGUIDPair
     if(FAILED(hr))
         WARN("GetValue AudioEndpoint_GUID failed: 0x%08lx\n", hr);
     else if(pvprop.type() == VT_LPWSTR)
-        guid = wstr_to_utf8(pvprop.value<std::wstring_view>());
+        ret.mGuid = wstr_to_utf8(pvprop.value<std::wstring_view>());
     else
         WARN("Unexpected AudioEndpoint_GUID PROPVARIANT type: 0x%04x\n", pvprop.type());
 #else
-    std::string name{wstr_to_utf8(device.Name())};
-    std::string guid;
+    auto ret = NameGUIDPair{wstr_to_utf8(device.Name()), {}};
+
     // device->Id is DeviceInterfacePath: \\?\SWD#MMDEVAPI#{0.0.0.00000000}.{a21c17a0-fc1d-405e-ab5a-b513422b57d1}#{e6327cad-dcec-4949-ae8a-991e976a79d2}
     auto devIfPath = device.Id();
     if(auto devIdStart = wcsstr(devIfPath.data(), L"}."))
@@ -383,16 +382,16 @@ auto GetDeviceNameAndGuid(const DeviceHandle &device) -> NameGUIDPair
         devIdStart += 2;  // L"}."
         if(auto devIdStartEnd = wcschr(devIdStart, L'#'))
         {
-            std::wstring wDevId{devIdStart, static_cast<size_t>(devIdStartEnd - devIdStart)};
-            guid = wstr_to_utf8(wDevId.c_str());
-            std::transform(guid.begin(), guid.end(), guid.begin(),
+            ret.mGuid = wstr_to_utf8(std::wstring_view{devIdStart,
+                static_cast<size_t>(devIdStartEnd - devIdStart)});
+            std::transform(ret.mGuid.begin(), ret.mGuid.end(), ret.mGuid.begin(),
                 [](char ch) { return static_cast<char>(std::toupper(ch)); });
         }
     }
 #endif
-    if(name.empty()) name = UnknownName;
-    if(guid.empty()) guid = UnknownGuid;
-    return {std::move(name), std::move(guid)};
+    if(ret.mName.empty()) ret.mName = UnknownName;
+    if(ret.mGuid.empty()) ret.mGuid = UnknownGuid;
+    return ret;
 }
 #if !defined(ALSOFT_UWP)
 EndpointFormFactor GetDeviceFormfactor(IMMDevice *device)
@@ -433,25 +432,29 @@ struct DeviceHelper final : private IMMNotificationClient
          */
         mActiveClientEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
-        mRenderDeviceChangedToken = MediaDevice::DefaultAudioRenderDeviceChanged([this](const IInspectable& /*sender*/, const DefaultAudioRenderDeviceChangedEventArgs& args) {
-            if (args.Role() == AudioDeviceRole::Default)
+        static constexpr auto playback_cb = [](const IInspectable &sender [[maybe_unused]],
+            const DefaultAudioRenderDeviceChangedEventArgs &args)
+        {
+            if(args.Role() == AudioDeviceRole::Default)
             {
-                const std::string msg{ "Default playback device changed: " +
+                const auto msg = std::string{"Default playback device changed: " +
                     wstr_to_utf8(args.Id())};
-                alc::Event(alc::EventType::DefaultDeviceChanged, alc::DeviceType::Playback,
-                    msg);
+                alc::Event(alc::EventType::DefaultDeviceChanged, alc::DeviceType::Playback, msg);
             }
-            });
+        };
+        mRenderDeviceChangedToken = MediaDevice::DefaultAudioRenderDeviceChanged(playback_cb);
 
-        mCaptureDeviceChangedToken = MediaDevice::DefaultAudioCaptureDeviceChanged([this](const IInspectable& /*sender*/, const DefaultAudioCaptureDeviceChangedEventArgs& args) {
-            if (args.Role() == AudioDeviceRole::Default)
+        static constexpr auto capture_cb = [](const IInspectable &sender [[maybe_unused]],
+            const DefaultAudioCaptureDeviceChangedEventArgs &args)
+        {
+            if(args.Role() == AudioDeviceRole::Default)
             {
-                const std::string msg{ "Default capture device changed: " +
-                    wstr_to_utf8(args.Id()) };
-                alc::Event(alc::EventType::DefaultDeviceChanged, alc::DeviceType::Capture,
-                    msg);
+                const auto msg = std::string{"Default capture device changed: " +
+                    wstr_to_utf8(args.Id())};
+                alc::Event(alc::EventType::DefaultDeviceChanged, alc::DeviceType::Capture, msg);
             }
-            });
+        };
+        mCaptureDeviceChangedToken = MediaDevice::DefaultAudioCaptureDeviceChanged(capture_cb);
     }
 #else
     DeviceHelper() = default;
@@ -471,6 +474,9 @@ struct DeviceHelper final : private IMMNotificationClient
         mEnumerator = nullptr;
 #endif
     }
+
+    template<typename T>
+    auto as() noexcept -> T { return T{this}; }
 
     /** -------------------------- IUnknown ----------------------------- */
     std::atomic<ULONG> mRefCount{1};
@@ -499,21 +505,21 @@ struct DeviceHelper final : private IMMNotificationClient
 #if defined(ALSOFT_UWP)
         if(IId == __uuidof(IActivateAudioInterfaceCompletionHandler))
         {
-            *UnknownPtrPtr = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+            *UnknownPtrPtr = as<IActivateAudioInterfaceCompletionHandler*>();
             AddRef();
             return S_OK;
         }
 #else
         if(IId == __uuidof(IMMNotificationClient))
         {
-            *UnknownPtrPtr = static_cast<IMMNotificationClient*>(this);
+            *UnknownPtrPtr = as<IMMNotificationClient*>();
             AddRef();
             return S_OK;
         }
 #endif
         else if(IId == __uuidof(IAgileObject) || IId == __uuidof(IUnknown))
         {
-            *UnknownPtrPtr = static_cast<IUnknown*>(this);
+            *UnknownPtrPtr = as<IUnknown*>();
             AddRef();
             return S_OK;
         }
@@ -601,6 +607,7 @@ struct DeviceHelper final : private IMMNotificationClient
         return S_OK;
     }
 
+    /* NOLINTNEXTLINE(clazy-function-args-by-ref) */
     STDMETHODIMP OnPropertyValueChanged(LPCWSTR /*pwstrDeviceId*/, const PROPERTYKEY /*key*/) noexcept override { return S_OK; }
 
     STDMETHODIMP OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDefaultDeviceId) noexcept override
@@ -1024,6 +1031,9 @@ int WasapiProxy::messageHandler(std::promise<HRESULT> *promise)
     }
 
     struct HelperResetter {
+        HelperResetter() = default;
+        HelperResetter(const HelperResetter&) = delete;
+        auto operator=(const HelperResetter&) -> HelperResetter& = delete;
         ~HelperResetter() { sDeviceHelper.reset(); }
     };
     HelperResetter scoped_watcher;
