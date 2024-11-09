@@ -24,7 +24,9 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +34,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <vector>
-#include <optional>
 
 #include "alnumeric.h"
 #include "alstring.h"
@@ -55,6 +56,36 @@ namespace {
 
 constexpr auto OutputElement = 0;
 constexpr auto InputElement = 1;
+
+// These following arrays should always be defined in ascending AudioChannelLabel value order
+constexpr std::array<AudioChannelLabel, 1> MonoChanMap { kAudioChannelLabel_Mono };
+constexpr std::array<AudioChannelLabel, 2> StereoChanMap { kAudioChannelLabel_Left, kAudioChannelLabel_Right};
+constexpr std::array<AudioChannelLabel, 4> QuadChanMap {
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right,
+        kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround
+};
+constexpr std::array<AudioChannelLabel, 6> X51ChanMap {
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right,
+        kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen,
+        kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround
+};
+constexpr std::array<AudioChannelLabel, 6> X51RearChanMap {
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right,
+        kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen,
+        kAudioChannelLabel_RearSurroundRight, kAudioChannelLabel_RearSurroundLeft
+};
+constexpr std::array<AudioChannelLabel, 7> X61ChanMap {
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right,
+        kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen,
+        kAudioChannelLabel_CenterSurround,
+        kAudioChannelLabel_RearSurroundRight, kAudioChannelLabel_RearSurroundLeft
+};
+constexpr std::array<AudioChannelLabel, 8> X71ChanMap {
+        kAudioChannelLabel_Left, kAudioChannelLabel_Right,
+        kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen,
+        kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround,
+        kAudioChannelLabel_LeftCenter, kAudioChannelLabel_RightCenter
+};
 
 struct FourCCPrinter {
     char mString[sizeof(UInt32) + 1]{};
@@ -159,7 +190,7 @@ std::string GetDeviceName(AudioDeviceID devId)
     /* Clear extraneous nul chars that may have been written with the name
      * string, and return it.
      */
-    while(!devname.back())
+    while(!devname.empty() && !devname.back())
         devname.pop_back();
     return devname;
 }
@@ -167,7 +198,7 @@ std::string GetDeviceName(AudioDeviceID devId)
 UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
 {
     UInt32 propSize{};
-    auto err = GetDevPropertySize(devId, kAudioDevicePropertyStreamConfiguration, isCapture, 0,
+    auto err = GetDevPropertySize(devId, kAudioUnitProperty_AudioChannelLayout, isCapture, 0,
         &propSize);
     if(err)
     {
@@ -176,11 +207,11 @@ UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
         return 0;
     }
 
-    auto buflist_data = std::make_unique<char[]>(propSize);
-    auto *buflist = reinterpret_cast<AudioBufferList*>(buflist_data.get());
+    auto channel_data = std::make_unique<char[]>(propSize);
+    auto *channel_layout = reinterpret_cast<AudioChannelLayout*>(channel_data.get());
 
-    err = GetDevProperty(devId, kAudioDevicePropertyStreamConfiguration, isCapture, 0, propSize,
-        buflist);
+    err = GetDevProperty(devId, kAudioUnitProperty_AudioChannelLayout, isCapture, 0, propSize,
+        channel_layout);
     if(err)
     {
         ERR("kAudioDevicePropertyStreamConfiguration query failed: '%s' (%u)\n",
@@ -188,11 +219,7 @@ UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
         return 0;
     }
 
-    UInt32 numChannels{0};
-    for(size_t i{0};i < buflist->mNumberBuffers;++i)
-        numChannels += buflist->mBuffers[i].mNumberChannels;
-
-    return numChannels;
+    return channel_layout->mNumberChannelDescriptions;
 }
 
 
@@ -505,6 +532,22 @@ bool CoreAudioPlayback::reset()
         mDevice->Frequency = static_cast<uint>(streamFormat.mSampleRate);
     }
 
+    struct ChannelMap {
+        DevFmtChannels fmt;
+        al::span<const AudioChannelLabel> map;
+        bool is_51rear;
+    };
+
+    static constexpr std::array<ChannelMap,7> chanmaps{{
+        { DevFmtX71, X71ChanMap, false },
+        { DevFmtX61, X61ChanMap, false },
+        { DevFmtX51, X51ChanMap, false },
+        { DevFmtX51, X51RearChanMap, true },
+        { DevFmtQuad, QuadChanMap, false },
+        { DevFmtStereo, StereoChanMap, false },
+        { DevFmtMono, MonoChanMap, false }
+    }};
+
     /* FIXME: How to tell what channels are what in the output device, and how
      * to specify what we're giving? e.g. 6.0 vs 5.1
      */
@@ -551,6 +594,42 @@ bool CoreAudioPlayback::reset()
         ERR("AudioUnitSetProperty(StreamFormat) failed: '%s' (%u)\n", FourCCPrinter{err}.c_str(),
             err);
         return false;
+    }
+
+    if(!mDevice->Flags.test(ChannelsRequest))
+    {
+        auto propSize = UInt32{};
+        auto writable = Boolean{};
+
+        err = AudioUnitGetPropertyInfo(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
+            kAudioUnitScope_Output, OutputElement, &propSize, &writable);
+        if(err == noErr)
+        {
+            auto layout_data = std::make_unique<char[]>(propSize);
+            auto *layout = reinterpret_cast<AudioChannelLayout*>(layout_data.get());
+
+            err = AudioUnitGetProperty(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
+                kAudioUnitScope_Output, OutputElement, layout, &propSize);
+            if(err == noErr)
+            {
+                auto descs = al::span{std::data(layout->mChannelDescriptions),
+                    layout->mNumberChannelDescriptions};
+                auto labels = std::vector<AudioChannelLayoutTag>(descs.size());
+
+                std::transform(descs.begin(), descs.end(), labels.begin(),
+                    std::mem_fn(&AudioChannelDescription::mChannelLabel));
+                sort(labels.begin(), labels.end());
+
+                auto chaniter = std::find_if(chanmaps.cbegin(), chanmaps.cend(),
+                    [&labels](const ChannelMap &chanmap) -> bool
+                    {
+                        return std::includes(labels.begin(), labels.end(), chanmap.map.begin(),
+                            chanmap.map.end());
+                    });
+                if(chaniter != chanmaps.cend())
+                    mDevice->FmtChans = chaniter->fmt;
+            }
+        }
     }
 
     setDefaultWFXChannelOrder();
