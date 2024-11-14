@@ -283,6 +283,8 @@ else()
 
     if(ALSOFT_WERROR)
         set(C_FLAGS ${C_FLAGS} -Werror)
+    else()
+        set(C_FLAGS ${C_FLAGS} -Werror=undef)
     endif()
 
     check_c_compiler_flag(-fno-math-errno HAVE_FNO_MATH_ERRNO)
@@ -1326,14 +1328,20 @@ configure_file(
     "${OpenAL_SOURCE_DIR}/config.h.in"
     "${OpenAL_BINARY_DIR}/config.h")
 configure_file(
+    "${OpenAL_SOURCE_DIR}/config_backends.h.in"
+    "${OpenAL_BINARY_DIR}/config_backends.h")
+configure_file(
+    "${OpenAL_SOURCE_DIR}/config_simd.h.in"
+    "${OpenAL_BINARY_DIR}/config_simd.h")
+configure_file(
     "${OpenAL_SOURCE_DIR}/openal.pc.in"
     "${OpenAL_BINARY_DIR}/openal.pc"
     @ONLY)
 
 
 add_library(alsoft.common STATIC EXCLUDE_FROM_ALL ${COMMON_OBJS})
-target_include_directories(alsoft.common PRIVATE ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/include
-    PUBLIC ${OpenAL_SOURCE_DIR}/common)
+target_include_directories(alsoft.common PRIVATE ${OpenAL_SOURCE_DIR}/include
+    PUBLIC ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
 target_compile_definitions(alsoft.common PRIVATE ${CPP_DEFS})
 target_compile_options(alsoft.common PRIVATE ${C_FLAGS})
 set_target_properties(alsoft.common PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
@@ -1485,8 +1493,8 @@ set_target_properties(${IMPL_TARGET} PROPERTIES ${DEFAULT_TARGET_PROPS}
     SOVERSION ${LIB_MAJOR_VERSION}
 )
 target_compile_definitions(${IMPL_TARGET}
-    PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES $<$<BOOL:${ALSOFT_EAX}>:ALSOFT_EAX>
-    "ALC_API=${EXPORT_DECL}" "AL_API=${EXPORT_DECL}" ${CPP_DEFS})
+    PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES  "ALC_API=${EXPORT_DECL}" "AL_API=${EXPORT_DECL}"
+    ${CPP_DEFS})
 target_compile_options(${IMPL_TARGET} PRIVATE ${C_FLAGS})
 
 if(TARGET alsoft.build_version)
