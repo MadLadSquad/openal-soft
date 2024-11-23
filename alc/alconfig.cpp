@@ -353,7 +353,8 @@ void ReadALConfig()
             path = fs::path{buffer};
             path /= L"alsoft.ini";
 
-            TRACE("Loading config %s...\n", path.u8string().c_str());
+            TRACE("Loading config %s...\n",
+                reinterpret_cast<const char*>(path.u8string().c_str()));
             if(std::ifstream f{path}; f.is_open())
                 LoadConfigFromFile(f);
         }
@@ -363,8 +364,8 @@ void ReadALConfig()
     path = fs::u8path(GetProcBinary().path);
     if(!path.empty())
     {
-        path /= "alsoft.ini";
-        TRACE("Loading config %s...\n", path.u8string().c_str());
+        path /= L"alsoft.ini";
+        TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
         if(std::ifstream f{path}; f.is_open())
             LoadConfigFromFile(f);
     }
@@ -372,7 +373,7 @@ void ReadALConfig()
     if(auto confpath = al::getenv(L"ALSOFT_CONF"))
     {
         path = *confpath;
-        TRACE("Loading config %s...\n", path.u8string().c_str());
+        TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
         if(std::ifstream f{path}; f.is_open())
             LoadConfigFromFile(f);
     }
@@ -385,7 +386,7 @@ void ReadALConfig()
     namespace fs = std::filesystem;
     fs::path path{"/etc/openal/alsoft.conf"};
 
-    TRACE("Loading config %s...\n", path.u8string().c_str());
+    TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
     if(std::ifstream f{path}; f.is_open())
         LoadConfigFromFile(f);
 
@@ -410,12 +411,14 @@ void ReadALConfig()
         }
 
         if(!path.is_absolute())
-            WARN("Ignoring XDG config dir: %s\n", path.u8string().c_str());
+            WARN("Ignoring XDG config dir: %s\n",
+                reinterpret_cast<const char*>(path.u8string().c_str()));
         else
         {
             path /= "alsoft.conf";
 
-            TRACE("Loading config %s...\n", path.u8string().c_str());
+            TRACE("Loading config %s...\n",
+                reinterpret_cast<const char*>(path.u8string().c_str()));
             if(std::ifstream f{path}; f.is_open())
                 LoadConfigFromFile(f);
         }
@@ -442,7 +445,7 @@ void ReadALConfig()
         path = *homedir;
         path /= ".alsoftrc";
 
-        TRACE("Loading config %s...\n", path.u8string().c_str());
+        TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
         if(std::ifstream f{path}; f.is_open())
             LoadConfigFromFile(f);
     }
@@ -463,7 +466,7 @@ void ReadALConfig()
     }
     if(!path.empty())
     {
-        TRACE("Loading config %s...\n", path.u8string().c_str());
+        TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
         if(std::ifstream f{path}; f.is_open())
             LoadConfigFromFile(f);
     }
@@ -473,7 +476,7 @@ void ReadALConfig()
     {
         path /= "alsoft.conf";
 
-        TRACE("Loading config %s...\n", path.u8string().c_str());
+        TRACE("Loading config %s...\n", reinterpret_cast<const char*>(path.u8string().c_str()));
         if(std::ifstream f{path}; f.is_open())
             LoadConfigFromFile(f);
     }
@@ -487,52 +490,87 @@ void ReadALConfig()
 }
 #endif
 
-std::optional<std::string> ConfigValueStr(const std::string_view devName,
-    const std::string_view blockName, const std::string_view keyName)
+auto ConfigValueStr(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName) -> std::optional<std::string>
 {
     if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
         return val;
     return std::nullopt;
 }
 
-std::optional<int> ConfigValueInt(const std::string_view devName, const std::string_view blockName,
-    const std::string_view keyName)
+auto ConfigValueInt(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName) -> std::optional<int>
 {
-    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
+    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty()) try {
         return static_cast<int>(std::stol(val, nullptr, 0));
+    }
+    catch(std::exception &e) {
+        WARN("Option is not an int: %.*s = %s\n", al::sizei(keyName), keyName.data(), val.c_str());
+    }
+
     return std::nullopt;
 }
 
-std::optional<unsigned int> ConfigValueUInt(const std::string_view devName,
-    const std::string_view blockName, const std::string_view keyName)
+auto ConfigValueUInt(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName) -> std::optional<unsigned int>
 {
-    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
+    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty()) try {
         return static_cast<unsigned int>(std::stoul(val, nullptr, 0));
+    }
+    catch(std::exception &e) {
+        WARN("Option is not an unsigned int: %.*s = %s\n", al::sizei(keyName), keyName.data(),
+            val.c_str());
+    }
     return std::nullopt;
 }
 
-std::optional<float> ConfigValueFloat(const std::string_view devName,
-    const std::string_view blockName, const std::string_view keyName)
+auto ConfigValueFloat(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName) -> std::optional<float>
 {
-    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
+    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty()) try {
         return std::stof(val);
+    }
+    catch(std::exception &e) {
+        WARN("Option is not a float: %.*s = %s\n", al::sizei(keyName), keyName.data(),
+            val.c_str());
+    }
     return std::nullopt;
 }
 
-std::optional<bool> ConfigValueBool(const std::string_view devName,
-    const std::string_view blockName, const std::string_view keyName)
+auto ConfigValueBool(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName) -> std::optional<bool>
 {
-    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
+    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty()) try {
         return al::case_compare(val, "on"sv) == 0 || al::case_compare(val, "yes"sv) == 0
             || al::case_compare(val, "true"sv) == 0 || std::stoll(val) != 0;
+    }
+    catch(std::out_of_range&) {
+        /* If out of range, the value is some non-0 (true) value and it doesn't
+         * matter that it's too big or small.
+         */
+        return true;
+    }
+    catch(std::exception &e) {
+        /* If stoll fails to convert for any other reason, it's some other word
+         * that's treated as false.
+         */
+        return false;
+    }
     return std::nullopt;
 }
 
-bool GetConfigValueBool(const std::string_view devName, const std::string_view blockName,
-    const std::string_view keyName, bool def)
+auto GetConfigValueBool(const std::string_view devName, const std::string_view blockName,
+    const std::string_view keyName, bool def) -> bool
 {
-    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty())
-        return al::case_compare(val, "on") == 0 || al::case_compare(val, "yes") == 0
-            || al::case_compare(val, "true") == 0 || std::stoll(val) != 0;
+    if(auto&& val = GetConfigValue(devName, blockName, keyName); !val.empty()) try {
+        return al::case_compare(val, "on"sv) == 0 || al::case_compare(val, "yes"sv) == 0
+            || al::case_compare(val, "true"sv) == 0 || std::stoll(val) != 0;
+    }
+    catch(std::out_of_range&) {
+        return true;
+    }
+    catch(std::exception &e) {
+        return false;
+    }
     return def;
 }
