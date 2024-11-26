@@ -80,7 +80,7 @@ struct DistanceComp {
     static constexpr uint MaxDelay{1024};
 
     struct ChanData {
-        al::span<float> Buffer{}; /* Valid size is [0...MaxDelay). */
+        al::span<float> Buffer; /* Valid size is [0...MaxDelay). */
         float Gain{1.0f};
     };
 
@@ -202,7 +202,7 @@ struct SIMDALIGN DeviceBase {
     DevAmbiScaling mAmbiScale{DevAmbiScaling::Default};
 
     // Device flags
-    std::bitset<DeviceFlagsCount> Flags{};
+    std::bitset<DeviceFlagsCount> Flags;
     DeviceState mDeviceState{DeviceState::Unprepared};
 
     uint NumAuxSends{};
@@ -293,11 +293,6 @@ struct SIMDALIGN DeviceBase {
     al::atomic_unique_ptr<al::FlexArray<ContextBase*>> mContexts;
 
 
-    DeviceBase(DeviceType type);
-    DeviceBase(const DeviceBase&) = delete;
-    DeviceBase& operator=(const DeviceBase&) = delete;
-    ~DeviceBase();
-
     [[nodiscard]] auto bytesFromFmt() const noexcept -> uint { return BytesFromDevFmt(FmtType); }
     [[nodiscard]] auto channelsFromFmt() const noexcept -> uint { return ChannelsFromDevFmt(FmtChans, mAmbiOrder); }
     [[nodiscard]] auto frameSizeFromFmt() const noexcept -> uint { return bytesFromFmt() * channelsFromFmt(); }
@@ -352,7 +347,7 @@ struct SIMDALIGN DeviceBase {
     void ProcessUhj(const std::size_t SamplesToDo);
     void ProcessBs2b(const std::size_t SamplesToDo);
 
-    inline void postProcess(const std::size_t SamplesToDo)
+    void postProcess(const std::size_t SamplesToDo)
     { if(PostProcess) LIKELY (this->*PostProcess)(SamplesToDo); }
 
     void renderSamples(const al::span<void*> outBuffers, const uint numSamples);
@@ -375,6 +370,14 @@ struct SIMDALIGN DeviceBase {
 
 private:
     uint renderSamples(const uint numSamples);
+
+protected:
+    DeviceBase(DeviceType type);
+    ~DeviceBase();
+
+public:
+    DeviceBase(const DeviceBase&) = delete;
+    DeviceBase& operator=(const DeviceBase&) = delete;
 };
 
 /* Must be less than 15 characters (16 including terminating null) for

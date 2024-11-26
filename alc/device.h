@@ -32,7 +32,7 @@ struct FilterSubList;
 using uint = unsigned int;
 
 
-struct ALCdevice { };
+struct ALCdevice { virtual ~ALCdevice() = default; };
 
 namespace al {
 
@@ -100,14 +100,14 @@ struct Device final : public ALCdevice, al::intrusive_ref<al::Device>, DeviceBas
     std::string mRendererOverride;
 
     Device(DeviceType type);
-    ~Device();
+    ~Device() final;
 
     void enumerateHrtfs();
 
     bool getConfigValueBool(const std::string_view block, const std::string_view key, bool def)
     { return GetConfigValueBool(mDeviceName, block, key, def); }
 
-    template<typename T> inline
+    template<typename T>
     auto configValue(const std::string_view block, const std::string_view key) -> std::optional<T> = delete;
 };
 
