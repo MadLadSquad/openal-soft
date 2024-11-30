@@ -75,12 +75,12 @@ if(NOT CMAKE_DEBUG_POSTFIX)
         FORCE)
 endif()
 
-set(DEFAULT_TARGET_PROPS
+set(ALSOFT_STD_VERSION_PROPS
     # Require C++17.
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED TRUE
-    # Prefer C11, but support C99 and earlier when possible.
-    C_STANDARD 11)
+    # Prefer C17, but support earlier when necessary.
+    C_STANDARD 17)
 
 set(CMAKE_MODULE_PATH "${OpenAL_SOURCE_DIR}/cmake")
 
@@ -758,7 +758,6 @@ set(OPENAL_OBJS
     al/effects/reverb.cpp
     al/effects/vmorpher.cpp
     al/error.cpp
-    al/error.h
     al/event.cpp
     al/event.h
     al/extension.cpp
@@ -1343,7 +1342,8 @@ target_include_directories(alsoft.common PRIVATE ${OpenAL_SOURCE_DIR}/include
     PUBLIC ${OpenAL_BINARY_DIR} ${OpenAL_SOURCE_DIR}/common)
 target_compile_definitions(alsoft.common PRIVATE ${CPP_DEFS})
 target_compile_options(alsoft.common PRIVATE ${C_FLAGS})
-set_target_properties(alsoft.common PROPERTIES ${DEFAULT_TARGET_PROPS} POSITION_INDEPENDENT_CODE TRUE)
+set_target_properties(alsoft.common PROPERTIES ${ALSOFT_STD_VERSION_PROPS}
+    POSITION_INDEPENDENT_CODE TRUE)
 
 
 unset(HAS_ROUTER)
@@ -1369,7 +1369,7 @@ add_custom_target(clang-tidy-check ${CLANG_TIDY_EXECUTABLE} -format-style=file -
 if(LIBTYPE STREQUAL "STATIC")
     add_library(${IMPL_TARGET} STATIC ${COMMON_OBJS} ${OPENAL_OBJS} ${ALC_OBJS} ${CORE_OBJS})
     target_compile_definitions(${IMPL_TARGET} PUBLIC AL_LIBTYPE_STATIC)
-    target_link_libraries(${IMPL_TARGET} PRIVATE ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
+    target_link_libraries(${IMPL_TARGET} PRIVATE ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB} alsoft::fmt-header-only)
 
     if(WIN32)
         # This option is for static linking OpenAL Soft into another project
@@ -1403,7 +1403,7 @@ else()
             ${OpenAL_SOURCE_DIR}/common
             ${OpenAL_BINARY_DIR}
         )
-        set_target_properties(OpenAL PROPERTIES ${DEFAULT_TARGET_PROPS} PREFIX ""
+        set_target_properties(OpenAL PROPERTIES ${ALSOFT_STD_VERSION_PROPS} PREFIX ""
             OUTPUT_NAME ${LIBNAME})
         if(TARGET alsoft.build_version)
             add_dependencies(OpenAL alsoft.build_version)
@@ -1426,7 +1426,7 @@ else()
         set_target_properties(${IMPL_TARGET} PROPERTIES PREFIX "")
     endif()
     target_link_libraries(${IMPL_TARGET} PRIVATE alsoft.common ${LINKER_FLAGS} ${EXTRA_LIBS}
-        ${MATH_LIB})
+        ${MATH_LIB} alsoft::fmt)
 
     if(ALSOFT_UWP)
         find_package(cppwinrt CONFIG)
@@ -1507,7 +1507,7 @@ target_include_directories(${IMPL_TARGET}
     ${OpenAL_SOURCE_DIR}/common
 )
 
-set_target_properties(${IMPL_TARGET} PROPERTIES ${DEFAULT_TARGET_PROPS}
+set_target_properties(${IMPL_TARGET} PROPERTIES ${ALSOFT_STD_VERSION_PROPS}
     OUTPUT_NAME ${LIBNAME}
     VERSION ${LIB_VERSION}
     SOVERSION ${LIB_MAJOR_VERSION}
