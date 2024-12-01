@@ -514,8 +514,8 @@ int AlsaPlayback::mixerProc()
         int state{verify_state(mPcmHandle)};
         if(state < 0)
         {
-            ERR("Invalid state detected: %s\n", snd_strerror(state));
-            mDevice->handleDisconnect("Bad state: %s", snd_strerror(state));
+            ERRFMT("Invalid state detected: {}", snd_strerror(state));
+            mDevice->handleDisconnect("Bad state: {}", snd_strerror(state));
             break;
         }
 
@@ -598,8 +598,8 @@ int AlsaPlayback::mixerNoMMapProc()
         int state{verify_state(mPcmHandle)};
         if(state < 0)
         {
-            ERR("Invalid state detected: %s\n", snd_strerror(state));
-            mDevice->handleDisconnect("Bad state: %s", snd_strerror(state));
+            ERRFMT("Invalid state detected: {}", snd_strerror(state));
+            mDevice->handleDisconnect("Bad state: {}", snd_strerror(state));
             break;
         }
 
@@ -686,7 +686,7 @@ void AlsaPlayback::open(std::string_view name)
             [name](const DevMap &entry) -> bool { return entry.name == name; });
         if(iter == PlaybackDevices.cend())
             throw al::backend_exception{al::backend_error::NoDevice,
-                "Device name \"%.*s\" not found", al::sizei(name), name.data()};
+                "Device name \"{}\" not found", name};
         driver = iter->device_name;
     }
     else
@@ -701,7 +701,7 @@ void AlsaPlayback::open(std::string_view name)
     int err{snd_pcm_open(&pcmHandle, driver.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK)};
     if(err < 0)
         throw al::backend_exception{al::backend_error::NoDevice,
-            "Could not open ALSA device \"%s\"", driver.c_str()};
+            "Could not open ALSA device \"{}\"", driver};
     if(mPcmHandle)
         snd_pcm_close(mPcmHandle);
     mPcmHandle = pcmHandle;
@@ -748,7 +748,7 @@ bool AlsaPlayback::reset()
     HwParamsPtr hp{CreateHwParams()};
 #define CHECK(x) do {                                                         \
     if(int err{x}; err < 0)                                                   \
-        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: %s", \
+        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: {}", \
             snd_strerror(err)};                                               \
 } while(0)
     CHECK(snd_pcm_hw_params_any(mPcmHandle, hp.get()));
@@ -850,7 +850,7 @@ void AlsaPlayback::start()
     HwParamsPtr hp{CreateHwParams()};
 #define CHECK(x) do {                                                         \
     if(int err{x}; err < 0)                                                   \
-        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: %s", \
+        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: {}", \
             snd_strerror(err)};                                               \
 } while(0)
     CHECK(snd_pcm_hw_params_current(mPcmHandle, hp.get()));
@@ -878,7 +878,7 @@ void AlsaPlayback::start()
     }
     catch(std::exception& e) {
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start mixing thread: %s", e.what()};
+            "Failed to start mixing thread: {}", e.what()};
     }
 }
 
@@ -954,7 +954,7 @@ void AlsaCapture::open(std::string_view name)
             [name](const DevMap &entry) -> bool { return entry.name == name; });
         if(iter == CaptureDevices.cend())
             throw al::backend_exception{al::backend_error::NoDevice,
-                "Device name \"%.*s\" not found", al::sizei(name), name.data()};
+                "Device name \"{}\" not found", name};
         driver = iter->device_name;
     }
     else
@@ -967,7 +967,7 @@ void AlsaCapture::open(std::string_view name)
     TRACE("Opening device \"%s\"\n", driver.c_str());
     if(int err{snd_pcm_open(&mPcmHandle, driver.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK)}; err < 0)
         throw al::backend_exception{al::backend_error::NoDevice,
-            "Could not open ALSA device \"%s\"", driver.c_str()};
+            "Could not open ALSA device \"{}\"", driver};
 
     /* Free alsa's global config tree. Otherwise valgrind reports a ton of leaks. */
     snd_config_update_free_global();
@@ -1007,7 +1007,7 @@ void AlsaCapture::open(std::string_view name)
     HwParamsPtr hp{CreateHwParams()};
 #define CHECK(x) do {                                                         \
     if(int err{x}; err < 0)                                                   \
-        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: %s", \
+        throw al::backend_exception{al::backend_error::DeviceError, #x " failed: {}", \
             snd_strerror(err)};                                               \
 } while(0)
     CHECK(snd_pcm_hw_params_any(mPcmHandle, hp.get()));
@@ -1045,11 +1045,11 @@ void AlsaCapture::open(std::string_view name)
 void AlsaCapture::start()
 {
     if(int err{snd_pcm_prepare(mPcmHandle)}; err < 0)
-        throw al::backend_exception{al::backend_error::DeviceError, "snd_pcm_prepare failed: %s",
+        throw al::backend_exception{al::backend_error::DeviceError, "snd_pcm_prepare failed: {}",
             snd_strerror(err)};
 
     if(int err{snd_pcm_start(mPcmHandle)}; err < 0)
-        throw al::backend_exception{al::backend_error::DeviceError, "snd_pcm_start failed: %s",
+        throw al::backend_exception{al::backend_error::DeviceError, "snd_pcm_start failed: {}",
             snd_strerror(err)};
 
     mDoCapture = true;
@@ -1123,8 +1123,8 @@ void AlsaCapture::captureSamples(std::byte *buffer, uint samples)
             if(amt < 0)
             {
                 const char *err{snd_strerror(static_cast<int>(amt))};
-                ERR("restore error: %s\n", err);
-                mDevice->handleDisconnect("Capture recovery failure: %s", err);
+                ERRFMT("restore error: {}", err);
+                mDevice->handleDisconnect("Capture recovery failure: {}", err);
                 break;
             }
             /* If the amount available is less than what's asked, we lost it
@@ -1162,8 +1162,8 @@ uint AlsaCapture::availableSamples()
         if(avail < 0)
         {
             const char *err{snd_strerror(static_cast<int>(avail))};
-            ERR("restore error: %s\n", err);
-            mDevice->handleDisconnect("Capture recovery failure: %s", err);
+            ERRFMT("restore error: {}", err);
+            mDevice->handleDisconnect("Capture recovery failure: {}", err);
         }
     }
 
@@ -1199,8 +1199,8 @@ uint AlsaCapture::availableSamples()
             if(amt < 0)
             {
                 const char *err{snd_strerror(static_cast<int>(amt))};
-                ERR("restore error: %s\n", err);
-                mDevice->handleDisconnect("Capture recovery failure: %s", err);
+                ERRFMT("restore error: {}", err);
+                mDevice->handleDisconnect("Capture recovery failure: {}", err);
                 break;
             }
             avail = amt;

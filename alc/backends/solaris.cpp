@@ -106,13 +106,13 @@ int SolarisBackend::mixerProc()
         {
             if(errno == EINTR || errno == EAGAIN)
                 continue;
-            ERR("poll failed: %s\n", strerror(errno));
-            mDevice->handleDisconnect("Failed to wait for playback buffer: %s", strerror(errno));
+            ERRFMT("poll failed: {}", strerror(errno));
+            mDevice->handleDisconnect("Failed to wait for playback buffer: {}", strerror(errno));
             break;
         }
         else if(pret == 0)
         {
-            WARN("poll timeout\n");
+            WARNFMT("poll timeout");
             continue;
         }
 
@@ -126,8 +126,8 @@ int SolarisBackend::mixerProc()
             {
                 if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
                     continue;
-                ERR("write failed: %s\n", strerror(errno));
-                mDevice->handleDisconnect("Failed to write playback samples: %s", strerror(errno));
+                ERRFMT("write failed: {}", strerror(errno));
+                mDevice->handleDisconnect("Failed to write playback samples: {}", strerror(errno));
                 break;
             }
 
@@ -144,13 +144,13 @@ void SolarisBackend::open(std::string_view name)
     if(name.empty())
         name = GetDefaultName();
     else if(name != GetDefaultName())
-        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%.*s\" not found",
-            al::sizei(name), name.data()};
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"{}\" not found",
+            name};
 
     int fd{::open(solaris_driver.c_str(), O_WRONLY)};
     if(fd == -1)
-        throw al::backend_exception{al::backend_error::NoDevice, "Could not open %s: %s",
-            solaris_driver.c_str(), strerror(errno)};
+        throw al::backend_exception{al::backend_error::NoDevice, "Could not open {}: {}",
+            solaris_driver, strerror(errno)};
 
     if(mFd != -1)
         ::close(mFd);
@@ -191,7 +191,7 @@ bool SolarisBackend::reset()
 
     if(ioctl(mFd, AUDIO_SETINFO, &info) < 0)
     {
-        ERR("ioctl failed: %s\n", strerror(errno));
+        ERRFMT("ioctl failed: {}", strerror(errno));
         return false;
     }
 
@@ -203,7 +203,7 @@ bool SolarisBackend::reset()
             mDevice->FmtChans = DevFmtMono;
         else
             throw al::backend_exception{al::backend_error::DeviceError,
-                "Got %u device channels", info.play.channels};
+                "Got {} device channels", info.play.channels};
     }
 
     if(info.play.precision == 8 && info.play.encoding == AUDIO_ENCODING_LINEAR8)
@@ -216,7 +216,7 @@ bool SolarisBackend::reset()
         mDevice->FmtType = DevFmtInt;
     else
     {
-        ERR("Got unhandled sample type: %d (0x%x)\n", info.play.precision, info.play.encoding);
+        ERRFMT("Got unhandled sample type: {} (0x{:x})", info.play.precision, info.play.encoding);
         return false;
     }
 
@@ -243,7 +243,7 @@ void SolarisBackend::start()
     }
     catch(std::exception& e) {
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start mixing thread: %s", e.what()};
+            "Failed to start mixing thread: {}", e.what()};
     }
 }
 
@@ -254,7 +254,7 @@ void SolarisBackend::stop()
     mThread.join();
 
     if(ioctl(mFd, AUDIO_DRAIN) < 0)
-        ERR("Error draining device: %s\n", strerror(errno));
+        ERRFMT("Error draining device: {}", strerror(errno));
 }
 
 } // namespace

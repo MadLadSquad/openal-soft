@@ -212,8 +212,8 @@ FORCE_ALIGN int DSoundPlayback::mixerProc()
     HRESULT err{mBuffer->GetCaps(&DSBCaps)};
     if(FAILED(err))
     {
-        ERR("Failed to get buffer caps: 0x%lx\n", err);
-        mDevice->handleDisconnect("Failure retrieving playback buffer info: 0x%lx", err);
+        ERRFMT("Failed to get buffer caps: 0x{:x}", err);
+        mDevice->handleDisconnect("Failure retrieving playback buffer info: 0x{:x}", err);
         return 1;
     }
 
@@ -239,8 +239,8 @@ FORCE_ALIGN int DSoundPlayback::mixerProc()
                 err = mBuffer->Play(0, 0, DSBPLAY_LOOPING);
                 if(FAILED(err))
                 {
-                    ERR("Failed to play buffer: 0x%lx\n", err);
-                    mDevice->handleDisconnect("Failure starting playback: 0x%lx", err);
+                    ERRFMT("Failed to play buffer: 0x{:x}", err);
+                    mDevice->handleDisconnect("Failure starting playback: 0x{:x}", err);
                     return 1;
                 }
                 Playing = true;
@@ -282,8 +282,8 @@ FORCE_ALIGN int DSoundPlayback::mixerProc()
         }
         else
         {
-            ERR("Buffer lock error: %#lx\n", err);
-            mDevice->handleDisconnect("Failed to lock output buffer: 0x%lx", err);
+            ERRFMT("Buffer lock error: 0x{:x}", err);
+            mDevice->handleDisconnect("Failed to lock output buffer: 0x{:x}", err);
             return 1;
         }
 
@@ -326,7 +326,7 @@ void DSoundPlayback::open(std::string_view name)
                     [&id](const DevMap &entry) -> bool { return entry.guid == id; });
             if(iter == PlaybackDevices.cend())
                 throw al::backend_exception{al::backend_error::NoDevice,
-                    "Device name \"%.*s\" not found", al::sizei(name), name.data()};
+                    "Device name \"{}\" not found", name};
         }
         guid = &iter->guid;
     }
@@ -345,7 +345,7 @@ void DSoundPlayback::open(std::string_view name)
     if(SUCCEEDED(hr))
         hr = ds->SetCooperativeLevel(GetForegroundWindow(), DSSCL_PRIORITY);
     if(FAILED(hr))
-        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
+        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x{:x}",
             hr};
 
     mNotifies = nullptr;
@@ -388,7 +388,7 @@ bool DSoundPlayback::reset()
     HRESULT hr{mDS->GetSpeakerConfig(&speakers)};
     if(FAILED(hr))
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to get speaker config: 0x%08lx", hr};
+            "Failed to get speaker config: 0x{:x}", hr};
 
     speakers = DSSPEAKER_CONFIG(speakers);
     if(!mDevice->Flags.test(ChannelsRequest))
@@ -525,7 +525,7 @@ void DSoundPlayback::start()
     }
     catch(std::exception& e) {
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start mixing thread: %s", e.what()};
+            "Failed to start mixing thread: {}", e.what()};
     }
 }
 
@@ -599,7 +599,7 @@ void DSoundCapture::open(std::string_view name)
                     [&id](const DevMap &entry) -> bool { return entry.guid == id; });
             if(iter == CaptureDevices.cend())
                 throw al::backend_exception{al::backend_error::NoDevice,
-                    "Device name \"%.*s\" not found", al::sizei(name), name.data()};
+                    "Device name \"{}\" not found", name};
         }
         guid = &iter->guid;
     }
@@ -609,9 +609,9 @@ void DSoundCapture::open(std::string_view name)
     case DevFmtByte:
     case DevFmtUShort:
     case DevFmtUInt:
-        WARN("%s capture samples not supported\n", DevFmtTypeString(mDevice->FmtType));
+        WARNFMT("{} capture samples not supported", DevFmtTypeString(mDevice->FmtType));
         throw al::backend_exception{al::backend_error::DeviceError,
-            "%s capture samples not supported", DevFmtTypeString(mDevice->FmtType)};
+            "{} capture samples not supported", DevFmtTypeString(mDevice->FmtType)};
 
     case DevFmtUByte:
     case DevFmtShort:
@@ -633,8 +633,8 @@ void DSoundCapture::open(std::string_view name)
     case DevFmtX7144:
     case DevFmtX3D71:
     case DevFmtAmbi3D:
-        WARN("%s capture not supported\n", DevFmtChannelsString(mDevice->FmtChans));
-        throw al::backend_exception{al::backend_error::DeviceError, "%s capture not supported",
+        WARNFMT("{} capture not supported", DevFmtChannelsString(mDevice->FmtChans));
+        throw al::backend_exception{al::backend_error::DeviceError, "{} capture not supported",
             DevFmtChannelsString(mDevice->FmtChans)};
     }
 
@@ -681,7 +681,7 @@ void DSoundCapture::open(std::string_view name)
         mDSCbuffer = nullptr;
         mDSC = nullptr;
 
-        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
+        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x{:x}",
             hr};
     }
 
@@ -696,7 +696,7 @@ void DSoundCapture::start()
     const HRESULT hr{mDSCbuffer->Start(DSCBSTART_LOOPING)};
     if(FAILED(hr))
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failure starting capture: 0x%lx", hr};
+            "Failure starting capture: 0x{:x}", hr};
 }
 
 void DSoundCapture::stop()
@@ -704,8 +704,8 @@ void DSoundCapture::stop()
     HRESULT hr{mDSCbuffer->Stop()};
     if(FAILED(hr))
     {
-        ERR("stop failed: 0x%08lx\n", hr);
-        mDevice->handleDisconnect("Failure stopping capture: 0x%lx", hr);
+        ERRFMT("stop failed: 0x{:x}", hr);
+        mDevice->handleDisconnect("Failure stopping capture: 0x{:x}", hr);
     }
 }
 
@@ -742,8 +742,8 @@ uint DSoundCapture::availableSamples()
 
     if(FAILED(hr))
     {
-        ERR("update failed: 0x%08lx\n", hr);
-        mDevice->handleDisconnect("Failure retrieving capture data: 0x%lx", hr);
+        ERRFMT("update failed: 0x{:x}", hr);
+        mDevice->handleDisconnect("Failure retrieving capture data: 0x{:x}", hr);
     }
 
     return static_cast<uint>(mRing->readSpace());

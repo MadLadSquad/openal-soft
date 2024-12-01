@@ -1218,8 +1218,8 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
     ComWrapper com{COINIT_MULTITHREADED};
     if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
+        ERRFMT("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x{:x}", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x{:x}", com.status());
         return 1;
     }
 
@@ -1249,8 +1249,8 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
         HRESULT hr{audio.mClient->GetCurrentPadding(&written)};
         if(FAILED(hr))
         {
-            ERR("Failed to get padding: 0x%08lx\n", hr);
-            mDevice->handleDisconnect("Failed to retrieve buffer padding: 0x%08lx", hr);
+            ERRFMT("Failed to get padding: 0x{:x}", hr);
+            mDevice->handleDisconnect("Failed to retrieve buffer padding: 0x{:x}", hr);
             break;
         }
         mPadding.store(written, std::memory_order_relaxed);
@@ -1307,8 +1307,8 @@ FORCE_ALIGN int WasapiPlayback::mixerProc()
         }
         if(FAILED(hr))
         {
-            ERR("Failed to buffer data: 0x%08lx\n", hr);
-            mDevice->handleDisconnect("Failed to send playback samples: 0x%08lx", hr);
+            ERRFMT("Failed to buffer data: 0x{:x}", hr);
+            mDevice->handleDisconnect("Failed to send playback samples: 0x{:x}", hr);
             break;
         }
     }
@@ -1322,8 +1322,8 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
     ComWrapper com{COINIT_MULTITHREADED};
     if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
+        ERRFMT("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x{:x}", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x{:x}", com.status());
         return 1;
     }
 
@@ -1358,8 +1358,8 @@ FORCE_ALIGN int WasapiPlayback::mixerSpatialProc()
             HRESULT hr{audio.mRender->Reset()};
             if(FAILED(hr))
             {
-                ERR("ISpatialAudioObjectRenderStream::Reset failed: 0x%08lx\n", hr);
-                mDevice->handleDisconnect("Device lost: 0x%08lx", hr);
+                ERRFMT("ISpatialAudioObjectRenderStream::Reset failed: 0x{:x}", hr);
+                mDevice->handleDisconnect("Device lost: 0x{:x}", hr);
                 break;
             }
         }
@@ -1457,7 +1457,7 @@ void WasapiPlayback::open(std::string_view name)
 
     mOpenStatus = pushMessage(MsgType::OpenDevice, name).get();
     if(FAILED(mOpenStatus))
-        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
+        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x{:x}",
             mOpenStatus};
 }
 
@@ -1481,7 +1481,7 @@ HRESULT WasapiPlayback::openProxy(std::string_view name)
         }
         if(iter == list.cend())
         {
-            WARN("Failed to find device name matching \"%.*s\"\n", al::sizei(name), name.data());
+            WARNFMT("Failed to find device name matching \"{}\"", name);
             return E_FAIL;
         }
         devname = iter->name;
@@ -1948,7 +1948,7 @@ bool WasapiPlayback::reset()
 {
     HRESULT hr{pushMessage(MsgType::ResetDevice).get()};
     if(FAILED(hr))
-        throw al::backend_exception{al::backend_error::DeviceError, "0x%08lx", hr};
+        throw al::backend_exception{al::backend_error::DeviceError, "0x{:x}", hr};
     return true;
 }
 
@@ -2104,7 +2104,7 @@ void WasapiPlayback::start()
     const HRESULT hr{pushMessage(MsgType::StartDevice).get()};
     if(FAILED(hr))
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start playback: 0x%lx", hr};
+            "Failed to start playback: 0x{:x}", hr};
 }
 
 HRESULT WasapiPlayback::startProxy()
@@ -2251,8 +2251,8 @@ FORCE_ALIGN int WasapiCapture::recordProc()
     ComWrapper com{COINIT_MULTITHREADED};
     if(!com)
     {
-        ERR("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x%08lx\n", com.status());
-        mDevice->handleDisconnect("COM init failed: 0x%08lx", com.status());
+        ERRFMT("CoInitializeEx(nullptr, COINIT_MULTITHREADED) failed: 0x{:x}", com.status());
+        mDevice->handleDisconnect("COM init failed: 0x{:x}", com.status());
         return 1;
     }
 
@@ -2329,13 +2329,13 @@ FORCE_ALIGN int WasapiCapture::recordProc()
 
         if(FAILED(hr))
         {
-            mDevice->handleDisconnect("Failed to capture samples: 0x%08lx", hr);
+            mDevice->handleDisconnect("Failed to capture samples: 0x{:x}", hr);
             break;
         }
 
         DWORD res{WaitForSingleObjectEx(mNotifyEvent, 2000, FALSE)};
         if(res != WAIT_OBJECT_0)
-            ERR("WaitForSingleObjectEx error: 0x%lx\n", res);
+            ERRFMT("WaitForSingleObjectEx error: 0x{:x}", res);
     }
 
     return 0;
@@ -2358,7 +2358,7 @@ void WasapiCapture::open(std::string_view name)
 
     mOpenStatus = pushMessage(MsgType::OpenDevice, name).get();
     if(FAILED(mOpenStatus))
-        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x%08lx",
+        throw al::backend_exception{al::backend_error::DeviceError, "Device init failed: 0x{:x}",
             mOpenStatus};
 
     HRESULT hr{pushMessage(MsgType::ResetDevice).get()};
@@ -2719,7 +2719,7 @@ void WasapiCapture::start()
     const HRESULT hr{pushMessage(MsgType::StartDevice).get()};
     if(FAILED(hr))
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start recording: 0x%lx", hr};
+            "Failed to start recording: 0x{:x}", hr};
 }
 
 HRESULT WasapiCapture::startProxy()

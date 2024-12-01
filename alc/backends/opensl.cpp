@@ -156,7 +156,7 @@ constexpr const char *res_str(SLresult result) noexcept
 inline void PrintErr(SLresult res, const char *str)
 {
     if(res != SL_RESULT_SUCCESS) UNLIKELY
-        ERR("%s: %s\n", str, res_str(res));
+        ERRFMT("{}: {}", str, res_str(res));
 }
 
 
@@ -247,7 +247,7 @@ int OpenSLPlayback::mixerProc()
     const size_t frame_step{mDevice->channelsFromFmt()};
 
     if(SL_RESULT_SUCCESS != result)
-        mDevice->handleDisconnect("Failed to get playback buffer: 0x%08x", result);
+        mDevice->handleDisconnect("Failed to get playback buffer: 0x{:08x}", result);
 
     while(SL_RESULT_SUCCESS == result && !mKillNow.load(std::memory_order_acquire)
         && mDevice->Connected.load(std::memory_order_acquire))
@@ -265,7 +265,7 @@ int OpenSLPlayback::mixerProc()
             }
             if(SL_RESULT_SUCCESS != result)
             {
-                mDevice->handleDisconnect("Failed to start playback: 0x%08x", result);
+                mDevice->handleDisconnect("Failed to start playback: 0x{:08x}", result);
                 break;
             }
 
@@ -301,7 +301,7 @@ int OpenSLPlayback::mixerProc()
             PrintErr(result, "bufferQueue->Enqueue");
             if(SL_RESULT_SUCCESS != result)
             {
-                mDevice->handleDisconnect("Failed to queue audio: 0x%08x", result);
+                mDevice->handleDisconnect("Failed to queue audio: 0x{:08x}", result);
                 break;
             }
 
@@ -319,8 +319,8 @@ void OpenSLPlayback::open(std::string_view name)
     if(name.empty())
         name = GetDeviceName();
     else if(name != GetDeviceName())
-        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%.*s\" not found",
-            al::sizei(name), name.data()};
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"{}\" not found",
+            name};
 
     /* There's only one device, so if it's already open, there's nothing to do. */
     if(mEngineObj) return;
@@ -361,7 +361,7 @@ void OpenSLPlayback::open(std::string_view name)
         mEngine = nullptr;
 
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to initialize OpenSL device: 0x%08x", result};
+            "Failed to initialize OpenSL device: 0x{:08x}", result};
     }
 
     mDeviceName = name;
@@ -505,7 +505,7 @@ void OpenSLPlayback::start()
     }
     if(SL_RESULT_SUCCESS != result)
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to register callback: 0x%08x", result};
+            "Failed to register callback: 0x{:08x}", result};
 
     try {
         mKillNow.store(false, std::memory_order_release);
@@ -513,7 +513,7 @@ void OpenSLPlayback::start()
     }
     catch(std::exception& e) {
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start mixing thread: %s", e.what()};
+            "Failed to start mixing thread: {}", e.what()};
     }
 }
 
@@ -623,8 +623,8 @@ void OpenSLCapture::open(std::string_view name)
     if(name.empty())
         name = GetDeviceName();
     else if(name != GetDeviceName())
-        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"%.*s\" not found",
-            al::sizei(name), name.data()};
+        throw al::backend_exception{al::backend_error::NoDevice, "Device name \"{}\" not found",
+            name};
 
     SLresult result{slCreateEngine(&mEngineObj, 0, nullptr, 0, nullptr, nullptr)};
     PrintErr(result, "slCreateEngine");
@@ -782,7 +782,7 @@ void OpenSLCapture::open(std::string_view name)
         mEngine = nullptr;
 
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to initialize OpenSL device: 0x%08x", result};
+            "Failed to initialize OpenSL device: 0x{:08x}", result};
     }
 
     mDeviceName = name;
@@ -801,7 +801,7 @@ void OpenSLCapture::start()
     }
     if(SL_RESULT_SUCCESS != result)
         throw al::backend_exception{al::backend_error::DeviceError,
-            "Failed to start capture: 0x%08x", result};
+            "Failed to start capture: 0x{:08x}", result};
 }
 
 void OpenSLCapture::stop()
@@ -858,7 +858,7 @@ void OpenSLCapture::captureSamples(std::byte *buffer, uint samples)
         PrintErr(result, "recordObj->GetInterface");
         if(SL_RESULT_SUCCESS != result) UNLIKELY
         {
-            mDevice->handleDisconnect("Failed to get capture buffer queue: 0x%08x", result);
+            mDevice->handleDisconnect("Failed to get capture buffer queue: 0x{:08x}", result);
             bufferQueue = nullptr;
         }
     }
