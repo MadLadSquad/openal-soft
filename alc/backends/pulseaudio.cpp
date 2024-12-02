@@ -44,7 +44,6 @@
 
 #include "alc/alconfig.h"
 #include "alspan.h"
-#include "alstring.h"
 #include "base.h"
 #include "core/devformat.h"
 #include "core/device.h"
@@ -373,7 +372,7 @@ public:
         PlaybackDevices.emplace_back(DevMap{std::move(newname), info->name});
         DevMap &newentry = PlaybackDevices.back();
 
-        TRACE("Got device \"%s\", \"%s\"\n", newentry.name.c_str(), newentry.device_name.c_str());
+        TRACE("Got device \"{}\", \"{}\"", newentry.name, newentry.device_name);
     }
 
     void deviceSourceCallback(pa_context*, const pa_source_info *info, int eol) const noexcept
@@ -404,7 +403,7 @@ public:
         CaptureDevices.emplace_back(DevMap{std::move(newname), info->name});
         DevMap &newentry = CaptureDevices.back();
 
-        TRACE("Got device \"%s\", \"%s\"\n", newentry.name.c_str(), newentry.device_name.c_str());
+        TRACE("Got device \"{}\", \"{}\"", newentry.name, newentry.device_name);
     }
 
     void probePlaybackDevices();
@@ -611,7 +610,7 @@ void PulseMainloop::probePlaybackDevices()
         plock.waitForOperation(op);
     }
     catch(std::exception &e) {
-        ERR("Error enumerating devices: %s\n", e.what());
+        ERR("Error enumerating devices: {}", e.what());
     }
 }
 
@@ -633,7 +632,7 @@ void PulseMainloop::probeCaptureDevices()
         plock.waitForOperation(op);
     }
     catch(std::exception &e) {
-        ERR("Error enumerating devices: %s\n", e.what());
+        ERR("Error enumerating devices: {}", e.what());
     }
 }
 
@@ -684,14 +683,14 @@ void PulsePlayback::bufferAttrCallback(pa_stream *stream) noexcept
      * leaving it alone means ALC_REFRESH will be off.
      */
     mAttr = *(pa_stream_get_buffer_attr(stream));
-    TRACE("minreq=%d, tlength=%d, prebuf=%d\n", mAttr.minreq, mAttr.tlength, mAttr.prebuf);
+    TRACE("minreq={}, tlength={}, prebuf={}", mAttr.minreq, mAttr.tlength, mAttr.prebuf);
 }
 
 void PulsePlayback::streamStateCallback(pa_stream *stream) noexcept
 {
     if(pa_stream_get_state(stream) == PA_STREAM_FAILED)
     {
-        ERRFMT("Received stream failure!");
+        ERR("Received stream failure!");
         mDevice->handleDisconnect("Playback stream failure");
     }
     mMainloop.signal();
@@ -717,7 +716,7 @@ void PulsePlayback::streamWriteCallback(pa_stream *stream, size_t nbytes) noexce
 
         int ret{pa_stream_write(stream, buf, buflen, free_func, 0, PA_SEEK_RELATIVE)};
         if(ret != PA_OK) UNLIKELY
-            ERR("Failed to write to stream: %d, %s\n", ret, pa_strerror(ret));
+            ERR("Failed to write to stream: {}, {}", ret, pa_strerror(ret));
     } while(nbytes > 0);
 }
 
@@ -760,11 +759,11 @@ void PulsePlayback::sinkInfoCallback(pa_context*, const pa_sink_info *info, int 
         mIs51Rear = false;
         std::array<char,PA_CHANNEL_MAP_SNPRINT_MAX> chanmap_str{};
         pa_channel_map_snprint(chanmap_str.data(), chanmap_str.size(), &info->channel_map);
-        WARN("Failed to find format for channel map:\n    %s\n", chanmap_str.data());
+        WARN("Failed to find format for channel map:\n    {}", chanmap_str.data());
     }
 
     if(info->active_port)
-        TRACE("Active port: %s (%s)\n", info->active_port->name, info->active_port->description);
+        TRACE("Active port: {} ({})", info->active_port->name, info->active_port->description);
     mDevice->Flags.set(DirectEar, (info->active_port
         && strcmp(info->active_port->name, "analog-output-headphones") == 0));
 }
@@ -782,7 +781,7 @@ void PulsePlayback::sinkNameCallback(pa_context*, const pa_sink_info *info, int 
 void PulsePlayback::streamMovedCallback(pa_stream *stream) noexcept
 {
     mDeviceId = pa_stream_get_device_name(stream);
-    TRACE("Stream moved to %s\n", mDeviceId->c_str());
+    TRACE("Stream moved to {}", *mDeviceId);
 }
 
 
@@ -829,7 +828,7 @@ void PulsePlayback::open(std::string_view name)
         static const auto defname = al::getenv("ALSOFT_PULSE_DEFAULT");
         if(defname) pulse_name = defname->c_str();
     }
-    TRACE("Connecting to \"%s\"\n", pulse_name ? pulse_name : "(default)");
+    TRACE("Connecting to \"{}\"", pulse_name ? pulse_name : "(default)");
     mStream = plock.connectStream(pulse_name, flags, nullptr, &spec, nullptr,
         BackendType::Playback);
 
@@ -1062,7 +1061,7 @@ ClockLatency PulsePlayback::getClockLatency()
          * server yet. Give a generic value since nothing better is available.
          */
         if(err != -PA_ERR_NODATA)
-            ERR("Failed to get stream latency: 0x%x\n", err);
+            ERR("Failed to get stream latency: 0x{:x}", err);
         latency = mDevice->BufferSize - mDevice->UpdateSize;
         neg = 0;
     }
@@ -1114,7 +1113,7 @@ void PulseCapture::streamStateCallback(pa_stream *stream) noexcept
 {
     if(pa_stream_get_state(stream) == PA_STREAM_FAILED)
     {
-        ERRFMT("Received stream failure!");
+        ERR("Received stream failure!");
         mDevice->handleDisconnect("Capture stream failure");
     }
     mMainloop.signal();
@@ -1133,7 +1132,7 @@ void PulseCapture::sourceNameCallback(pa_context*, const pa_source_info *info, i
 void PulseCapture::streamMovedCallback(pa_stream *stream) noexcept
 {
     mDeviceId = pa_stream_get_device_name(stream);
-    TRACE("Stream moved to %s\n", mDeviceId->c_str());
+    TRACE("Stream moved to {}", *mDeviceId);
 }
 
 
@@ -1223,7 +1222,7 @@ void PulseCapture::open(std::string_view name)
     if(!GetConfigValueBool({}, "pulse", "allow-moves", true))
         flags |= PA_STREAM_DONT_MOVE;
 
-    TRACE("Connecting to \"%s\"\n", pulse_name ? pulse_name : "(default)");
+    TRACE("Connecting to \"{}\"", pulse_name ? pulse_name : "(default)");
     mStream = plock.connectStream(pulse_name, flags, &mAttr, &mSpec, &chanmap,
         BackendType::Capture);
 
@@ -1342,7 +1341,7 @@ uint PulseCapture::availableSamples()
         if(static_cast<ssize_t>(got) < 0) UNLIKELY
         {
             const char *err{pa_strerror(static_cast<int>(got))};
-            ERRFMT("pa_stream_readable_size() failed: {}", err);
+            ERR("pa_stream_readable_size() failed: {}", err);
             mDevice->handleDisconnect("Failed getting readable size: {}", err);
         }
         else
@@ -1378,7 +1377,7 @@ ClockLatency PulseCapture::getClockLatency()
 
     if(err != 0) UNLIKELY
     {
-        ERR("Failed to get stream latency: 0x%x\n", err);
+        ERR("Failed to get stream latency: 0x{:x}", err);
         latency = 0;
         neg = 0;
     }
@@ -1407,7 +1406,7 @@ bool PulseBackendFactory::init()
         pulse_handle = LoadLib(PALIB);
         if(!pulse_handle)
         {
-            WARN("Failed to load %s\n", PALIB);
+            WARN("Failed to load {}", PALIB);
             return false;
         }
 
@@ -1421,7 +1420,7 @@ bool PulseBackendFactory::init()
 
         if(!missing_funcs.empty())
         {
-            WARN("Missing expected functions:%s\n", missing_funcs.c_str());
+            WARN("Missing expected functions:{}", missing_funcs);
             CloseLib(pulse_handle);
             pulse_handle = nullptr;
             return false;
