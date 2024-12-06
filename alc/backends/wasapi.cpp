@@ -124,7 +124,7 @@ using ReferenceTime = std::chrono::duration<REFERENCE_TIME,std::ratio<1,10'000'0
 #define X7DOT1 (SPEAKER_FRONT_LEFT|SPEAKER_FRONT_RIGHT|SPEAKER_FRONT_CENTER|SPEAKER_LOW_FREQUENCY|SPEAKER_BACK_LEFT|SPEAKER_BACK_RIGHT|SPEAKER_SIDE_LEFT|SPEAKER_SIDE_RIGHT)
 #define X7DOT1DOT4 (SPEAKER_FRONT_LEFT|SPEAKER_FRONT_RIGHT|SPEAKER_FRONT_CENTER|SPEAKER_LOW_FREQUENCY|SPEAKER_BACK_LEFT|SPEAKER_BACK_RIGHT|SPEAKER_SIDE_LEFT|SPEAKER_SIDE_RIGHT|SPEAKER_TOP_FRONT_LEFT|SPEAKER_TOP_FRONT_RIGHT|SPEAKER_TOP_BACK_LEFT|SPEAKER_TOP_BACK_RIGHT)
 
-constexpr inline DWORD MaskFromTopBits(DWORD b) noexcept
+constexpr auto MaskFromTopBits(DWORD b) noexcept -> DWORD
 {
     b |= b>>1;
     b |= b>>2;
@@ -201,16 +201,16 @@ constexpr uint RefTime2Samples(const ReferenceTime &val, T srate) noexcept
 
 
 class GuidPrinter {
-    std::array<char,64> mMsg{};
+    std::string mMsg;
 
 public:
     GuidPrinter(const GUID &guid)
-    {
-        std::snprintf(mMsg.data(), mMsg.size(), "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-            DWORD{guid.Data1}, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1], guid.Data4[2],
-            guid.Data4[3], guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]);
-    }
-    [[nodiscard]] auto c_str() const -> const char* { return mMsg.data(); }
+        : mMsg{fmt::format(
+            "{{{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}}}",
+            guid.Data1, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1], guid.Data4[2],
+            guid.Data4[3], guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7])}
+    { }
+    [[nodiscard]] auto str() const noexcept -> const std::string& { return mMsg; }
 };
 
 struct PropVariant {
@@ -648,7 +648,7 @@ struct DeviceHelper final : private IMMNotificationClient
 #endif
     }
 
-    HRESULT openDevice(std::wstring_view devid, EDataFlow flow, DeviceHandle& device)
+    auto openDevice(const std::wstring &devid, EDataFlow flow, DeviceHandle &device) -> HRESULT
     {
 #if !ALSOFT_UWP
         HRESULT hr{E_FAIL};
@@ -657,14 +657,14 @@ struct DeviceHelper final : private IMMNotificationClient
             if(devid.empty())
                 hr = mEnumerator->GetDefaultAudioEndpoint(flow, eMultimedia, al::out_ptr(device));
             else
-                hr = mEnumerator->GetDevice(devid.data(), al::out_ptr(device));
+                hr = mEnumerator->GetDevice(devid.c_str(), al::out_ptr(device));
         }
         return hr;
 #else
         const auto deviceRole = Windows::Media::Devices::AudioDeviceRole::Default;
         auto devIfPath =
             devid.empty() ? (flow == eRender ? MediaDevice::GetDefaultAudioRenderId(deviceRole) : MediaDevice::GetDefaultAudioCaptureId(deviceRole))
-            : winrt::hstring(devid.data());
+                : winrt::hstring(devid.c_str());
         if (devIfPath.empty())
             return E_POINTER;
 
@@ -907,7 +907,7 @@ void TraceFormat(const std::string_view msg, const WAVEFORMATEX *format)
             msg, fmtex->Format.wFormatTag, fmtex->Format.nChannels, fmtex->Format.nSamplesPerSec,
             fmtex->Format.nAvgBytesPerSec, fmtex->Format.nBlockAlign, fmtex->Format.wBitsPerSample,
             fmtex->Format.cbSize, fmtex->Samples.wReserved, fmtex->dwChannelMask,
-            GuidPrinter{fmtex->SubFormat}.c_str());
+            GuidPrinter{fmtex->SubFormat}.str());
         /* NOLINTEND(cppcoreguidelines-pro-type-union-access) */
     }
     else
@@ -1187,7 +1187,7 @@ struct WasapiPlayback final : public BackendBase, WasapiProxy {
     HANDLE mNotifyEvent{nullptr};
 
     UINT32 mOutBufferSize{}, mOutUpdateSize{};
-    std::vector<char> mResampleBuffer{};
+    std::vector<char> mResampleBuffer;
     uint mBufferFilled{0};
     SampleConverterPtr mResampler;
     bool mMonoUpsample{false};
@@ -1732,7 +1732,7 @@ void WasapiPlayback::finalizeFormat(WAVEFORMATEXTENSIBLE &OutputType)
     }
     else
     {
-        ERR("Unhandled format sub-type: {}", GuidPrinter{OutputType.SubFormat}.c_str());
+        ERR("Unhandled format sub-type: {}", GuidPrinter{OutputType.SubFormat}.str());
         mDevice->FmtType = DevFmtShort;
         if(OutputType.Format.wFormatTag != WAVE_FORMAT_EXTENSIBLE)
             OutputType.Format.wFormatTag = WAVE_FORMAT_PCM;
@@ -2628,7 +2628,7 @@ HRESULT WasapiCapture::resetProxy()
     }
     else
     {
-        ERR("Unhandled format sub-type: {}", GuidPrinter{InputType.SubFormat}.c_str());
+        ERR("Unhandled format sub-type: {}", GuidPrinter{InputType.SubFormat}.str());
         return E_FAIL;
     }
 
