@@ -99,7 +99,6 @@ include(GNUInstallDirs)
 
 find_package(PkgConfig)
 find_package(SDL3 QUIET)
-find_package(SDL2 QUIET)
 
 option(ALSOFT_DLOPEN  "Check for the dlopen API for loading optional libs"  ON)
 
@@ -1211,6 +1210,7 @@ endif()
 option(ALSOFT_BACKEND_SDL2 "Enable SDL2 backend" OFF)
 option(ALSOFT_REQUIRE_SDL2 "Require SDL2 backend" OFF)
 if(ALSOFT_BACKEND_SDL2 AND NOT HAVE_SDL3)
+    find_package(SDL2)
     if(SDL2_FOUND)
         set(HAVE_SDL2 1)
         set(ALC_OBJS  ${ALC_OBJS} alc/backends/sdl2.cpp alc/backends/sdl2.h)
