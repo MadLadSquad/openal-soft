@@ -88,7 +88,7 @@ struct DistanceComp {
     std::array<ChanData,MaxOutputChannels> mChannels;
     al::FlexArray<float,16> mSamples;
 
-    DistanceComp(std::size_t count) : mSamples{count} { }
+    explicit DistanceComp(std::size_t count) : mSamples{count} { }
 
     static std::unique_ptr<DistanceComp> Create(std::size_t numsamples)
     { return std::unique_ptr<DistanceComp>{new(FamCount(numsamples)) DistanceComp{numsamples}}; }
@@ -180,15 +180,16 @@ enum class DeviceState : std::uint8_t {
     Playing
 };
 
+/* NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding) */
 struct SIMDALIGN DeviceBase {
     std::atomic<bool> Connected{true};
     const DeviceType Type{};
 
     std::string mDeviceName;
 
-    uint Frequency{};
-    uint UpdateSize{};
-    uint BufferSize{};
+    uint mSampleRate{};
+    uint mUpdateSize{};
+    uint mBufferSize{};
 
     DevFmtChannels FmtChans{};
     DevFmtType FmtType{};
@@ -337,7 +338,7 @@ struct SIMDALIGN DeviceBase {
         using std::chrono::seconds;
         using std::chrono::nanoseconds;
 
-        auto ns = nanoseconds{seconds{mSamplesDone.load(std::memory_order_relaxed)}} / Frequency;
+        auto ns = nanoseconds{seconds{mSamplesDone.load(std::memory_order_relaxed)}} / mSampleRate;
         return nanoseconds{mClockBaseNSec.load(std::memory_order_relaxed)}
             + mClockBaseSec.load(std::memory_order_relaxed) + ns;
     }
@@ -372,7 +373,7 @@ private:
     uint renderSamples(const uint numSamples);
 
 protected:
-    DeviceBase(DeviceType type);
+    explicit DeviceBase(DeviceType type);
     ~DeviceBase();
 
 public:
