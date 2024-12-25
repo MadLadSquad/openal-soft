@@ -32,6 +32,7 @@
 #include "alstring.h"
 #include "ambidefs.h"
 #include "filters/splitter.h"
+#include "fmt/core.h"
 #include "helpers.h"
 #include "logging.h"
 #include "mixer/hrtfdefs.h"
@@ -103,11 +104,16 @@ constexpr uint MaxSampleRate{0xff'ff'ff};
 static_assert(MaxHrirDelay*HrirDelayFracOne < 256, "MAX_HRIR_DELAY or DELAY_FRAC too large");
 
 
+constexpr auto HeaderMarkerSize = 8_uz;
 [[nodiscard]] constexpr auto GetMarker00Name() noexcept { return "MinPHR00"sv; }
 [[nodiscard]] constexpr auto GetMarker01Name() noexcept { return "MinPHR01"sv; }
 [[nodiscard]] constexpr auto GetMarker02Name() noexcept { return "MinPHR02"sv; }
 [[nodiscard]] constexpr auto GetMarker03Name() noexcept { return "MinPHR03"sv; }
 
+static_assert(GetMarker00Name().size() == HeaderMarkerSize);
+static_assert(GetMarker01Name().size() == HeaderMarkerSize);
+static_assert(GetMarker02Name().size() == HeaderMarkerSize);
+static_assert(GetMarker03Name().size() == HeaderMarkerSize);
 
 /* First value for pass-through coefficients (remaining are 0), used for omni-
  * directional sounds. */
@@ -198,10 +204,9 @@ struct IdxBlend { uint idx; float blend; };
  */
 IdxBlend CalcEvIndex(uint evcount, float ev)
 {
-    ev = (al::numbers::pi_v<float>*0.5f + ev) * static_cast<float>(evcount-1) *
-        al::numbers::inv_pi_v<float>;
-    uint idx{float2uint(ev)};
+    ev = (al::numbers::inv_pi_v<float>*ev + 0.5f) * static_cast<float>(evcount-1);
 
+    const auto idx = float2uint(ev);
     return IdxBlend{std::min(idx, evcount-1u), ev-static_cast<float>(idx)};
 }
 
@@ -210,10 +215,9 @@ IdxBlend CalcEvIndex(uint evcount, float ev)
  */
 IdxBlend CalcAzIndex(uint azcount, float az)
 {
-    az = (al::numbers::pi_v<float>*2.0f + az) * static_cast<float>(azcount) *
-        (al::numbers::inv_pi_v<float>*0.5f);
-    uint idx{float2uint(az)};
+    az = (al::numbers::inv_pi_v<float>*0.5f*az + 1.0f) * static_cast<float>(azcount);
 
+    const auto idx = float2uint(az);
     return IdxBlend{idx%azcount, az-static_cast<float>(idx)};
 }
 
@@ -1115,8 +1119,7 @@ void AddFileEntry(const std::string_view filename)
 {
     /* Check if this file has already been enumerated. */
     auto enum_iter = std::find_if(EnumeratedHrtfs.cbegin(), EnumeratedHrtfs.cend(),
-        [filename](const HrtfEntry &entry) -> bool
-        { return entry.mFilename == filename; });
+        [filename](const HrtfEntry &entry) -> bool { return entry.mFilename == filename; });
     if(enum_iter != EnumeratedHrtfs.cend())
     {
         TRACE("Skipping duplicate file entry {}", filename);
@@ -1124,25 +1127,20 @@ void AddFileEntry(const std::string_view filename)
     }
 
     /* TODO: Get a human-readable name from the HRTF data (possibly coming in a
-     * format update). */
-    size_t namepos{filename.rfind('/')+1};
-    if(!namepos) namepos = filename.rfind('\\')+1;
+     * format update).
+     */
+    const auto namepos = std::max(filename.rfind('/')+1, filename.rfind('\\')+1);
+    const auto extpos = filename.substr(namepos).rfind('.');
 
-    size_t extpos{filename.rfind('.')};
-    if(extpos <= namepos) extpos = std::string::npos;
+    const auto basename = (extpos == std::string::npos) ?
+        filename.substr(namepos) : filename.substr(namepos, extpos);
 
-    const std::string_view basename{(extpos == std::string::npos) ?
-        filename.substr(namepos) : filename.substr(namepos, extpos-namepos)};
-    std::string newname{basename};
-    int count{1};
+    auto count = 1;
+    auto newname = std::string{basename};
     while(checkName(newname))
-    {
-        newname = basename;
-        newname += " #";
-        newname += std::to_string(++count);
-    }
-    const HrtfEntry &entry = EnumeratedHrtfs.emplace_back(newname, filename);
+        newname = fmt::format("{} #{}", basename, ++count);
 
+    const auto &entry = EnumeratedHrtfs.emplace_back(newname, filename);
     TRACE("Adding file entry \"{}\"", entry.mFilename);
 }
 
@@ -1151,12 +1149,10 @@ void AddFileEntry(const std::string_view filename)
  */
 void AddBuiltInEntry(const std::string_view dispname, uint residx)
 {
-    std::string filename{'!'+std::to_string(residx)+'_'};
-    filename += dispname;
+    auto filename = fmt::format("!{}_{}", residx, dispname);
 
     auto enum_iter = std::find_if(EnumeratedHrtfs.cbegin(), EnumeratedHrtfs.cend(),
-        [&filename](const HrtfEntry &entry) -> bool
-        { return entry.mFilename == filename; });
+        [&filename](const HrtfEntry &entry) -> bool { return entry.mFilename == filename; });
     if(enum_iter != EnumeratedHrtfs.cend())
     {
         TRACE("Skipping duplicate file entry {}", filename);
@@ -1166,16 +1162,12 @@ void AddBuiltInEntry(const std::string_view dispname, uint residx)
     /* TODO: Get a human-readable name from the HRTF data (possibly coming in a
      * format update). */
 
-    std::string newname{dispname};
-    int count{1};
+    auto count = 1;
+    auto newname = std::string{dispname};
     while(checkName(newname))
-    {
-        newname = dispname;
-        newname += " #";
-        newname += std::to_string(++count);
-    }
-    const HrtfEntry &entry = EnumeratedHrtfs.emplace_back(std::move(newname), std::move(filename));
+        newname = fmt::format("{} #{}", dispname, ++count);
 
+    const auto &entry = EnumeratedHrtfs.emplace_back(std::move(newname), std::move(filename));
     TRACE("Adding built-in entry \"{}\"", entry.mFilename);
 }
 
@@ -1321,10 +1313,10 @@ try {
         stream = std::move(fstr);
     }
 
-    std::unique_ptr<HrtfStore> hrtf;
-    std::array<char,GetMarker03Name().size()> magic{};
+    auto hrtf = std::unique_ptr<HrtfStore>{};
+    auto magic = std::array<char,HeaderMarkerSize>{};
     stream->read(magic.data(), magic.size());
-    if(stream->gcount() < static_cast<std::streamsize>(GetMarker03Name().size()))
+    if(stream->gcount() < std::streamsize{magic.size()})
         ERR("{} data is too short ({} bytes)", name, stream->gcount());
     else if(GetMarker03Name() == std::string_view{magic.data(), magic.size()})
     {
@@ -1347,7 +1339,7 @@ try {
         hrtf = LoadHrtf00(*stream);
     }
     else
-        ERR("Invalid header in {}: \"{:.8s}\"", name, magic.data());
+        ERR("Invalid header in {}: \"{}\"", name, std::string_view{magic.data(), magic.size()});
     stream.reset();
 
     if(!hrtf)
