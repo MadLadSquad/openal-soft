@@ -40,6 +40,7 @@
 #include "core/converter.h"
 #include "core/device.h"
 #include "core/logging.h"
+#include "fmt/core.h"
 #include "ringbuffer.h"
 
 #include <AudioUnit/AudioUnit.h>
@@ -195,10 +196,10 @@ std::string GetDeviceName(AudioDeviceID devId)
     return devname;
 }
 
-UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
+auto GetDeviceChannelCount(AudioDeviceID devId, bool isCapture) -> UInt32
 {
-    UInt32 propSize{};
-    auto err = GetDevPropertySize(devId, kAudioDevicePropertyPreferredChannelLayout, isCapture, 0,
+    auto propSize = UInt32{};
+    auto err = GetDevPropertySize(devId, kAudioDevicePropertyStreamConfiguration, isCapture, 0,
         &propSize);
     if(err)
     {
@@ -207,11 +208,11 @@ UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
         return 0;
     }
 
-    auto channel_data = std::make_unique<char[]>(propSize);
-    auto *channel_layout = reinterpret_cast<AudioChannelLayout*>(channel_data.get());
+    auto buflist_data = std::make_unique<char[]>(propSize);
+    auto *buflist = reinterpret_cast<AudioBufferList*>(buflist_data.get());
 
-    err = GetDevProperty(devId, kAudioDevicePropertyPreferredChannelLayout, isCapture, 0, propSize,
-        channel_layout);
+    err = GetDevProperty(devId, kAudioDevicePropertyStreamConfiguration, isCapture, 0, propSize,
+        buflist);
     if(err)
     {
         ERR("kAudioDevicePropertyStreamConfiguration query failed: '{}' ({})",
@@ -219,7 +220,10 @@ UInt32 GetDeviceChannelCount(AudioDeviceID devId, bool isCapture)
         return 0;
     }
 
-    return channel_layout->mNumberChannelDescriptions;
+    auto numChannels = UInt32{0};
+    for(size_t i{0};i < buflist->mNumberBuffers;++i)
+        numChannels += buflist->mBuffers[i].mNumberChannels;
+    return numChannels;
 }
 
 
@@ -282,14 +286,12 @@ void EnumerateDevices(std::vector<DeviceEntry> &list, bool isCapture)
             { return entry.mName == curitem->mName; };
             if(std::find_if(newdevs.begin(), curitem, check_match) != curitem)
             {
-                std::string name{curitem->mName};
-                size_t count{1};
+                auto name = std::string{curitem->mName};
+                auto count = 1_uz;
                 auto check_name = [&name](const DeviceEntry &entry) -> bool
                 { return entry.mName == name; };
                 do {
-                    name = curitem->mName;
-                    name += " #";
-                    name += std::to_string(++count);
+                    name = fmt::format("{} #{}", curitem->mName, ++count);
                 } while(std::find_if(newdevs.begin(), curitem, check_name) != curitem);
                 curitem->mName = std::move(name);
             }
@@ -538,8 +540,44 @@ bool CoreAudioPlayback::reset()
         { DevFmtMono, MonoChanMap, false }
     }};
 
-    /* FIXME: How to tell what channels are what in the output device, and how
-     * to specify what we're giving? e.g. 6.0 vs 5.1
+    if(!mDevice->Flags.test(ChannelsRequest))
+    {
+        auto propSize = UInt32{};
+        auto writable = Boolean{};
+
+        err = AudioUnitGetPropertyInfo(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
+            kAudioUnitScope_Output, OutputElement, &propSize, &writable);
+        if(err == noErr)
+        {
+            auto layout_data = std::make_unique<char[]>(propSize);
+            auto *layout = reinterpret_cast<AudioChannelLayout*>(layout_data.get());
+
+            err = AudioUnitGetProperty(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
+                kAudioUnitScope_Output, OutputElement, layout, &propSize);
+            if(err == noErr)
+            {
+                auto descs = al::span{std::data(layout->mChannelDescriptions),
+                    layout->mNumberChannelDescriptions};
+                auto labels = std::vector<AudioChannelLayoutTag>(descs.size());
+
+                std::transform(descs.begin(), descs.end(), labels.begin(),
+                    std::mem_fn(&AudioChannelDescription::mChannelLabel));
+                sort(labels.begin(), labels.end());
+
+                auto check_labels = [&labels](const ChannelMap &chanmap) -> bool
+                {
+                    return std::includes(labels.begin(), labels.end(), chanmap.map.begin(),
+                        chanmap.map.end());
+                };
+                auto chaniter = std::find_if(chanmaps.cbegin(), chanmaps.cend(), check_labels);
+                if(chaniter != chanmaps.cend())
+                    mDevice->FmtChans = chaniter->fmt;
+            }
+        }
+    }
+
+    /* TODO: Also set kAudioUnitProperty_AudioChannelLayout according to the AL
+     * device's channel configuration.
      */
     streamFormat.mChannelsPerFrame = mDevice->channelsFromFmt();
 
@@ -584,42 +622,6 @@ bool CoreAudioPlayback::reset()
         ERR("AudioUnitSetProperty(StreamFormat) failed: '{}' ({})", FourCCPrinter{err}.c_str(),
             err);
         return false;
-    }
-
-    if(!mDevice->Flags.test(ChannelsRequest))
-    {
-        auto propSize = UInt32{};
-        auto writable = Boolean{};
-
-        err = AudioUnitGetPropertyInfo(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
-            kAudioUnitScope_Output, OutputElement, &propSize, &writable);
-        if(err == noErr)
-        {
-            auto layout_data = std::make_unique<char[]>(propSize);
-            auto *layout = reinterpret_cast<AudioChannelLayout*>(layout_data.get());
-
-            err = AudioUnitGetProperty(mAudioUnit, kAudioUnitProperty_AudioChannelLayout,
-                kAudioUnitScope_Output, OutputElement, layout, &propSize);
-            if(err == noErr)
-            {
-                auto descs = al::span{std::data(layout->mChannelDescriptions),
-                    layout->mNumberChannelDescriptions};
-                auto labels = std::vector<AudioChannelLayoutTag>(descs.size());
-
-                std::transform(descs.begin(), descs.end(), labels.begin(),
-                    std::mem_fn(&AudioChannelDescription::mChannelLabel));
-                sort(labels.begin(), labels.end());
-
-                auto chaniter = std::find_if(chanmaps.cbegin(), chanmaps.cend(),
-                    [&labels](const ChannelMap &chanmap) -> bool
-                    {
-                        return std::includes(labels.begin(), labels.end(), chanmap.map.begin(),
-                            chanmap.map.end());
-                    });
-                if(chaniter != chanmaps.cend())
-                    mDevice->FmtChans = chaniter->fmt;
-            }
-        }
     }
 
     setDefaultWFXChannelOrder();
