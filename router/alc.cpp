@@ -24,6 +24,9 @@ namespace {
 
 using namespace std::string_view_literals;
 
+std::once_flag InitOnce;
+void LoadDrivers() { std::call_once(InitOnce, []{ LoadDriverList(); }); }
+
 struct FuncExportEntry {
     const char *funcName;
     void *address;
@@ -423,6 +426,8 @@ void InitCtxFuncs(DriverIface &iface)
 
 ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *devicename) noexcept
 {
+    LoadDrivers();
+
     ALCdevice *device{nullptr};
     std::optional<ALCuint> idx;
 
@@ -460,7 +465,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *devicename) noexcep
         ALCuint drvidx{0};
         for(const auto &drv : DriverList)
         {
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT"))
             {
                 TRACE("Using default device from driver {}", drvidx);
@@ -686,6 +691,8 @@ ALC_API ALCenum ALC_APIENTRY alcGetEnumValue(ALCdevice *device, const ALCchar *e
 
 ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum param) noexcept
 {
+    LoadDrivers();
+
     if(device)
     {
         if(const auto idx = maybe_get(DeviceIfaceMap, device))
@@ -713,7 +720,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum para
         for(const auto &drv : DriverList)
         {
             /* Only enumerate names from drivers that support it. */
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT"))
                 DevicesList.AppendDeviceList(drv->alcGetString(nullptr,ALC_DEVICE_SPECIFIER), idx);
             ++idx;
@@ -738,7 +745,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum para
             if(drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT"))
                 AllDevicesList.AppendDeviceList(
                     drv->alcGetString(nullptr, ALC_ALL_DEVICES_SPECIFIER), idx);
-            else if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            else if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT"))
                 AllDevicesList.AppendDeviceList(
                     drv->alcGetString(nullptr, ALC_DEVICE_SPECIFIER), idx);
@@ -758,7 +765,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum para
         ALCuint idx{0};
         for(const auto &drv : DriverList)
         {
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_EXT_CAPTURE"))
                 CaptureDevicesList.AppendDeviceList(
                     drv->alcGetString(nullptr, ALC_CAPTURE_DEVICE_SPECIFIER), idx);
@@ -775,7 +782,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum para
     {
         for(const auto &drv : DriverList)
         {
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT"))
                 return drv->alcGetString(nullptr, ALC_DEFAULT_DEVICE_SPECIFIER);
         }
@@ -796,7 +803,7 @@ ALC_API const ALCchar* ALC_APIENTRY alcGetString(ALCdevice *device, ALCenum para
     {
         for(const auto &drv : DriverList)
         {
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_EXT_CAPTURE"))
                 return drv->alcGetString(nullptr, ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER);
         }
@@ -867,6 +874,8 @@ ALC_API void ALC_APIENTRY alcGetIntegerv(ALCdevice *device, ALCenum param, ALCsi
 ALC_API ALCdevice* ALC_APIENTRY alcCaptureOpenDevice(const ALCchar *devicename, ALCuint frequency,
     ALCenum format, ALCsizei buffersize) noexcept
 {
+    LoadDrivers();
+
     ALCdevice *device{nullptr};
     std::optional<ALCuint> idx;
 
@@ -893,7 +902,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcCaptureOpenDevice(const ALCchar *devicename, 
         ALCuint drvidx{0};
         for(const auto &drv : DriverList)
         {
-            if(drv->ALCVer >= MAKE_ALC_VER(1, 1)
+            if(drv->ALCVer >= MakeALCVer(1, 1)
                 || drv->alcIsExtensionPresent(nullptr, "ALC_EXT_CAPTURE"))
             {
                 TRACE("Using default capture device from driver {}", drvidx);
