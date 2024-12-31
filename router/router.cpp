@@ -181,11 +181,11 @@ void AddModule(HMODULE module, const std::wstring_view name)
         newdrv.alcGetIntegerv(nullptr, ALC_MAJOR_VERSION, 1, &alc_ver[0]);
         newdrv.alcGetIntegerv(nullptr, ALC_MINOR_VERSION, 1, &alc_ver[1]);
         if(newdrv.alcGetError(nullptr) == ALC_NO_ERROR)
-            newdrv.ALCVer = MAKE_ALC_VER(alc_ver[0], alc_ver[1]);
+            newdrv.ALCVer = MakeALCVer(alc_ver[0], alc_ver[1]);
         else
         {
             WARN("Failed to query ALC version for {}, assuming 1.0", wstr_to_utf8(name));
-            newdrv.ALCVer = MAKE_ALC_VER(1, 0);
+            newdrv.ALCVer = MakeALCVer(1, 0);
         }
 
         auto do_load2 = [module,name](auto &func, const char *fname) -> void
@@ -304,8 +304,12 @@ bool GetLoadedModuleDirectory(const WCHAR *name, std::wstring *moddir)
     return !moddir->empty();
 }
 
+} // namespace
+
 void LoadDriverList()
 {
+    TRACE("Initializing router v0.1-{} {}", ALSOFT_GIT_COMMIT_HASH, ALSOFT_GIT_BRANCH);
+
     if(auto list = al::getenv(L"ALROUTER_ACCEPT"))
     {
         std::wstring_view namelist{*list};
@@ -375,22 +379,38 @@ void LoadDriverList()
      * directory, app's path, or system path (don't want to do duplicate
      * searches, or increase the priority of the app or system path).
      */
-    if(!dll_path.empty() &&
-       (cwd_path.empty() || dll_path != cwd_path) &&
-       (proc_path.empty() || dll_path != proc_path) &&
-       (sys_path.empty() || dll_path != sys_path))
+    if(!dll_path.empty() && (cwd_path.empty() || dll_path != cwd_path)
+        && (proc_path.empty() || dll_path != proc_path)
+        && (sys_path.empty() || dll_path != sys_path))
         SearchDrivers(dll_path);
-    if(!cwd_path.empty() &&
-       (proc_path.empty() || cwd_path != proc_path) &&
-       (sys_path.empty() || cwd_path != sys_path))
+    if(!cwd_path.empty() && (proc_path.empty() || cwd_path != proc_path)
+        && (sys_path.empty() || cwd_path != sys_path))
         SearchDrivers(cwd_path);
     if(!proc_path.empty() && (sys_path.empty() || proc_path != sys_path))
         SearchDrivers(proc_path);
     if(!sys_path.empty())
         SearchDrivers(sys_path);
-}
 
-} // namespace
+    /* Sort drivers that can enumerate device names to the front. */
+    static constexpr auto is_enumerable = [](DriverIfacePtr &drv)
+    {
+        return drv->ALCVer >= MakeALCVer(1, 1)
+            || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT")
+            || drv->alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT");
+    };
+    std::stable_partition(DriverList.begin(), DriverList.end(), is_enumerable);
+
+    /* HACK: rapture3d_oal.dll isn't likely to work if it's one distributed for
+     * specific games licensed to use it. It will enumerate a Rapture3D device
+     * but fail to open. This isn't much of a problem, the device just won't
+     * work for users not allowed to use it. But if it's the first in the list
+     * where it gets used for the default device, the default device will fail
+     * to open. Move it down so it's not used for the default device.
+     */
+    if(DriverList.size() > 1
+        && al::case_compare(DriverList.front()->Name, L"rapture3d_oal.dll") == 0)
+        std::swap(*DriverList.begin(), *(DriverList.begin()+1));
+}
 
 BOOL APIENTRY DllMain(HINSTANCE, DWORD reason, void*)
 {
@@ -417,9 +437,6 @@ BOOL APIENTRY DllMain(HINSTANCE, DWORD reason, void*)
             else
                 LogLevel = static_cast<eLogLevel>(l);
         }
-        TRACE("Initializing router v0.1-{} {}", ALSOFT_GIT_COMMIT_HASH, ALSOFT_GIT_BRANCH);
-        LoadDriverList();
-
         break;
 
     case DLL_THREAD_ATTACH:
