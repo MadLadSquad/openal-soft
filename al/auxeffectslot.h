@@ -86,9 +86,10 @@ struct ALeffectslot {
 public:
     void eax_initialize(ALCcontext& al_context, EaxFxSlotIndexValue index);
 
-    [[nodiscard]] auto eax_get_index() const noexcept -> EaxFxSlotIndexValue { return eax_fx_slot_index_; }
-    [[nodiscard]] auto eax_get_eax_fx_slot() const noexcept -> const EAX50FXSLOTPROPERTIES&
-    { return eax_; }
+    [[nodiscard]]
+    auto eax_get_index() const noexcept -> EaxFxSlotIndexValue { return mEaxFXSlotIndex; }
+    [[nodiscard]]
+    auto eax_get_eax_fx_slot() const noexcept -> const EAX50FXSLOTPROPERTIES& { return mEax; }
 
     // Returns `true` if all sources should be updated, or `false` otherwise.
     [[nodiscard]] auto eax_dispatch(const EaxCall& call) -> bool
@@ -109,16 +110,12 @@ private:
 
     using Exception = EaxFxSlotException;
 
-    using Eax4Props = EAX40FXSLOTPROPERTIES;
-
     struct Eax4State {
-        Eax4Props i; // Immediate.
+        EAX40FXSLOTPROPERTIES i; // Immediate.
     };
 
-    using Eax5Props = EAX50FXSLOTPROPERTIES;
-
     struct Eax5State {
-        Eax5Props i; // Immediate.
+        EAX50FXSLOTPROPERTIES i; // Immediate.
     };
 
     struct EaxRangeValidator {
@@ -243,15 +240,15 @@ private:
         }
     };
 
-    ALCcontext* eax_al_context_{};
-    EaxFxSlotIndexValue eax_fx_slot_index_{};
-    int eax_version_{}; // Current EAX version.
-    std::bitset<eax_dirty_bit_count> eax_df_{}; // Dirty flags for the current EAX version.
-    EaxEffectUPtr eax_effect_;
-    Eax5State eax123_{}; // EAX1/EAX2/EAX3 state.
-    Eax4State eax4_{}; // EAX4 state.
-    Eax5State eax5_{}; // EAX5 state.
-    Eax5Props eax_{}; // Current EAX state.
+    ALCcontext* mEaxALContext{};
+    EaxFxSlotIndexValue mEaxFXSlotIndex{};
+    int mEaxVersion{}; // Current EAX version.
+    std::bitset<eax_dirty_bit_count> mEaxDf; // Dirty flags for the current EAX version.
+    EaxEffectUPtr mEaxEffect;
+    Eax5State mEax123{}; // EAX1/EAX2/EAX3 state.
+    Eax4State mEax4{}; // EAX4 state.
+    Eax5State mEax5{}; // EAX5 state.
+    EAX50FXSLOTPROPERTIES mEax{}; // Current EAX state.
 
     [[noreturn]] static void eax_fail(const char* message);
     [[noreturn]] static void eax_fail_unknown_effect_id();
@@ -288,7 +285,7 @@ private:
     }
 
     [[nodiscard]] constexpr auto eax4_fx_slot_is_legacy() const noexcept -> bool
-    { return eax_fx_slot_index_ < 2; }
+    { return mEaxFXSlotIndex < 2; }
 
     void eax4_fx_slot_ensure_unlocked() const;
 
@@ -296,15 +293,15 @@ private:
     [[nodiscard]] auto eax_get_eax_default_effect_guid() const noexcept -> const GUID&;
     [[nodiscard]] auto eax_get_eax_default_lock() const noexcept -> long;
 
-    void eax4_fx_slot_set_defaults(Eax4Props& props) noexcept;
-    void eax5_fx_slot_set_defaults(Eax5Props& props) noexcept;
-    void eax4_fx_slot_set_current_defaults(const Eax4Props& props) noexcept;
-    void eax5_fx_slot_set_current_defaults(const Eax5Props& props) noexcept;
+    void eax4_fx_slot_set_defaults(EAX40FXSLOTPROPERTIES& props) noexcept;
+    void eax5_fx_slot_set_defaults(EAX50FXSLOTPROPERTIES& props) noexcept;
+    void eax4_fx_slot_set_current_defaults(const EAX40FXSLOTPROPERTIES& props) noexcept;
+    void eax5_fx_slot_set_current_defaults(const EAX50FXSLOTPROPERTIES& props) noexcept;
     void eax_fx_slot_set_current_defaults();
     void eax_fx_slot_set_defaults();
 
-    static void eax4_fx_slot_get(const EaxCall& call, const Eax4Props& props);
-    static void eax5_fx_slot_get(const EaxCall& call, const Eax5Props& props);
+    static void eax4_fx_slot_get(const EaxCall& call, const EAX40FXSLOTPROPERTIES& props);
+    static void eax5_fx_slot_get(const EaxCall& call, const EAX50FXSLOTPROPERTIES& props);
     void eax_fx_slot_get(const EaxCall& call) const;
     // Returns `true` if all sources should be updated, or `false` otherwise.
     bool eax_get(const EaxCall& call);
@@ -337,9 +334,9 @@ private:
         TMemberResult TProps::*member) noexcept
     {
         auto& src_i = state.i;
-        auto& dst_i = eax_;
+        auto& dst_i = mEax;
 
-        if(eax_df_.test(DirtyBit))
+        if(mEaxDf.test(DirtyBit))
         {
             dst_df.set(DirtyBit);
             dst_i.*member = src_i.*member;
