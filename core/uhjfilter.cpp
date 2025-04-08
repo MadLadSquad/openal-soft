@@ -7,11 +7,11 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <memory>
+#include <numbers>
 #include <vector>
 
 #include "alcomplex.h"
-#include "almalloc.h"
-#include "alnumbers.h"
 #include "core/bufferline.h"
 #include "opthelpers.h"
 #include "pffft.h"
@@ -72,11 +72,11 @@ struct SegmentedFilter {
         {
             const auto k = int{fft_size/2} - static_cast<int>(i*2 + 1);
 
-            const auto w = 2.0*al::numbers::pi/double{fft_size} * static_cast<double>(i*2 + 1);
+            const auto w = 2.0*std::numbers::pi/double{fft_size} * static_cast<double>(i*2 + 1);
             const auto window = 0.3635819 - 0.4891775*std::cos(w) + 0.1365995*std::cos(2.0*w)
                 - 0.0106411*std::cos(3.0*w);
 
-            const auto pk = al::numbers::pi * static_cast<double>(k);
+            const auto pk = std::numbers::pi * static_cast<double>(k);
             tmpBuffer[i*2 + 1] = window * (1.0-std::cos(pk)) / pk;
         }
 
@@ -103,7 +103,7 @@ struct SegmentedFilter {
                 fftTmp[i*2 + 1] = static_cast<float>((i == 0) ? fftBuffer[sSampleLength].real()
                     : fftBuffer[i].imag()) / float{sFftLength};
             }
-            mFft.zreorder(fftTmp.data(), al::to_address(filter), PFFFT_BACKWARD);
+            mFft.zreorder(fftTmp.data(), std::to_address(filter), PFFFT_BACKWARD);
             filter += sFftLength;
         }
     }
@@ -243,7 +243,7 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         std::copy_n(mWXInOut.begin(), sSegmentSize, input);
         std::fill_n(input+sSegmentSize, sSegmentSize, 0.0f);
 
-        Filter.mFft.transform(al::to_address(input), al::to_address(input), mWorkData.data(),
+        Filter.mFft.transform(std::to_address(input), std::to_address(input), mWorkData.data(),
             PFFFT_FORWARD);
 
         /* Convolve each input segment with its IR filter counterpart (aligned
@@ -253,7 +253,7 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         auto filter = Filter.mFilterData.begin();
         for(size_t s{curseg};s < sNumSegments;++s)
         {
-            Filter.mFft.zconvolve_accumulate(al::to_address(input), al::to_address(filter),
+            Filter.mFft.zconvolve_accumulate(std::to_address(input), std::to_address(filter),
                 mFftBuffer.data());
             input += sFftLength;
             filter += sFftLength;
@@ -261,7 +261,7 @@ void UhjEncoder<N>::encode(float *LeftOut, float *RightOut,
         input = mWXHistory.begin();
         for(size_t s{0};s < curseg;++s)
         {
-            Filter.mFft.zconvolve_accumulate(al::to_address(input), al::to_address(filter),
+            Filter.mFft.zconvolve_accumulate(std::to_address(input), std::to_address(filter),
                 mFftBuffer.data());
             input += sFftLength;
             filter += sFftLength;

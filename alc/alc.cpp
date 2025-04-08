@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <bitset>
 #include <cassert>
 #include <cctype>
@@ -50,6 +51,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -70,10 +72,8 @@
 #include "al/filter.h"
 #include "al/source.h"
 #include "alc/events.h"
-#include "albit.h"
 #include "alconfig.h"
 #include "almalloc.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
 #include "alspan.h"
 #include "alstring.h"
@@ -987,7 +987,7 @@ ALCenum EnumFromDevAmbi(DevAmbiScaling scaling)
 /* Downmixing channel arrays, to map a device format's missing channels to
  * existing ones. Based on what PipeWire does, though simplified.
  */
-constexpr float inv_sqrt2f{static_cast<float>(1.0 / al::numbers::sqrt2)};
+constexpr float inv_sqrt2f{static_cast<float>(1.0 / std::numbers::sqrt2)};
 constexpr std::array FrontStereo3dB{
     InputRemixMap::TargetMix{FrontLeft, inv_sqrt2f},
     InputRemixMap::TargetMix{FrontRight, inv_sqrt2f}
@@ -1782,7 +1782,7 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
             uint64_t usemask{~sublist.FreeMask};
             while(usemask)
             {
-                const auto idx = static_cast<uint>(al::countr_zero(usemask));
+                const auto idx = static_cast<uint>(std::countr_zero(usemask));
                 auto &slot = (*sublist.EffectSlots)[idx];
                 usemask &= ~(1_u64 << idx);
 
@@ -1813,7 +1813,7 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
             uint64_t usemask{~sublist.FreeMask};
             while(usemask)
             {
-                const auto idx = static_cast<uint>(al::countr_zero(usemask));
+                const auto idx = static_cast<uint>(std::countr_zero(usemask));
                 auto &source = (*sublist.Sources)[idx];
                 usemask &= ~(1_u64 << idx);
 
@@ -2974,14 +2974,13 @@ ALC_API ALCdevice* ALC_APIENTRY alcOpenDevice(const ALCchar *deviceName) noexcep
              * supported by the OpenAL SI. We can't really do anything useful
              * with them, so just ignore.
              */
-            || al::starts_with(devname, "'("sv)
+            || devname.starts_with("'("sv)
             || al::case_compare(devname, "openal-soft"sv) == 0)
             devname = {};
         else
         {
             const auto prefix = GetDevicePrefix();
-            if(!prefix.empty() && devname.size() > prefix.size()
-                && al::starts_with(devname, prefix))
+            if(!prefix.empty() && devname.size() > prefix.size() && devname.starts_with(prefix))
                 devname = devname.substr(prefix.size());
         }
     }
@@ -3144,8 +3143,7 @@ ALC_API ALCdevice* ALC_APIENTRY alcCaptureOpenDevice(const ALCchar *deviceName, 
         else
         {
             const auto prefix = GetDevicePrefix();
-            if(!prefix.empty() && devname.size() > prefix.size()
-                && al::starts_with(devname, prefix))
+            if(!prefix.empty() && devname.size() > prefix.size() && devname.starts_with(prefix))
                 devname = devname.substr(prefix.size());
         }
     }
@@ -3579,8 +3577,7 @@ FORCE_ALIGN ALCboolean ALC_APIENTRY alcReopenDeviceSOFT(ALCdevice *device,
         else
         {
             const auto prefix = GetDevicePrefix();
-            if(!prefix.empty() && devname.size() > prefix.size()
-                && al::starts_with(devname, prefix))
+            if(!prefix.empty() && devname.size() > prefix.size() && devname.starts_with(prefix))
                 devname = devname.substr(prefix.size());
         }
     }

@@ -23,6 +23,7 @@
 #include "auxeffectslot.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -40,7 +41,6 @@
 #include "AL/alext.h"
 #include "AL/efx.h"
 
-#include "albit.h"
 #include "alc/alu.h"
 #include "alc/context.h"
 #include "alc/device.h"
@@ -108,7 +108,7 @@ auto LookupEffectSlot(ALCcontext *context, ALuint id) noexcept -> ALeffectslot*
     EffectSlotSubList &sublist{context->mEffectSlotList[lidx]};
     if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
         return nullptr;
-    return al::to_address(sublist.EffectSlots->begin() + slidx);
+    return std::to_address(sublist.EffectSlots->begin() + slidx);
 }
 
 [[nodiscard]]
@@ -122,7 +122,7 @@ inline auto LookupEffect(al::Device *device, ALuint id) noexcept -> ALeffect*
     EffectSubList &sublist = device->EffectList[lidx];
     if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
         return nullptr;
-    return al::to_address(sublist.Effects->begin() + slidx);
+    return std::to_address(sublist.Effects->begin() + slidx);
 }
 
 [[nodiscard]]
@@ -136,7 +136,7 @@ inline auto LookupBuffer(al::Device *device, ALuint id) noexcept -> ALbuffer*
     BufferSubList &sublist = device->BufferList[lidx];
     if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
         return nullptr;
-    return al::to_address(sublist.Buffers->begin() + slidx);
+    return std::to_address(sublist.Buffers->begin() + slidx);
 }
 
 
@@ -252,7 +252,7 @@ try {
     size_t count{std::accumulate(context->mEffectSlotList.cbegin(),
         context->mEffectSlotList.cend(), 0_uz,
         [](size_t cur, const EffectSlotSubList &sublist) noexcept -> size_t
-        { return cur + static_cast<ALuint>(al::popcount(sublist.FreeMask)); })};
+        { return cur + static_cast<ALuint>(std::popcount(sublist.FreeMask)); })};
 
     while(needed > count)
     {
@@ -278,10 +278,10 @@ auto AllocEffectSlot(ALCcontext *context) -> ALeffectslot*
         [](const EffectSlotSubList &entry) noexcept -> bool
         { return entry.FreeMask != 0; });
     auto lidx = static_cast<ALuint>(std::distance(context->mEffectSlotList.begin(), sublist));
-    auto slidx = static_cast<ALuint>(al::countr_zero(sublist->FreeMask));
+    auto slidx = static_cast<ALuint>(std::countr_zero(sublist->FreeMask));
     ASSUME(slidx < 64);
 
-    ALeffectslot *slot{al::construct_at(al::to_address(sublist->EffectSlots->begin() + slidx),
+    ALeffectslot *slot{std::construct_at(std::to_address(sublist->EffectSlots->begin() + slidx),
         context)};
     aluInitEffectPanning(slot->mSlot, context);
 
@@ -988,7 +988,7 @@ void UpdateAllEffectSlotProps(ALCcontext *context)
         uint64_t usemask{~sublist.FreeMask};
         while(usemask)
         {
-            const auto idx = static_cast<uint>(al::countr_zero(usemask));
+            const auto idx = static_cast<uint>(std::countr_zero(usemask));
             usemask &= ~(1_u64 << idx);
             auto &slot = (*sublist.EffectSlots)[idx];
 
@@ -1006,8 +1006,8 @@ EffectSlotSubList::~EffectSlotSubList()
     uint64_t usemask{~FreeMask};
     while(usemask)
     {
-        const int idx{al::countr_zero(usemask)};
-        std::destroy_at(al::to_address(EffectSlots->begin() + idx));
+        const int idx{std::countr_zero(usemask)};
+        std::destroy_at(std::to_address(EffectSlots->begin() + idx));
         usemask &= ~(1_u64 << idx);
     }
     FreeMask = ~usemask;

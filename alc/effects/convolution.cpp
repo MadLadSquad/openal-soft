@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <numbers>
 #include <vector>
 
 #if HAVE_SSE_INTRINSICS
@@ -20,8 +21,6 @@
 #endif
 
 #include "alcomplex.h"
-#include "almalloc.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
 #include "alspan.h"
 #include "base.h"
@@ -149,12 +148,12 @@ constexpr auto GetAmbi2DLayout(AmbiLayout layouttype) noexcept
 }
 
 
-constexpr float sin30{0.5f};
-constexpr float cos30{0.866025403785f};
-constexpr float sin45{al::numbers::sqrt2_v<float>*0.5f};
-constexpr float cos45{al::numbers::sqrt2_v<float>*0.5f};
-constexpr float sin110{ 0.939692620786f};
-constexpr float cos110{-0.342020143326f};
+constexpr auto sin30 = 0.5f;
+constexpr auto cos30 = 0.866025403785f;
+constexpr auto sin45 = std::numbers::sqrt2_v<float>*0.5f;
+constexpr auto cos45 = std::numbers::sqrt2_v<float>*0.5f;
+constexpr auto sin110 =  0.939692620786f;
+constexpr auto cos110 = -0.342020143326f;
 
 struct ChanPosMap {
     Channel channel;
@@ -359,7 +358,7 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
         auto decoder = std::make_unique<UhjDecoderType>();
         std::array<float*,4> samples{};
         for(size_t c{0};c < numChannels;++c)
-            samples[c] = al::to_address(srcsamples.begin() + ptrdiff_t(srclinelength*c));
+            samples[c] = std::to_address(srcsamples.begin() + ptrdiff_t(srclinelength*c));
         decoder->decode({samples.data(), numChannels}, buffer->mSampleLen, buffer->mSampleLen);
     }
 
@@ -376,7 +375,7 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
         {
             auto restmp = al::span{ressamples}.subspan(resampledCount, buffer->mSampleLen);
             std::copy(bufsamples.cbegin(), bufsamples.cend(), restmp.begin());
-            resampler.process(restmp, al::span{ressamples}.first(resampledCount));
+            resampler.process(restmp, std::span{ressamples}.first(resampledCount));
         }
         else
             std::copy(bufsamples.cbegin(), bufsamples.cend(), ressamples.begin());
@@ -401,7 +400,7 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
             auto iter = std::copy(sampleseg.cbegin(), sampleseg.cend(), fftbuffer.begin());
             done += todo;
             std::fill(iter, fftbuffer.end(), std::complex<double>{});
-            forward_fft(al::span{fftbuffer});
+            forward_fft(std::span{fftbuffer});
 
             /* Convert to, and pack in, a float buffer for PFFFT. Note that the
              * first bin stores the real component of the half-frequency bin in
@@ -418,7 +417,7 @@ void ConvolutionState::deviceUpdate(const DeviceBase *device, const BufferStorag
             /* Reorder backward to make it suitable for pffft_zconvolve and the
              * subsequent pffft_transform(..., PFFFT_BACKWARD).
              */
-            mFft.zreorder(ffttmp.data(), al::to_address(filteriter), PFFFT_BACKWARD);
+            mFft.zreorder(ffttmp.data(), std::to_address(filteriter), PFFFT_BACKWARD);
             filteriter += ConvolveUpdateSize;
         }
     }
@@ -680,7 +679,7 @@ void ConvolutionState::process(const size_t samplesToDo,
             auto input = mComplexData.cbegin() + ptrdiff_t(curseg*ConvolveUpdateSize);
             for(size_t s{curseg};s < mNumConvolveSegs;++s)
             {
-                mFft.zconvolve_accumulate(al::to_address(input), al::to_address(filter),
+                mFft.zconvolve_accumulate(std::to_address(input), std::to_address(filter),
                     mFftBuffer.data());
                 input += ConvolveUpdateSize;
                 filter += ConvolveUpdateSize;
@@ -688,7 +687,7 @@ void ConvolutionState::process(const size_t samplesToDo,
             input = mComplexData.cbegin();
             for(size_t s{0};s < curseg;++s)
             {
-                mFft.zconvolve_accumulate(al::to_address(input), al::to_address(filter),
+                mFft.zconvolve_accumulate(std::to_address(input), std::to_address(filter),
                     mFftBuffer.data());
                 input += ConvolveUpdateSize;
                 filter += ConvolveUpdateSize;

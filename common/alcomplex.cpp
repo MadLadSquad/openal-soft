@@ -5,14 +5,14 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <functional>
 #include <iterator>
+#include <numbers>
 #include <utility>
 
-#include "albit.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
 #include "opthelpers.h"
 
@@ -79,7 +79,7 @@ constexpr BitReverser<8> BitReverser8{};
 constexpr BitReverser<9> BitReverser9{};
 constexpr BitReverser<10> BitReverser10{};
 constexpr BitReverser<11> BitReverser11{};
-constexpr std::array<al::span<const ushort2>,12> gBitReverses{{
+constexpr std::array<std::span<const ushort2>,12> gBitReverses{{
     {}, {},
     BitReverser2.mData,
     BitReverser3.mData,
@@ -111,13 +111,13 @@ constexpr std::array<std::complex<T>,gBitReverses.size()-1> gArgAngle{{
 
 } // namespace
 
-void complex_fft(const al::span<std::complex<double>> buffer, const double sign)
+void complex_fft(const std::span<std::complex<double>> buffer, const double sign)
 {
     const std::size_t fftsize{buffer.size()};
     /* Get the number of bits used for indexing. Simplifies bit-reversal and
      * the main loop count.
      */
-    const std::size_t log2_size{static_cast<std::size_t>(al::countr_zero(fftsize))};
+    const auto log2_size = static_cast<std::size_t>(std::countr_zero(fftsize));
 
     if(log2_size < gBitReverses.size()) LIKELY
     {
@@ -171,7 +171,7 @@ void complex_fft(const al::span<std::complex<double>> buffer, const double sign)
                 std::swap(buffer[idx], buffer[revidx]);
         }
 
-        const double pi{al::numbers::pi * sign};
+        const auto pi = std::numbers::pi * sign;
         for(std::size_t i{0};i < log2_size;++i)
         {
             const std::size_t step2{1_uz << i};
@@ -200,7 +200,7 @@ void complex_fft(const al::span<std::complex<double>> buffer, const double sign)
     }
 }
 
-void complex_hilbert(const al::span<std::complex<double>> buffer)
+void complex_hilbert(const std::span<std::complex<double>> buffer)
 {
     inverse_fft(buffer);
 
