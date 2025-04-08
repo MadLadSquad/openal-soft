@@ -4,10 +4,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <numbers>
 #include <numeric>
+#include <stdexcept>
 #include <tuple>
 
-#include "alnumbers.h"
 #include "opthelpers.h"
 
 
@@ -63,7 +64,7 @@ double Sinc(const double x)
 {
     if(std::abs(x) < Epsilon) UNLIKELY
         return 1.0;
-    return std::sin(al::numbers::pi*x) / (al::numbers::pi*x);
+    return std::sin(std::numbers::pi*x) / (std::numbers::pi*x);
 }
 
 /* Calculate a Kaiser window from the given beta value and a normalized k
@@ -96,7 +97,7 @@ double Kaiser(const double beta, const double k, const double besseli_0_beta)
  */
 constexpr uint CalcKaiserOrder(const double rejection, const double transition)
 {
-    const double w_t{2.0 * al::numbers::pi * transition};
+    const auto w_t = 2.0 * std::numbers::pi * transition;
     if(rejection > 21.0) LIKELY
         return static_cast<uint>(std::ceil((rejection - 7.95) / (2.285 * w_t)));
     return static_cast<uint>(std::ceil(5.79 / w_t));
@@ -163,21 +164,21 @@ void PPhaseResampler::init(const uint srcRate, const uint dstRate)
 
 // Perform the upsample-filter-downsample resampling operation using a
 // polyphase filter implementation.
-void PPhaseResampler::process(const al::span<const double> in, const al::span<double> out) const
+void PPhaseResampler::process(const std::span<const double> in, const std::span<double> out) const
 {
     if(out.empty()) UNLIKELY
         return;
 
     // Handle in-place operation.
     auto workspace = std::vector<double>{};
-    auto work = al::span{out};
+    auto work = std::span{out};
     if(work.data() == in.data()) UNLIKELY
     {
         workspace.resize(out.size());
         work = workspace;
     }
 
-    const auto f = al::span<const double>{mF};
+    const auto f = std::span<const double>{mF};
     const auto p = size_t{mP};
     const auto q = size_t{mQ};
     const auto m = size_t{mM};
@@ -217,5 +218,5 @@ void PPhaseResampler::process(const al::span<const double> in, const al::span<do
     });
     // Clean up after in-place operation.
     if(work.data() != out.data())
-        std::copy(work.cbegin(), work.cend(), out.begin());
+        std::copy(work.begin(), work.end(), out.begin());
 }

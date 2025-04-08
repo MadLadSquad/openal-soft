@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cctype>
 #include <cmath>
@@ -16,6 +17,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <numeric>
 #include <optional>
 #include <tuple>
@@ -23,9 +25,7 @@
 #include <utility>
 #include <vector>
 
-#include "albit.h"
 #include "almalloc.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
 #include "alspan.h"
 #include "alstring.h"
@@ -36,7 +36,6 @@
 #include "helpers.h"
 #include "logging.h"
 #include "mixer/hrtfdefs.h"
-#include "opthelpers.h"
 #include "polyphase_resampler.h"
 
 
@@ -117,7 +116,7 @@ static_assert(GetMarker03Name().size() == HeaderMarkerSize);
 
 /* First value for pass-through coefficients (remaining are 0), used for omni-
  * directional sounds. */
-constexpr auto PassthruCoeff = static_cast<float>(1.0/al::numbers::sqrt2);
+constexpr auto PassthruCoeff = static_cast<float>(1.0/std::numbers::sqrt2);
 
 std::mutex LoadedHrtfLock;
 std::vector<LoadedHrtf> LoadedHrtfs;
@@ -184,7 +183,7 @@ class databuf final : public std::streambuf {
 public:
     explicit databuf(const al::span<char_type> data) noexcept
     {
-        setg(data.data(), data.data(), al::to_address(data.end()));
+        setg(data.data(), data.data(), std::to_address(data.end()));
     }
 };
 /* NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic) */
@@ -204,7 +203,7 @@ struct IdxBlend { uint idx; float blend; };
  */
 IdxBlend CalcEvIndex(uint evcount, float ev)
 {
-    ev = (al::numbers::inv_pi_v<float>*ev + 0.5f) * static_cast<float>(evcount-1);
+    ev = (std::numbers::inv_pi_v<float>*ev + 0.5f) * static_cast<float>(evcount-1);
 
     const auto idx = float2uint(ev);
     return IdxBlend{std::min(idx, evcount-1u), ev-static_cast<float>(idx)};
@@ -215,7 +214,7 @@ IdxBlend CalcEvIndex(uint evcount, float ev)
  */
 IdxBlend CalcAzIndex(uint azcount, float az)
 {
-    az = (al::numbers::inv_pi_v<float>*0.5f*az + 1.0f) * static_cast<float>(azcount);
+    az = (std::numbers::inv_pi_v<float>*0.5f*az + 1.0f) * static_cast<float>(azcount);
 
     const auto idx = float2uint(az);
     return IdxBlend{idx%azcount, az-static_cast<float>(idx)};
@@ -230,7 +229,7 @@ IdxBlend CalcAzIndex(uint azcount, float az)
 void HrtfStore::getCoeffs(float elevation, float azimuth, float distance, float spread,
     const HrirSpan coeffs, const al::span<uint,2> delays) const
 {
-    const float dirfact{1.0f - (al::numbers::inv_pi_v<float>/2.0f * spread)};
+    const float dirfact{1.0f - (std::numbers::inv_pi_v<float>/2.0f * spread)};
 
     size_t ebase{0};
     auto match_field = [&ebase,distance](const Field &field) noexcept -> bool
@@ -435,20 +434,20 @@ std::unique_ptr<HrtfStore> CreateHrtfStore(uint rate, uint8_t irSize,
     ptrdiff_t offset{sizeof(HrtfStore)};
 
     offset = RoundUp(offset, alignof(HrtfStore::Field)); /* Align for field infos */
-    auto field_ = al::span{reinterpret_cast<HrtfStore::Field*>(al::to_address(base + offset)),
+    auto field_ = al::span{reinterpret_cast<HrtfStore::Field*>(std::to_address(base + offset)),
         fields.size()};
     offset += ptrdiff_t(sizeof(field_[0])*fields.size());
 
     offset = RoundUp(offset, alignof(HrtfStore::Elevation)); /* Align for elevation infos */
-    auto elev_ = al::span{reinterpret_cast<HrtfStore::Elevation*>(al::to_address(base + offset)),
+    auto elev_ = al::span{reinterpret_cast<HrtfStore::Elevation*>(std::to_address(base + offset)),
         elevs.size()};
     offset += ptrdiff_t(sizeof(elev_[0])*elevs.size());
 
     offset = RoundUp(offset, 16); /* Align for coefficients using SIMD */
-    auto coeffs_ = al::span{reinterpret_cast<HrirArray*>(al::to_address(base + offset)), irCount};
+    auto coeffs_ = al::span{reinterpret_cast<HrirArray*>(std::to_address(base + offset)), irCount};
     offset += ptrdiff_t(sizeof(coeffs_[0])*irCount);
 
-    auto delays_ = al::span{reinterpret_cast<ubyte2*>(al::to_address(base + offset)), irCount};
+    auto delays_ = al::span{reinterpret_cast<ubyte2*>(std::to_address(base + offset)), irCount};
     offset += ptrdiff_t(sizeof(delays_[0])*irCount);
 
     if(size_t(offset) != total)
@@ -491,21 +490,19 @@ void MirrorLeftHrirs(const al::span<const HrtfStore::Elevation> elevs, al::span<
 
 
 template<size_t num_bits, typename T>
-constexpr std::enable_if_t<std::is_signed<T>::value && num_bits < sizeof(T)*8,
-T> fixsign(T value) noexcept
+constexpr auto fixsign(T value) noexcept -> T
 {
-    constexpr auto signbit = static_cast<T>(1u << (num_bits-1));
-    return static_cast<T>((value^signbit) - signbit);
+    if constexpr(std::is_signed<T>::value && num_bits < sizeof(T)*8)
+    {
+        constexpr auto signbit = static_cast<T>(1u << (num_bits-1));
+        return static_cast<T>((value^signbit) - signbit);
+    }
+    else
+        return value;
 }
 
-template<size_t num_bits, typename T>
-constexpr std::enable_if_t<!std::is_signed<T>::value || num_bits == sizeof(T)*8,
-T> fixsign(T value) noexcept
-{ return value; }
-
 template<typename T, size_t num_bits=sizeof(T)*8>
-inline std::enable_if_t<al::endian::native == al::endian::little,
-T> readle(std::istream &data)
+inline auto readle(std::istream &data) -> T
 {
     static_assert((num_bits&7) == 0, "num_bits must be a multiple of 8");
     static_assert(num_bits <= sizeof(T)*8, "num_bits is too large for the type");
@@ -513,23 +510,10 @@ T> readle(std::istream &data)
     alignas(T) std::array<char,sizeof(T)> ret{};
     if(!data.read(ret.data(), num_bits/8))
         return static_cast<T>(EOF);
+    if constexpr(std::endian::native == std::endian::big)
+        std::reverse(ret.begin(), ret.end());
 
-    return fixsign<num_bits>(al::bit_cast<T>(ret));
-}
-
-template<typename T, size_t num_bits=sizeof(T)*8>
-inline std::enable_if_t<al::endian::native == al::endian::big,
-T> readle(std::istream &data)
-{
-    static_assert((num_bits&7) == 0, "num_bits must be a multiple of 8");
-    static_assert(num_bits <= sizeof(T)*8, "num_bits is too large for the type");
-
-    alignas(T) std::array<char,sizeof(T)> ret{};
-    if(!data.read(ret.data(), num_bits/8))
-        return static_cast<T>(EOF);
-    std::reverse(ret.begin(), ret.end());
-
-    return fixsign<num_bits>(al::bit_cast<T>(ret));
+    return fixsign<num_bits>(std::bit_cast<T>(ret));
 }
 
 template<>
@@ -1303,7 +1287,7 @@ try {
     else
     {
         TRACE("Loading {}...", fname);
-        auto fstr = std::make_unique<fs::ifstream>(fs::u8path(fname),
+        auto fstr = std::make_unique<fs::ifstream>(fs::path(al::char_as_u8(fname)),
             std::ios::binary);
         if(!fstr->is_open())
         {

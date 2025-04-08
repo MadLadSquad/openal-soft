@@ -26,14 +26,6 @@ constexpr bool contains(const std::string_view str0, const std::string_view str1
 { return str0.find(str1) != std::string_view::npos; }
 
 [[nodiscard]]
-constexpr bool starts_with(const std::string_view str0, const std::string_view str1) noexcept
-{ return str0.substr(0, std::min(str0.size(), str1.size())) == str1; }
-
-[[nodiscard]]
-constexpr bool ends_with(const std::string_view str0, const std::string_view str1) noexcept
-{ return str0.substr(str0.size() - std::min(str0.size(), str1.size())) == str1; }
-
-[[nodiscard]]
 int case_compare(const std::string_view str0, const std::string_view str1) noexcept;
 
 [[nodiscard]]
@@ -53,6 +45,16 @@ inline auto u8_as_char(const std::string_view str) -> std::string_view
 {
     return std::string_view{reinterpret_cast<const char*>(str.data()), str.size()};
 }
+
+#if defined(__cpp_lib_char8_t) && __cpp_lib_char8_t >= 201907L
+inline auto char_as_u8(const std::string_view str) -> std::u8string_view
+{
+    return std::u8string_view{reinterpret_cast<const char8_t*>(str.data()), str.size()};
+}
+#else
+inline auto char_as_u8(const std::string_view str) -> std::string_view
+{ return str; }
+#endif
 
 } // namespace al
 

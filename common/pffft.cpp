@@ -59,20 +59,20 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <numbers>
+#include <span>
 #include <utility>
 #include <vector>
 
-#include "albit.h"
 #include "almalloc.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
-#include "alspan.h"
 #include "fmt/core.h"
 #include "fmt/ranges.h"
 #include "opthelpers.h"
@@ -350,7 +350,7 @@ force_inline void vcplxmulconj(v4sf &ar, v4sf &ai, v4sf br, v4sf bi) noexcept
 
 #if !defined(PFFFT_SIMD_DISABLE)
 
-inline void assertv4(const al::span<const float,4> v_f [[maybe_unused]],
+inline void assertv4(const std::span<const float,4> v_f [[maybe_unused]],
     const float f0 [[maybe_unused]], const float f1 [[maybe_unused]],
     const float f2 [[maybe_unused]], const float f3 [[maybe_unused]])
 { assert(v_f[0] == f0 && v_f[1] == f1 && v_f[2] == f2 && v_f[3] == f3); }
@@ -371,55 +371,55 @@ constexpr auto make_float_array(std::integer_sequence<T,N...>)
     auto a3_v = vset4(f[12], f[13], f[14], f[15]);
 
     auto t_v = vzero();
-    auto t_f = al::bit_cast<float4>(t_v);
+    auto t_f = std::bit_cast<float4>(t_v);
     fmt::println("VZERO={}", t_f);
     assertv4(t_f, 0, 0, 0, 0);
 
     t_v = vadd(a1_v, a2_v);
-    t_f = al::bit_cast<float4>(t_v);
+    t_f = std::bit_cast<float4>(t_v);
     fmt::println("VADD(4:7,8:11)={}", t_f);
     assertv4(t_f, 12, 14, 16, 18);
 
     t_v = vmul(a1_v, a2_v);
-    t_f = al::bit_cast<float4>(t_v);
+    t_f = std::bit_cast<float4>(t_v);
     fmt::println("VMUL(4:7,8:11)={}", t_f);
     assertv4(t_f, 32, 45, 60, 77);
 
     t_v = vmadd(a1_v, a2_v, a0_v);
-    t_f = al::bit_cast<float4>(t_v);
+    t_f = std::bit_cast<float4>(t_v);
     fmt::println("VMADD(4:7,8:11,0:3)={}", t_f);
     assertv4(t_f, 32, 46, 62, 80);
 
     auto u_v = v4sf{};
     interleave2(a1_v, a2_v, t_v, u_v);
-    t_f = al::bit_cast<float4>(t_v);
-    auto u_f = al::bit_cast<float4>(u_v);
+    t_f = std::bit_cast<float4>(t_v);
+    auto u_f = std::bit_cast<float4>(u_v);
     fmt::println("INTERLEAVE2(4:7,8:11)={} {}", t_f, u_f);
     assertv4(t_f, 4, 8, 5, 9);
     assertv4(u_f, 6, 10, 7, 11);
 
     uninterleave2(a1_v, a2_v, t_v, u_v);
-    t_f = al::bit_cast<float4>(t_v);
-    u_f = al::bit_cast<float4>(u_v);
+    t_f = std::bit_cast<float4>(t_v);
+    u_f = std::bit_cast<float4>(u_v);
     fmt::println("UNINTERLEAVE2(4:7,8:11)={} {}", t_f, u_f);
     assertv4(t_f, 4, 6, 8, 10);
     assertv4(u_f, 5, 7, 9, 11);
 
     t_v = ld_ps1(f[15]);
-    t_f = al::bit_cast<float4>(t_v);
+    t_f = std::bit_cast<float4>(t_v);
     fmt::println("LD_PS1(15)={}", t_f);
     assertv4(t_f, 15, 15, 15, 15);
 
     t_v = vswaphl(a1_v, a2_v);
-    t_f = al::bit_cast<float4>(t_v);
+    t_f = std::bit_cast<float4>(t_v);
     fmt::println("VSWAPHL(4:7,8:11)={}", t_f);
     assertv4(t_f, 8, 9, 6, 7);
 
     vtranspose4(a0_v, a1_v, a2_v, a3_v);
-    auto a0_f = al::bit_cast<float4>(a0_v);
-    auto a1_f = al::bit_cast<float4>(a1_v);
-    auto a2_f = al::bit_cast<float4>(a2_v);
-    auto a3_f = al::bit_cast<float4>(a3_v);
+    auto a0_f = std::bit_cast<float4>(a0_v);
+    auto a1_f = std::bit_cast<float4>(a1_v);
+    auto a2_f = std::bit_cast<float4>(a2_v);
+    auto a3_f = std::bit_cast<float4>(a3_v);
     fmt::println("VTRANSPOSE4(0:3,4:7,8:11,12:15)={} {} {} {}", a0_f, a1_f, a2_f, a3_f);
     assertv4(a0_f, 0, 4, 8, 12);
     assertv4(a1_f, 1, 5, 9, 13);
@@ -923,7 +923,7 @@ NOINLINE void radf4_ps(const size_t ido, const size_t l1, const v4sf *RESTRICT c
         if((ido&1) == 1)
             return;
     }
-    const v4sf minus_hsqt2{ld_ps1(al::numbers::sqrt2_v<float> * -0.5f)};
+    const auto minus_hsqt2 = ld_ps1(std::numbers::sqrt2_v<float> * -0.5f);
     for(size_t k{0};k < l1ido;k += ido)
     {
         v4sf a{cc[ido-1 + k + l1ido]}, b{cc[ido-1 + k + 3*l1ido]};
@@ -1199,7 +1199,7 @@ void radb5_ps(const size_t ido, const size_t l1, const v4sf *RESTRICT cc, v4sf *
 } /* radb5 */
 
 NOINLINE v4sf *rfftf1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1, v4sf *work2,
-    const float *wa, const al::span<const uint,15> ifac)
+    const float *wa, const std::span<const uint,15> ifac)
 {
     assert(work1 != work2);
 
@@ -1251,7 +1251,7 @@ NOINLINE v4sf *rfftf1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1
 } /* rfftf1 */
 
 NOINLINE v4sf *rfftb1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1, v4sf *work2,
-    const float *wa, const al::span<const uint,15> ifac)
+    const float *wa, const std::span<const uint,15> ifac)
 {
     assert(work1 != work2);
 
@@ -1303,7 +1303,7 @@ NOINLINE v4sf *rfftb1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1
 }
 
 v4sf *cfftf1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1, v4sf *work2,
-    const float *wa, const al::span<const uint,15> ifac, const float fsign)
+    const float *wa, const std::span<const uint,15> ifac, const float fsign)
 {
     assert(work1 != work2);
 
@@ -1354,7 +1354,7 @@ v4sf *cfftf1_ps(const size_t n, const v4sf *input_readonly, v4sf *work1, v4sf *w
 }
 
 
-uint decompose(const uint n, const al::span<uint,15> ifac, const al::span<const uint,4> ntryh)
+uint decompose(const uint n, const std::span<uint,15> ifac, const std::span<const uint,4> ntryh)
 {
     uint nl{n}, nf{0};
     for(const uint ntry : ntryh)
@@ -1383,12 +1383,12 @@ uint decompose(const uint n, const al::span<uint,15> ifac, const al::span<const 
     return nf;
 }
 
-void rffti1_ps(const uint n, float *wa, const al::span<uint,15> ifac)
+void rffti1_ps(const uint n, float *wa, const std::span<uint,15> ifac)
 {
     static constexpr std::array ntryh{4u,2u,3u,5u};
 
     const uint nf{decompose(n, ifac, ntryh)};
-    const double argh{2.0*al::numbers::pi / n};
+    const auto argh = 2.0*std::numbers::pi / n;
     size_t is{0};
     size_t nfm1{nf - 1};
     size_t l1{1};
@@ -1417,12 +1417,12 @@ void rffti1_ps(const uint n, float *wa, const al::span<uint,15> ifac)
     }
 } /* rffti1 */
 
-void cffti1_ps(const uint n, float *wa, const al::span<uint,15> ifac)
+void cffti1_ps(const uint n, float *wa, const std::span<uint,15> ifac)
 {
     static constexpr std::array ntryh{5u,3u,4u,2u};
 
     const uint nf{decompose(n, ifac, ntryh)};
-    const double argh{2.0*al::numbers::pi / n};
+    const auto argh = 2.0*std::numbers::pi / n;
     size_t i{1};
     size_t l1{1};
     for(size_t k1{0};k1 < nf;++k1)
@@ -1467,7 +1467,7 @@ struct PFFFT_Setup {
     pffft_transform_t transform{};
 
     float *twiddle{}; /* N/4 elements */
-    al::span<v4sf> e; /* N/4*3 elements */
+    std::span<v4sf> e; /* N/4*3 elements */
 
     alignas(V4sfAlignment) std::byte end;
 };
@@ -1490,7 +1490,7 @@ PFFFTSetupPtr pffft_new_setup(unsigned int N, pffft_transform_t transform)
     const size_t storelen{std::max(offsetof(PFFFT_Setup, end) + 2_zu*Ncvec*sizeof(v4sf),
         sizeof(PFFFT_Setup))};
     auto storage = static_cast<gsl::owner<std::byte*>>(::operator new[](storelen, V4sfAlignVal));
-    al::span extrastore{&storage[offsetof(PFFFT_Setup, end)], 2_zu*Ncvec*sizeof(v4sf)};
+    auto extrastore = std::span{&storage[offsetof(PFFFT_Setup, end)], 2_zu*Ncvec*sizeof(v4sf)};
 
     PFFFTSetupPtr s{::new(storage) PFFFT_Setup{}};
     s->N = N;
@@ -1510,7 +1510,7 @@ PFFFTSetupPtr pffft_new_setup(unsigned int N, pffft_transform_t transform)
             const size_t j{k % SimdSize};
             for(size_t m{0};m < SimdSize-1;++m)
             {
-                const double A{-2.0*al::numbers::pi*static_cast<double>((m+1)*k) / N};
+                const auto A = -2.0*std::numbers::pi*static_cast<double>((m+1)*k) / N;
                 e[((i*3 + m)*2 + 0)*SimdSize + j] = static_cast<float>(std::cos(A));
                 e[((i*3 + m)*2 + 1)*SimdSize + j] = static_cast<float>(std::sin(A));
             }
@@ -1721,15 +1721,15 @@ force_inline void pffft_real_finalize_4x4(const v4sf *in0, const v4sf *in1, cons
 NOINLINE void pffft_real_finalize(const size_t Ncvec, const v4sf *in, v4sf *RESTRICT out,
     const v4sf *e)
 {
-    static constexpr float s{al::numbers::sqrt2_v<float>/2.0f};
+    static constexpr auto s = std::numbers::sqrt2_v<float>/2.0f;
 
     assert(in != out);
     const size_t dk{Ncvec/SimdSize}; // number of 4x4 matrix blocks
     /* fftpack order is f0r f1r f1i f2r f2i ... f(n-1)r f(n-1)i f(n)r */
 
-    const v4sf zero{vzero()};
-    const auto cr = al::bit_cast<std::array<float,SimdSize>>(in[0]);
-    const auto ci = al::bit_cast<std::array<float,SimdSize>>(in[Ncvec*2-1]);
+    const auto zero = vzero();
+    const auto cr = std::bit_cast<std::array<float,SimdSize>>(in[0]);
+    const auto ci = std::bit_cast<std::array<float,SimdSize>>(in[Ncvec*2-1]);
     pffft_real_finalize_4x4(&zero, &zero, in+1, e, out);
 
     /* [cr0 cr1 cr2 cr3 ci0 ci1 ci2 ci3]
@@ -1812,7 +1812,7 @@ force_inline void pffft_real_preprocess_4x4(const v4sf *in, const v4sf *e, v4sf 
 NOINLINE void pffft_real_preprocess(const size_t Ncvec, const v4sf *in, v4sf *RESTRICT out,
     const v4sf *e)
 {
-    static constexpr float sqrt2{al::numbers::sqrt2_v<float>};
+    static constexpr auto sqrt2 = std::numbers::sqrt2_v<float>;
 
     assert(in != out);
     const size_t dk{Ncvec/SimdSize}; // number of 4x4 matrix blocks

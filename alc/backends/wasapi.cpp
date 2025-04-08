@@ -48,18 +48,19 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
 
-#include "albit.h"
 #include "alc/alconfig.h"
 #include "alnumeric.h"
 #include "alspan.h"
@@ -363,7 +364,7 @@ auto GetDeviceNameAndGuid(const DeviceHandle &device) -> NameGUIDPair
 
     auto ret = NameGUIDPair{};
     auto pvprop = PropVariant{};
-    hr = ps->GetValue(al::bit_cast<PROPERTYKEY>(DEVPKEY_Device_FriendlyName), pvprop.get());
+    hr = ps->GetValue(std::bit_cast<PROPERTYKEY>(DEVPKEY_Device_FriendlyName), pvprop.get());
     if(FAILED(hr))
         WARN("GetValue Device_FriendlyName failed: {:#x}", as_unsigned(hr));
     else if(pvprop.type() == VT_LPWSTR)
@@ -372,7 +373,7 @@ auto GetDeviceNameAndGuid(const DeviceHandle &device) -> NameGUIDPair
         WARN("Unexpected Device_FriendlyName PROPVARIANT type: {:#04x}", pvprop.type());
 
     pvprop.clear();
-    hr = ps->GetValue(al::bit_cast<PROPERTYKEY>(PKEY_AudioEndpoint_GUID), pvprop.get());
+    hr = ps->GetValue(std::bit_cast<PROPERTYKEY>(PKEY_AudioEndpoint_GUID), pvprop.get());
     if(FAILED(hr))
         WARN("GetValue AudioEndpoint_GUID failed: {:#x}", as_unsigned(hr));
     else if(pvprop.type() == VT_LPWSTR)
@@ -1426,10 +1427,10 @@ FORCE_ALIGN void WasapiPlayback::mixerProc(SpatialDevice &audio)
             if(channels.empty()) UNLIKELY
             {
                 auto flags = as_unsigned(al::to_underlying(audio.mStaticMask));
-                channels.reserve(as_unsigned(al::popcount(flags)));
+                channels.reserve(as_unsigned(std::popcount(flags)));
                 while(flags)
                 {
-                    auto id = decltype(flags){1} << al::countr_zero(flags);
+                    auto id = decltype(flags){1} << std::countr_zero(flags);
                     flags &= ~id;
 
                     audio.mRender->ActivateSpatialAudioObject(static_cast<AudioObjectType>(id),
@@ -1443,7 +1444,7 @@ FORCE_ALIGN void WasapiPlayback::mixerProc(SpatialDevice &audio)
                     auto bufptr = mResampleBuffer.begin();
                     for(size_t i{0};i < tmpbuffers.size();++i)
                     {
-                        resbuffers[i] = al::to_address(bufptr);
+                        resbuffers[i] = std::to_address(bufptr);
                         bufptr += ptrdiff_t(mDevice->mUpdateSize*sizeof(float));
                     }
                 }
@@ -1970,7 +1971,7 @@ auto WasapiPlayback::initSpatial(DeviceHelper &helper, DeviceHandle &mmdev, Spat
     if(mDevice->mSampleRate != mFormat.Format.nSamplesPerSec)
     {
         const auto flags = as_unsigned(al::to_underlying(streamParams.StaticObjectTypeMask));
-        const auto channelCount = as_unsigned(al::popcount(flags));
+        const auto channelCount = as_unsigned(std::popcount(flags));
         mResampler = SampleConverter::Create(mDevice->FmtType, mDevice->FmtType, channelCount,
             mDevice->mSampleRate, mFormat.Format.nSamplesPerSec, Resampler::FastBSinc24);
         mResampleBuffer.resize(size_t{mDevice->mUpdateSize} * channelCount *
@@ -2928,7 +2929,7 @@ auto WasapiCapture::resetProxy(DeviceHelper &helper, DeviceHandle &mmdev,
         if((InputType.dwChannelMask&SPEAKER_LOW_FREQUENCY))
         {
             constexpr auto lfemask = MaskFromTopBits(SPEAKER_LOW_FREQUENCY);
-            const int lfeidx{al::popcount(InputType.dwChannelMask&lfemask) - 1};
+            const int lfeidx{std::popcount(InputType.dwChannelMask&lfemask) - 1};
             chanmask &= ~(1u << lfeidx);
         }
 

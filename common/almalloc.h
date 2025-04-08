@@ -6,7 +6,6 @@
 #include <limits>
 #include <new>
 #include <type_traits>
-#include <utility>
 #include <variant>
 
 
@@ -53,7 +52,7 @@ struct allocator {
     static constexpr auto Alignment = std::max(AlignV, alignof(T));
     static constexpr auto AlignVal = std::align_val_t{Alignment};
 
-    using value_type = std::remove_cv_t<std::remove_reference_t<T>>;
+    using value_type = std::remove_cvref_t<T>;
     using reference = value_type&;
     using const_reference = const value_type&;
     using pointer = value_type*;
@@ -62,7 +61,7 @@ struct allocator {
     using difference_type = std::ptrdiff_t;
     using is_always_equal = std::true_type;
 
-    template<typename U, std::enable_if_t<alignof(U) <= Alignment,bool> = true>
+    template<typename U> requires(alignof(U) <= Alignment)
     struct rebind {
         using other = allocator<U,Alignment>;
     };
@@ -86,36 +85,6 @@ constexpr bool operator==(const allocator<T,N>&, const allocator<U,M>&) noexcept
 template<typename T, std::size_t N, typename U, std::size_t M>
 constexpr bool operator!=(const allocator<T,N>&, const allocator<U,M>&) noexcept
 { return allocator<T,N>::Alignment != allocator<U,M>::Alignment; }
-
-
-#ifdef __cpp_lib_to_address
-using std::to_address;
-#else
-template<typename T>
-constexpr T *to_address(T *p) noexcept
-{
-    static_assert(!std::is_function<T>::value, "Can't be a function type");
-    return p;
-}
-
-template<typename T>
-constexpr auto to_address(const T &p) noexcept
-{
-    return ::al::to_address(p.operator->());
-}
-#endif
-
-template<typename T, typename ...Args>
-constexpr T* construct_at(T *ptr, Args&& ...args)
-    noexcept(std::is_nothrow_constructible_v<T, Args...>)
-{
-    /* NOLINTBEGIN(cppcoreguidelines-owning-memory) construct_at doesn't
-     * necessarily handle the address from an owner, while placement new
-     * expects to.
-     */
-    return ::new(static_cast<void*>(ptr)) T{std::forward<Args>(args)...};
-    /* NOLINTEND(cppcoreguidelines-owning-memory) */
-}
 
 
 template<typename SP, typename PT, typename ...Args>
