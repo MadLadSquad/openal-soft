@@ -30,6 +30,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
@@ -39,6 +40,7 @@
 #include <mutex>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -59,7 +61,6 @@
 #include "alc/inprogext.h"
 #include "almalloc.h"
 #include "alnumeric.h"
-#include "alspan.h"
 #include "atomic.h"
 #include "auxeffectslot.h"
 #include "buffer.h"
@@ -448,7 +449,7 @@ std::optional<VoicePos> GetSampleOffset(std::deque<ALbufferQueueItem> &BufferLis
         BufferFmt = item.mBuffer;
         if(BufferFmt) break;
     }
-    if(!BufferFmt) UNLIKELY
+    if(!BufferFmt) [[unlikely]]
         return std::nullopt;
 
     /* Get sample frame offset */
@@ -555,7 +556,7 @@ void InitVoice(Voice *voice, ALsource *source, ALbufferQueueItem *BufferList, AL
 VoiceChange *GetVoiceChanger(ALCcontext *ctx)
 {
     VoiceChange *vchg{ctx->mVoiceChangeTail};
-    if(vchg == ctx->mCurrentVoiceChange.load(std::memory_order_acquire)) UNLIKELY
+    if(vchg == ctx->mCurrentVoiceChange.load(std::memory_order_acquire)) [[unlikely]]
     {
         ctx->allocVoiceChanges();
         vchg = ctx->mVoiceChangeTail;
@@ -577,7 +578,7 @@ void SendVoiceChanges(ALCcontext *ctx, VoiceChange *tail)
 
     const bool connected{device->Connected.load(std::memory_order_acquire)};
     std::ignore = device->waitForMix();
-    if(!connected) UNLIKELY
+    if(!connected) [[unlikely]]
     {
         if(ctx->mStopVoicesOnDisconnect.load(std::memory_order_acquire))
         {
@@ -615,7 +616,7 @@ auto SetVoiceOffset(Voice *oldvoice, const VoicePos &vpos, ALsource *source, ALC
         }
         ++vidx;
     }
-    if(!newvoice) UNLIKELY
+    if(!newvoice) [[unlikely]]
     {
         auto &allvoices = *context->mVoices.load(std::memory_order_relaxed);
         if(allvoices.size() == voicelist.size())
@@ -672,7 +673,7 @@ auto SetVoiceOffset(Voice *oldvoice, const VoicePos &vpos, ALsource *source, ALC
     /* If the old voice still has a sourceID, it's still active and the change-
      * over will work on the next update.
      */
-    if(oldvoice->mSourceID.load(std::memory_order_acquire) != 0u) LIKELY
+    if(oldvoice->mSourceID.load(std::memory_order_acquire) != 0u) [[likely]]
         return true;
 
     /* Otherwise, if the new voice's state is not pending, the change-over
@@ -725,7 +726,7 @@ bool EnsureSources(ALCcontext *context, size_t needed)
     try {
         while(needed > count)
         {
-            if(context->mSourceList.size() >= 1<<25) UNLIKELY
+            if(context->mSourceList.size() >= 1<<25) [[unlikely]]
                 return false;
 
             SourceSubList sublist{};
@@ -796,55 +797,57 @@ inline ALsource *LookupSource(ALCcontext *context, ALuint id) noexcept
     const size_t lidx{(id-1) >> 6};
     const ALuint slidx{(id-1) & 0x3f};
 
-    if(lidx >= context->mSourceList.size()) UNLIKELY
+    if(lidx >= context->mSourceList.size()) [[unlikely]]
         return nullptr;
     SourceSubList &sublist{context->mSourceList[lidx]};
-    if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
+    if(sublist.FreeMask & (1_u64 << slidx)) [[unlikely]]
         return nullptr;
     return std::to_address(sublist.Sources->begin() + slidx);
 }
 
-auto LookupBuffer = [](al::Device *device, auto id) noexcept -> ALbuffer*
+inline auto LookupBuffer(al::Device *device, std::unsigned_integral auto id) noexcept -> ALbuffer*
 {
     const auto lidx{(id-1) >> 6};
     const auto slidx{(id-1) & 0x3f};
 
-    if(lidx >= device->BufferList.size()) UNLIKELY
+    if(lidx >= device->BufferList.size()) [[unlikely]]
         return nullptr;
     BufferSubList &sublist = device->BufferList[static_cast<size_t>(lidx)];
-    if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
+    if(sublist.FreeMask & (1_u64 << slidx)) [[unlikely]]
         return nullptr;
     return std::to_address(sublist.Buffers->begin() + static_cast<size_t>(slidx));
 };
 
-auto LookupFilter = [](al::Device *device, auto id) noexcept -> ALfilter*
+inline auto LookupFilter(al::Device *device, std::unsigned_integral auto id) noexcept -> ALfilter*
 {
     const auto lidx{(id-1) >> 6};
     const auto slidx{(id-1) & 0x3f};
 
-    if(lidx >= device->FilterList.size()) UNLIKELY
+    if(lidx >= device->FilterList.size()) [[unlikely]]
         return nullptr;
     FilterSubList &sublist = device->FilterList[static_cast<size_t>(lidx)];
-    if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
+    if(sublist.FreeMask & (1_u64 << slidx)) [[unlikely]]
         return nullptr;
     return std::to_address(sublist.Filters->begin() + static_cast<size_t>(slidx));
 };
 
-auto LookupEffectSlot = [](ALCcontext *context, auto id) noexcept -> ALeffectslot*
+inline auto LookupEffectSlot(ALCcontext *context, std::unsigned_integral auto id) noexcept
+    -> ALeffectslot*
 {
     const auto lidx{(id-1) >> 6};
     const auto slidx{(id-1) & 0x3f};
 
-    if(lidx >= context->mEffectSlotList.size()) UNLIKELY
+    if(lidx >= context->mEffectSlotList.size()) [[unlikely]]
         return nullptr;
     EffectSlotSubList &sublist{context->mEffectSlotList[static_cast<size_t>(lidx)]};
-    if(sublist.FreeMask & (1_u64 << slidx)) UNLIKELY
+    if(sublist.FreeMask & (1_u64 << slidx)) [[unlikely]]
         return nullptr;
     return std::to_address(sublist.EffectSlots->begin() + static_cast<size_t>(slidx));
 };
 
 
-auto StereoModeFromEnum = [](auto mode) noexcept -> std::optional<SourceStereo>
+inline auto StereoModeFromEnum(std::signed_integral auto mode) noexcept
+    -> std::optional<SourceStereo>
 {
     switch(mode)
     {
@@ -863,7 +866,8 @@ ALenum EnumFromStereoMode(SourceStereo mode)
     throw std::runtime_error{"Invalid SourceStereo: "+std::to_string(int(mode))};
 }
 
-auto SpatializeModeFromEnum = [](auto mode) noexcept -> std::optional<SpatializeMode>
+inline auto SpatializeModeFromEnum(std::signed_integral auto mode) noexcept
+    -> std::optional<SpatializeMode>
 {
     switch(mode)
     {
@@ -885,7 +889,8 @@ ALenum EnumFromSpatializeMode(SpatializeMode mode)
         int{al::to_underlying(mode)})};
 }
 
-auto DirectModeFromEnum = [](auto mode) noexcept -> std::optional<DirectMode>
+inline auto DirectModeFromEnum(std::signed_integral auto mode) noexcept
+    -> std::optional<DirectMode>
 {
     switch(mode)
     {
@@ -906,7 +911,8 @@ ALenum EnumFromDirectMode(DirectMode mode)
     throw std::runtime_error{fmt::format("Invalid DirectMode: {}", int{al::to_underlying(mode)})};
 }
 
-auto DistanceModelFromALenum = [](auto model) noexcept -> std::optional<DistanceModel>
+inline auto DistanceModelFromALenum(std::signed_integral auto model) noexcept
+    -> std::optional<DistanceModel>
 {
     switch(model)
     {
@@ -1393,7 +1399,7 @@ template<typename T, typename U>
 PairStruct(T,U) -> PairStruct<T,U>;
 
 template<typename T, size_t N>
-auto GetCheckers(ALCcontext *context, const SourceProp prop, const al::span<T,N> values)
+auto GetCheckers(ALCcontext *context, const SourceProp prop, const std::span<T,N> values)
 {
     return PairStruct{
         [=](size_t expect) -> void
@@ -1413,7 +1419,7 @@ auto GetCheckers(ALCcontext *context, const SourceProp prop, const al::span<T,N>
 
 template<typename T>
 NOINLINE void SetProperty(ALsource *const Source, ALCcontext *const Context, const SourceProp prop,
-    const al::span<const T> values)
+    const std::span<const T> values)
 {
     auto [CheckSize, CheckValue] = GetCheckers(Context, prop, values);
     auto *device = Context->mALDevice.get();
@@ -2018,11 +2024,11 @@ NOINLINE void SetProperty(ALsource *const Source, ALCcontext *const Context, con
 
 
 template<typename T, size_t N>
-auto GetSizeChecker(ALCcontext *context, const SourceProp prop, const al::span<T,N> values)
+auto GetSizeChecker(ALCcontext *context, const SourceProp prop, const std::span<T,N> values)
 {
     return [=](size_t expect) -> void
     {
-        if(values.size() == expect) LIKELY return;
+        if(values.size() == expect) [[likely]] return;
         context->throw_error(AL_INVALID_ENUM, "Property {:#04x} expects {} value{}, got {}",
             as_unsigned(al::to_underlying(prop)), expect, (expect==1) ? "" : "s", values.size());
     };
@@ -2030,7 +2036,7 @@ auto GetSizeChecker(ALCcontext *context, const SourceProp prop, const al::span<T
 
 template<typename T>
 NOINLINE void GetProperty(ALsource *const Source, ALCcontext *const Context, const SourceProp prop,
-    const al::span<T> values)
+    const std::span<T> values)
 {
     using std::chrono::duration_cast;
     auto CheckSize = GetSizeChecker(Context, prop, values);
@@ -2489,14 +2495,14 @@ NOINLINE void GetProperty(ALsource *const Source, ALCcontext *const Context, con
 }
 
 
-void StartSources(ALCcontext *const context, const al::span<ALsource*> srchandles,
+void StartSources(ALCcontext *const context, const std::span<ALsource*> srchandles,
     const nanoseconds start_time=nanoseconds::min())
 {
     auto *device = context->mALDevice.get();
     /* If the device is disconnected, and voices stop on disconnect, go right
      * to stopped.
      */
-    if(!device->Connected.load(std::memory_order_acquire)) UNLIKELY
+    if(!device->Connected.load(std::memory_order_acquire)) [[unlikely]]
     {
         if(context->mStopVoicesOnDisconnect.load(std::memory_order_acquire))
         {
@@ -2522,7 +2528,7 @@ void StartSources(ALCcontext *const context, const al::span<ALsource*> srchandle
         if(free_voices == srchandles.size())
             break;
     }
-    if(srchandles.size() != free_voices) UNLIKELY
+    if(srchandles.size() != free_voices) [[unlikely]]
     {
         const size_t inc_amount{srchandles.size() - free_voices};
         auto &allvoices = *context->mVoices.load(std::memory_order_relaxed);
@@ -2548,7 +2554,7 @@ void StartSources(ALCcontext *const context, const al::span<ALsource*> srchandle
         auto BufferList = std::find_if(source->mQueue.begin(), source->mQueue.end(), find_buffer);
 
         /* If there's nothing to play, go right to stopped. */
-        if(BufferList == source->mQueue.end()) UNLIKELY
+        if(BufferList == source->mQueue.end()) [[unlikely]]
         {
             /* NOTE: A source without any playable buffers should not have a
              * Voice since it shouldn't be in a playing or paused state. So
@@ -2654,7 +2660,7 @@ void StartSources(ALCcontext *const context, const al::span<ALsource*> srchandle
         cur->mSourceID = source->id;
         cur->mState = VChangeState::Play;
     }
-    if(tail) LIKELY
+    if(tail) [[likely]]
         SendVoiceChanges(context, tail);
 }
 
@@ -2665,12 +2671,12 @@ FORCE_ALIGN void AL_APIENTRY alGenSourcesDirect(ALCcontext *context, ALsizei n, 
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Generating {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
     auto srclock = std::unique_lock{context->mSourceLock};
     auto *device = context->mALDevice.get();
 
-    const al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     if(context->mNumSources > device->SourcesMax
         || sids.size() > device->SourcesMax-context->mNumSources)
         context->throw_error(AL_OUT_OF_MEMORY, "Exceeding {} source limit ({} + {})",
@@ -2693,7 +2699,7 @@ FORCE_ALIGN void AL_APIENTRY alDeleteSourcesDirect(ALCcontext *context, ALsizei 
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Deleting {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
     std::lock_guard<std::mutex> srclock{context->mSourceLock};
 
@@ -2701,7 +2707,7 @@ try {
     auto validate_source = [context](const ALuint sid) -> bool
     { return LookupSource(context, sid) != nullptr; };
 
-    const al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     auto invsrc = std::find_if_not(sids.begin(), sids.end(), validate_source);
     if(invsrc != sids.end())
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", *invsrc);
@@ -2758,7 +2764,7 @@ try {
     if(!Source)
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", source);
 
-    const std::array fvals{value1, value2, value3};
+    const auto fvals = std::array{value1, value2, value3};
     SetProperty<float>(Source, context, static_cast<SourceProp>(param), fvals);
 }
 catch(al::base_exception&) {
@@ -2779,8 +2785,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{FloatValsByProp(param)};
-    SetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = FloatValsByProp(param);
+    SetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -2817,7 +2823,7 @@ try {
     if(!Source)
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", source);
 
-    const std::array dvals{value1, value2, value3};
+    const auto dvals = std::array{value1, value2, value3};
     SetProperty<double>(Source, context, static_cast<SourceProp>(param), dvals);
 }
 catch(al::base_exception&) {
@@ -2838,8 +2844,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{DoubleValsByProp(param)};
-    SetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = DoubleValsByProp(param);
+    SetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -2876,7 +2882,7 @@ try {
     if(!Source)
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", source);
 
-    const std::array ivals{value1, value2, value3};
+    const auto ivals = std::array{value1, value2, value3};
     SetProperty<int>(Source, context, static_cast<SourceProp>(param), ivals);
 }
 catch(al::base_exception&) {
@@ -2897,8 +2903,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{IntValsByProp(param)};
-    SetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = IntValsByProp(param);
+    SetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -2935,7 +2941,7 @@ try {
     if(!Source)
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", source);
 
-    const std::array i64vals{value1, value2, value3};
+    const auto i64vals = std::array{value1, value2, value3};
     SetProperty<int64_t>(Source, context, static_cast<SourceProp>(param), i64vals);
 }
 catch(al::base_exception&) {
@@ -2956,8 +2962,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{Int64ValsByProp(param)};
-    SetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = Int64ValsByProp(param);
+    SetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -2977,7 +2983,7 @@ try {
     if(!value)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{value, 1u});
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{value, 1u});
 }
 catch(al::base_exception&) {
 }
@@ -2996,7 +3002,7 @@ try {
     if(!(value1 && value2 && value3))
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    std::array<float,3> fvals{};
+    auto fvals = std::array<float,3>{};
     GetProperty<float>(Source, context, static_cast<SourceProp>(param), fvals);
     *value1 = fvals[0];
     *value2 = fvals[1];
@@ -3019,8 +3025,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{FloatValsByProp(param)};
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = FloatValsByProp(param);
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -3040,7 +3046,7 @@ try {
     if(!value)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{value, 1u});
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{value, 1u});
 }
 catch(al::base_exception&) {
 }
@@ -3059,7 +3065,7 @@ try {
     if(!(value1 && value2 && value3))
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    std::array<double,3> dvals{};
+    auto dvals = std::array<double,3>{};
     GetProperty<double>(Source, context, static_cast<SourceProp>(param), dvals);
     *value1 = dvals[0];
     *value2 = dvals[1];
@@ -3082,8 +3088,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{DoubleValsByProp(param)};
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = DoubleValsByProp(param);
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -3103,7 +3109,7 @@ try {
     if(!value)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{value, 1u});
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{value, 1u});
 }
 catch(al::base_exception&) {
 }
@@ -3122,7 +3128,7 @@ try {
     if(!(value1 && value2 && value3))
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    std::array<int,3> ivals{};
+    auto ivals = std::array<int,3>{};
     GetProperty<int>(Source, context, static_cast<SourceProp>(param), ivals);
     *value1 = ivals[0];
     *value2 = ivals[1];
@@ -3145,8 +3151,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{IntValsByProp(param)};
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = IntValsByProp(param);
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -3165,7 +3171,7 @@ try {
     if(!value)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{value, 1u});
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{value, 1u});
 }
 catch(al::base_exception&) {
 }
@@ -3184,7 +3190,7 @@ try {
     if(!(value1 && value2 && value3))
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    std::array<int64_t,3> i64vals{};
+    auto i64vals = std::array<int64_t,3>{};
     GetProperty<int64_t>(Source, context, static_cast<SourceProp>(param), i64vals);
     *value1 = i64vals[0];
     *value2 = i64vals[1];
@@ -3207,8 +3213,8 @@ try {
     if(!values)
         context->throw_error(AL_INVALID_VALUE, "NULL pointer");
 
-    const ALuint count{Int64ValsByProp(param)};
-    GetProperty(Source, context, static_cast<SourceProp>(param), al::span{values, count});
+    const auto count = Int64ValsByProp(param);
+    GetProperty(Source, context, static_cast<SourceProp>(param), std::span{values, count});
 }
 catch(al::base_exception&) {
 }
@@ -3259,16 +3265,16 @@ FORCE_ALIGN void AL_APIENTRY alSourcePlayvDirect(ALCcontext *context, ALsizei n,
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Playing {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
-    al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     source_store_variant source_store;
-    const auto srchandles = [&source_store](size_t count) -> al::span<ALsource*>
+    const auto srchandles = std::invoke([&source_store](size_t count) -> std::span<ALsource*>
     {
         if(count > std::tuple_size_v<source_store_array>)
-            return al::span{source_store.emplace<source_store_vector>(count)};
-        return al::span{source_store.emplace<source_store_array>()}.first(count);
-    }(sids.size());
+            return std::span{source_store.emplace<source_store_vector>(count)};
+        return std::span{source_store.emplace<source_store_array>()}.first(count);
+    }, sids.size());
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     auto lookup_src = [context](const ALuint sid) -> ALsource*
@@ -3277,7 +3283,7 @@ try {
             return src;
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", sid);
     };
-    std::transform(sids.cbegin(), sids.cend(), srchandles.begin(), lookup_src);
+    std::transform(sids.begin(), sids.end(), srchandles.begin(), lookup_src);
 
     StartSources(context, srchandles);
 }
@@ -3293,19 +3299,19 @@ FORCE_ALIGN void AL_APIENTRY alSourcePlayAtTimevDirectSOFT(ALCcontext *context, 
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Playing {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
     if(start_time < 0)
         context->throw_error(AL_INVALID_VALUE, "Invalid time point {}", start_time);
 
-    al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     source_store_variant source_store;
-    const auto srchandles = [&source_store](size_t count) -> al::span<ALsource*>
+    const auto srchandles = std::invoke([&source_store](size_t count) -> std::span<ALsource*>
     {
         if(count > std::tuple_size_v<source_store_array>)
-            return al::span{source_store.emplace<source_store_vector>(count)};
-        return al::span{source_store.emplace<source_store_array>()}.first(count);
-    }(sids.size());
+            return std::span{source_store.emplace<source_store_vector>(count)};
+        return std::span{source_store.emplace<source_store_array>()}.first(count);
+    }, sids.size());
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     auto lookup_src = [context](const ALuint sid) -> ALsource*
@@ -3314,7 +3320,7 @@ try {
             return src;
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", sid);
     };
-    std::transform(sids.cbegin(), sids.cend(), srchandles.begin(), lookup_src);
+    std::transform(sids.begin(), sids.end(), srchandles.begin(), lookup_src);
 
     StartSources(context, srchandles, nanoseconds{start_time});
 }
@@ -3335,16 +3341,16 @@ FORCE_ALIGN void AL_APIENTRY alSourcePausevDirect(ALCcontext *context, ALsizei n
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Pausing {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
-    al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     source_store_variant source_store;
-    const auto srchandles = [&source_store](size_t count) -> al::span<ALsource*>
+    const auto srchandles = std::invoke([&source_store](size_t count) -> std::span<ALsource*>
     {
         if(count > std::tuple_size_v<source_store_array>)
-            return al::span{source_store.emplace<source_store_vector>(count)};
-        return al::span{source_store.emplace<source_store_array>()}.first(count);
-    }(sids.size());
+            return std::span{source_store.emplace<source_store_vector>(count)};
+        return std::span{source_store.emplace<source_store_array>()}.first(count);
+    }, sids.size());
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     auto lookup_src = [context](const ALuint sid) -> ALsource*
@@ -3353,7 +3359,7 @@ try {
             return src;
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", sid);
     };
-    std::transform(sids.cbegin(), sids.cend(), srchandles.begin(), lookup_src);
+    std::transform(sids.begin(), sids.end(), srchandles.begin(), lookup_src);
 
     /* Pausing has to be done in two steps. First, for each source that's
      * detected to be playing, chamge the voice (asynchronously) to
@@ -3377,7 +3383,7 @@ try {
             cur->mState = VChangeState::Pause;
         }
     }
-    if(tail) LIKELY
+    if(tail) [[likely]]
     {
         SendVoiceChanges(context, tail);
         /* Second, now that the voice changes have been sent, because it's
@@ -3410,16 +3416,16 @@ FORCE_ALIGN void AL_APIENTRY alSourceStopvDirect(ALCcontext *context, ALsizei n,
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Stopping {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
-    al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     source_store_variant source_store;
-    const auto srchandles = [&source_store](size_t count) -> al::span<ALsource*>
+    const auto srchandles = std::invoke([&source_store](size_t count) -> std::span<ALsource*>
     {
         if(count > std::tuple_size_v<source_store_array>)
-            return al::span{source_store.emplace<source_store_vector>(count)};
-        return al::span{source_store.emplace<source_store_array>()}.first(count);
-    }(sids.size());
+            return std::span{source_store.emplace<source_store_vector>(count)};
+        return std::span{source_store.emplace<source_store_array>()}.first(count);
+    }, sids.size());
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     auto lookup_src = [context](const ALuint sid) -> ALsource*
@@ -3428,7 +3434,7 @@ try {
             return src;
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", sid);
     };
-    std::transform(sids.cbegin(), sids.cend(), srchandles.begin(), lookup_src);
+    std::transform(sids.begin(), sids.end(), srchandles.begin(), lookup_src);
 
     VoiceChange *tail{}, *cur{};
     for(ALsource *source : srchandles)
@@ -3452,7 +3458,7 @@ try {
         source->OffsetType = AL_NONE;
         source->VoiceIdx = InvalidVoiceIndex;
     }
-    if(tail) LIKELY
+    if(tail) [[likely]]
         SendVoiceChanges(context, tail);
 }
 catch(al::base_exception&) {
@@ -3472,16 +3478,16 @@ FORCE_ALIGN void AL_APIENTRY alSourceRewindvDirect(ALCcontext *context, ALsizei 
 try {
     if(n < 0)
         context->throw_error(AL_INVALID_VALUE, "Rewinding {} sources", n);
-    if(n <= 0) UNLIKELY return;
+    if(n <= 0) [[unlikely]] return;
 
-    al::span sids{sources, static_cast<ALuint>(n)};
+    const auto sids = std::span{sources, static_cast<ALuint>(n)};
     source_store_variant source_store;
-    const auto srchandles = [&source_store](size_t count) -> al::span<ALsource*>
+    const auto srchandles = std::invoke([&source_store](size_t count) -> std::span<ALsource*>
     {
         if(count > std::tuple_size_v<source_store_array>)
-            return al::span{source_store.emplace<source_store_vector>(count)};
-        return al::span{source_store.emplace<source_store_array>()}.first(count);
-    }(sids.size());
+            return std::span{source_store.emplace<source_store_vector>(count)};
+        return std::span{source_store.emplace<source_store_array>()}.first(count);
+    }, sids.size());
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     auto lookup_src = [context](const ALuint sid) -> ALsource*
@@ -3490,7 +3496,7 @@ try {
             return src;
         context->throw_error(AL_INVALID_NAME, "Invalid source ID {}", sid);
     };
-    std::transform(sids.cbegin(), sids.cend(), srchandles.begin(), lookup_src);
+    std::transform(sids.begin(), sids.end(), srchandles.begin(), lookup_src);
 
     VoiceChange *tail{}, *cur{};
     for(ALsource *source : srchandles)
@@ -3516,7 +3522,7 @@ try {
         source->OffsetType = AL_NONE;
         source->VoiceIdx = InvalidVoiceIndex;
     }
-    if(tail) LIKELY
+    if(tail) [[likely]]
         SendVoiceChanges(context, tail);
 }
 catch(al::base_exception&) {
@@ -3532,7 +3538,7 @@ FORCE_ALIGN void AL_APIENTRY alSourceQueueBuffersDirect(ALCcontext *context, ALu
 try {
     if(nb < 0)
         context->throw_error(AL_INVALID_VALUE, "Queueing {} buffers", nb);
-    if(nb <= 0) UNLIKELY return;
+    if(nb <= 0) [[unlikely]] return;
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     ALsource *source{LookupSource(context,src)};
@@ -3553,7 +3559,7 @@ try {
     }
 
     std::unique_lock<std::mutex> buflock{device->BufferLock};
-    const auto bids = al::span{buffers, static_cast<ALuint>(nb)};
+    const auto bids = std::span{buffers, static_cast<ALuint>(nb)};
     const size_t NewListStart{source->mQueue.size()};
     try {
         ALbufferQueueItem *BufferList{nullptr};
@@ -3618,7 +3624,7 @@ try {
                         NameFromFormat(buffer->mChannels));
             }
         };
-        std::for_each(bids.cbegin(), bids.cend(), append_buffer);
+        std::for_each(bids.begin(), bids.end(), append_buffer);
     }
     catch(...) {
         /* A buffer failed (invalid ID or format), or there was some other
@@ -3657,7 +3663,7 @@ FORCE_ALIGN void AL_APIENTRY alSourceUnqueueBuffersDirect(ALCcontext *context, A
 try {
     if(nb < 0)
         context->throw_error(AL_INVALID_VALUE, "Unqueueing {} buffers", nb);
-    if(nb <= 0) UNLIKELY return;
+    if(nb <= 0) [[unlikely]] return;
 
     std::lock_guard<std::mutex> sourcelock{context->mSourceLock};
     ALsource *source{LookupSource(context,src)};
@@ -3670,9 +3676,9 @@ try {
         context->throw_error(AL_INVALID_VALUE, "Unqueueing from looping source {}", src);
 
     /* Make sure enough buffers have been processed to unqueue. */
-    const al::span bids{buffers, static_cast<ALuint>(nb)};
+    const auto bids = std::span{buffers, static_cast<ALuint>(nb)};
     size_t processed{0};
-    if(source->state != AL_INITIAL) LIKELY
+    if(source->state != AL_INITIAL) [[likely]]
     {
         VoiceBufferItem *Current{nullptr};
         if(Voice *voice{GetSourceVoice(source, context)})
@@ -3711,7 +3717,7 @@ catch(std::exception &e) {
 AL_API void AL_APIENTRY alSourceQueueBufferLayersSOFT(ALuint, ALsizei, const ALuint*) noexcept
 {
     ContextRef context{GetContextRef()};
-    if(!context) UNLIKELY return;
+    if(!context) [[unlikely]] return;
 
     context->setError(AL_INVALID_OPERATION, "alSourceQueueBufferLayersSOFT not supported");
 }
@@ -4079,13 +4085,13 @@ void ALsource::eax4_translate(const Eax4Props& src, Eax5Props& dst) noexcept
         if(src_id == EAXPROPERTYID_EAX40_FXSlot3)
             return EAXPROPERTYID_EAX50_FXSlot3;
 
-        UNLIKELY
+        [[unlikely]]
         ERR("Unexpected active FX slot ID");
         return EAX_NULL_GUID;
     };
-    const auto src_slots = al::span{src.active_fx_slots.guidActiveFXSlots};
-    const auto dst_slots = al::span{dst.active_fx_slots.guidActiveFXSlots};
-    auto dstiter = std::transform(src_slots.cbegin(), src_slots.cend(), dst_slots.begin(),
+    const auto src_slots = std::span{src.active_fx_slots.guidActiveFXSlots};
+    const auto dst_slots = std::span{dst.active_fx_slots.guidActiveFXSlots};
+    auto dstiter = std::transform(src_slots.begin(), src_slots.end(), dst_slots.begin(),
         translate_slotid);
     std::fill(dstiter, dst_slots.end(), EAX_NULL_GUID);
 
@@ -4496,7 +4502,7 @@ void ALsource::eax4_set(const EaxCall& call, Eax4Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax4_defer_active_fx_slot_id(call, al::span{props.active_fx_slots.guidActiveFXSlots});
+            eax4_defer_active_fx_slot_id(call, std::span{props.active_fx_slots.guidActiveFXSlots});
             break;
 
         default:
@@ -4518,9 +4524,10 @@ void ALsource::eax5_defer_all_2d(const EaxCall& call, EAX50SOURCEPROPERTIES& pro
 void ALsource::eax5_defer_speaker_levels(const EaxCall& call, EaxSpeakerLevels& props)
 {
     const auto values = call.get_values<const EAXSPEAKERLEVELPROPERTIES>(eax_max_speakers);
-    std::for_each(values.cbegin(), values.cend(), Eax5SpeakerAllValidator{});
+    std::for_each(values.begin(), values.end(), Eax5SpeakerAllValidator{});
 
-    for (const auto& value : values) {
+    for(const auto &value : values)
+    {
         const auto index = static_cast<size_t>(value.lSpeakerID - EAXSPEAKER_FRONT_LEFT);
         props[index].lLevel = value.lLevel;
     }
@@ -4580,7 +4587,7 @@ void ALsource::eax5_set(const EaxCall& call, Eax5Props& props)
             break;
 
         case EAXSOURCE_ACTIVEFXSLOTID:
-            eax5_defer_active_fx_slot_id(call, al::span{props.active_fx_slots.guidActiveFXSlots});
+            eax5_defer_active_fx_slot_id(call, std::span{props.active_fx_slots.guidActiveFXSlots});
             break;
 
         case EAXSOURCE_MACROFXFACTOR:
@@ -4616,11 +4623,11 @@ void ALsource::eax_set(const EaxCall& call)
     mEaxVersion = eax_version;
 }
 
-void ALsource::eax_get_active_fx_slot_id(const EaxCall& call, const al::span<const GUID> src_ids)
+void ALsource::eax_get_active_fx_slot_id(const EaxCall& call, const std::span<const GUID> srcids)
 {
-    assert(src_ids.size()==EAX40_MAX_ACTIVE_FXSLOTS || src_ids.size()==EAX50_MAX_ACTIVE_FXSLOTS);
-    const auto dst_ids = call.get_values<GUID>(src_ids.size());
-    std::uninitialized_copy_n(src_ids.begin(), dst_ids.size(), dst_ids.begin());
+    assert(srcids.size()==EAX40_MAX_ACTIVE_FXSLOTS || srcids.size()==EAX50_MAX_ACTIVE_FXSLOTS);
+    const auto dst_ids = call.get_values<GUID>(srcids.size());
+    std::uninitialized_copy_n(srcids.begin(), dst_ids.size(), dst_ids.begin());
 }
 
 void ALsource::eax1_get(const EaxCall& call, const EAXBUFFER_REVERBPROPERTIES& props)
