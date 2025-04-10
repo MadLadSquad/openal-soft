@@ -11,6 +11,7 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -26,7 +27,6 @@
 #include "alc/alu.h"
 #include "alc/backends/base.h"
 #include "alnumeric.h"
-#include "alspan.h"
 #include "atomic.h"
 #include "core/async_event.h"
 #include "core/devformat.h"
@@ -212,7 +212,7 @@ void ALCcontext::init()
         std::string extensions;
         extensions.reserve(len);
         extensions += mExtensions.front();
-        for(std::string_view ext : al::span{mExtensions}.subspan<1>())
+        for(std::string_view ext : std::span{mExtensions}.subspan<1>())
         {
             extensions += ' ';
             extensions += ext;
@@ -274,7 +274,7 @@ void ALCcontext::deinit()
 
     bool stopPlayback{};
     /* First make sure this context exists in the device's list. */
-    auto oldarray = al::span{*mDevice->mContexts.load(std::memory_order_acquire)};
+    auto oldarray = std::span{*mDevice->mContexts.load(std::memory_order_acquire)};
     if(auto toremove = static_cast<size_t>(std::count(oldarray.begin(), oldarray.end(), this)))
     {
         using ContextArray = al::FlexArray<ContextBase*>;
@@ -337,16 +337,15 @@ void ALCcontext::applyAllUpdates()
 #if ALSOFT_EAX
 namespace {
 
-template<typename F>
-void ForEachSource(ALCcontext *context, F func)
+void ForEachSource(ALCcontext *context, auto&& func)
 {
     for(auto &sublist : context->mSourceList)
     {
         uint64_t usemask{~sublist.FreeMask};
         while(usemask)
         {
-            const auto idx = static_cast<uint>(std::countr_zero(usemask));
-            usemask &= ~(1_u64 << idx);
+            const auto idx = as_unsigned(std::countr_zero(usemask));
+            usemask ^= 1_u64 << idx;
 
             func((*sublist.Sources)[idx]);
         }
@@ -1034,7 +1033,7 @@ FORCE_ALIGN auto AL_APIENTRY EAXSet(const GUID *property_set_id, ALuint property
     ALuint source_id, ALvoid *value, ALuint value_size) noexcept -> ALenum
 {
     auto context = GetContextRef();
-    if(!context) UNLIKELY return AL_INVALID_OPERATION;
+    if(!context) [[unlikely]] return AL_INVALID_OPERATION;
     return EAXSetDirect(context.get(), property_set_id, property_id, source_id, value, value_size);
 }
 
@@ -1057,7 +1056,7 @@ FORCE_ALIGN auto AL_APIENTRY EAXGet(const GUID *property_set_id, ALuint property
     ALuint source_id, ALvoid *value, ALuint value_size) noexcept -> ALenum
 {
     auto context = GetContextRef();
-    if(!context) UNLIKELY return AL_INVALID_OPERATION;
+    if(!context) [[unlikely]] return AL_INVALID_OPERATION;
     return EAXGetDirect(context.get(), property_set_id, property_id, source_id, value, value_size);
 }
 

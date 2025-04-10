@@ -53,6 +53,7 @@
 #include <new>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -75,7 +76,6 @@
 #include "alconfig.h"
 #include "almalloc.h"
 #include "alnumeric.h"
-#include "alspan.h"
 #include "alstring.h"
 #include "alu.h"
 #include "atomic.h"
@@ -102,6 +102,7 @@
 #include "export_list.h"
 #include "flexarray.h"
 #include "fmt/core.h"
+#include "fmt/ranges.h"
 #include "inprogext.h"
 #include "intrusive_ptr.h"
 #include "opthelpers.h"
@@ -418,20 +419,10 @@ void alc_initconfig()
     TRACE("Initializing library v{}-{} {}", ALSOFT_VERSION, ALSOFT_GIT_COMMIT_HASH,
         ALSOFT_GIT_BRANCH);
     {
-        std::string names;
-        if(std::size(BackendList) < 1)
-            names = "(none)";
-        else
-        {
-            const al::span<const BackendInfo> infos{BackendList};
-            names = infos[0].name;
-            for(const auto &backend : infos.subspan<1>())
-            {
-                names += ", ";
-                names += backend.name;
-            }
-        }
-        TRACE("Supported backends: {}", names);
+        auto names = std::array<std::string_view,BackendList.size()>{};
+        std::transform(BackendList.begin(), BackendList.end(), names.begin(),
+            std::mem_fn(&BackendInfo::name));
+        TRACE("Supported backends: {}", fmt::join(names, ", "));
     }
     ReadALConfig();
 
@@ -808,9 +799,9 @@ void ProbeCaptureDeviceList()
 }
 
 
-al::span<const ALCint> SpanFromAttributeList(const ALCint *attribs) noexcept
+auto SpanFromAttributeList(const ALCint *attribs) noexcept -> std::span<const ALCint>
 {
-    al::span<const ALCint> attrSpan;
+    auto attrSpan = std::span<const ALCint>{};
     if(attribs)
     {
         const ALCint *attrEnd{attribs};
@@ -1090,7 +1081,7 @@ inline void UpdateClockBase(al::Device *device)
  * Updates device parameters according to the attribute list (caller is
  * responsible for holding the list lock).
  */
-auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) -> ALCenum
+auto UpdateDeviceParams(al::Device *device, const std::span<const int> attrList) -> ALCenum
 {
     if(attrList.empty() && device->Type == DeviceType::Loopback)
     {
@@ -1828,7 +1819,7 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
                     send.GainLF = 1.0f;
                     send.LFReference = HighPassFreqRef;
                 };
-                const auto sends = al::span{source.Send}.subspan(num_sends);
+                const auto sends = std::span{source.Send}.subspan(num_sends);
                 std::for_each(sends.begin(), sends.end(), clear_send);
 
                 source.mPropsDirty = true;
@@ -1839,13 +1830,13 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
         auto reset_voice = [device,num_sends,context](Voice *voice)
         {
             /* Clear extraneous property set sends. */
-            const auto sendparams = al::span{voice->mProps.Send}.subspan(num_sends);
+            const auto sendparams = std::span{voice->mProps.Send}.subspan(num_sends);
             std::fill(sendparams.begin(), sendparams.end(), VoiceProps::SendData{});
 
             std::fill(voice->mSend.begin()+num_sends, voice->mSend.end(), Voice::TargetData{});
             auto clear_wetparams = [num_sends](Voice::ChannelData &chandata)
             {
-                const auto wetparams = al::span{chandata.mWetParams}.subspan(num_sends);
+                const auto wetparams = std::span{chandata.mWetParams}.subspan(num_sends);
                 std::fill(wetparams.begin(), wetparams.end(), SendParams{});
             };
             std::for_each(voice->mChans.begin(), voice->mChans.end(), clear_wetparams);
@@ -1875,7 +1866,7 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
         UpdateAllEffectSlotProps(context);
         UpdateAllSourceProps(context);
     };
-    auto ctxspan = al::span{*device->mContexts.load()};
+    auto ctxspan = std::span{*device->mContexts.load()};
     std::for_each(ctxspan.begin(), ctxspan.end(), reset_context);
     mixer_mode.leave();
 
@@ -1904,10 +1895,10 @@ auto UpdateDeviceParams(al::Device *device, const al::span<const int> attrList) 
  * Updates device parameters as above, and also first clears the disconnected
  * status, if set.
  */
-auto ResetDeviceParams(al::Device *device, const al::span<const int> attrList) -> bool
+auto ResetDeviceParams(al::Device *device, const std::span<const int> attrList) -> bool
 {
     /* If the device was disconnected, reset it since we're opened anew. */
-    if(!device->Connected.load(std::memory_order_relaxed)) UNLIKELY
+    if(!device->Connected.load(std::memory_order_relaxed))
     {
         /* Make sure disconnection is finished before continuing on. */
         std::ignore = device->waitForMix();
@@ -1940,7 +1931,7 @@ auto ResetDeviceParams(al::Device *device, const al::span<const int> attrList) -
     }
 
     ALCenum err{UpdateDeviceParams(device, attrList)};
-    if(err == ALC_NO_ERROR) LIKELY return ALC_TRUE;
+    if(err == ALC_NO_ERROR) [[likely]] return ALC_TRUE;
 
     alcSetError(device, err);
     return ALC_FALSE;
@@ -1997,7 +1988,7 @@ ContextRef GetContextRef() noexcept
              */
         }
         context = ALCcontext::sGlobalContext.load(std::memory_order_acquire);
-        if(context) LIKELY context->add_ref();
+        if(context) [[likely]] context->add_ref();
         ALCcontext::sGlobalContextLock.store(false, std::memory_order_release);
     }
     return ContextRef{context};
@@ -2047,7 +2038,7 @@ ALC_API void ALC_APIENTRY alcSuspendContext(ALCcontext *context) noexcept
         return;
     }
 
-    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) [[unlikely]]
         ctx->debugMessage(DebugSource::API, DebugType::Portability, 0, DebugSeverity::Medium,
             "alcSuspendContext behavior is not portable -- some implementations suspend all "
             "rendering, some only defer property changes, and some are completely no-op; consider "
@@ -2070,7 +2061,7 @@ ALC_API void ALC_APIENTRY alcProcessContext(ALCcontext *context) noexcept
         return;
     }
 
-    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) UNLIKELY
+    if(ctx->mContextFlags.test(ContextFlags::DebugBit)) [[unlikely]]
         ctx->debugMessage(DebugSource::API, DebugType::Portability, 1, DebugSeverity::Medium,
             "alcProcessContext behavior is not portable -- some implementations resume rendering, "
             "some apply deferred property changes, and some are completely no-op; consider using "
@@ -2179,7 +2170,7 @@ ALC_API auto ALC_APIENTRY alcGetString(ALCdevice *Device, ALCenum param) noexcep
 }
 
 namespace {
-auto GetIntegerv(al::Device *device, ALCenum param, const al::span<int> values) -> size_t
+auto GetIntegerv(al::Device *device, ALCenum param, const std::span<int> values) -> size_t
 {
     if(values.empty())
     {
@@ -2517,7 +2508,7 @@ ALC_API void ALC_APIENTRY alcGetInteger64vSOFT(ALCdevice *device, ALCenum pname,
         alcSetError(dev.get(), ALC_INVALID_VALUE);
         return;
     }
-    const auto valuespan = al::span{values, static_cast<uint>(size)};
+    const auto valuespan = std::span{values, static_cast<uint>(size)};
     if(!dev || dev->Type == DeviceType::Capture)
     {
         auto ivals = std::vector<int>(valuespan.size());
@@ -3414,9 +3405,9 @@ ALC_API ALCboolean ALC_APIENTRY alcIsRenderFormatSupportedSOFT(ALCdevice *device
 ALC_API void ALC_APIENTRY alcRenderSamplesSOFT(ALCdevice *device, ALCvoid *buffer, ALCsizei samples) noexcept
 {
     auto aldev = dynamic_cast<al::Device*>(device);
-    if(!aldev || aldev->Type != DeviceType::Loopback) UNLIKELY
+    if(!aldev || aldev->Type != DeviceType::Loopback) [[unlikely]]
         alcSetError(aldev, ALC_INVALID_DEVICE);
-    else if(samples < 0 || (samples > 0 && buffer == nullptr)) UNLIKELY
+    else if(samples < 0 || (samples > 0 && buffer == nullptr)) [[unlikely]]
         alcSetError(aldev, ALC_INVALID_VALUE);
     else
         aldev->renderSamples(buffer, static_cast<uint>(samples), aldev->channelsFromFmt());

@@ -44,7 +44,6 @@
 #include <variant>
 
 #include "alnumeric.h"
-#include "alsem.h"
 #include "alspan.h"
 #include "alstring.h"
 #include "atomic.h"
@@ -514,7 +513,7 @@ bool CalcEffectSlotParams(EffectSlot *slot, EffectSlot **sorted_slots, ContextBa
         /* Otherwise, if it would be deleted send it off with a release event. */
         RingBuffer *ring{context->mAsyncEvents.get()};
         auto evt_vec = ring->getWriteVector();
-        if(evt_vec[0].len > 0) LIKELY
+        if(evt_vec[0].len > 0) [[likely]]
         {
             auto &evt = InitAsyncEvent<AsyncEffectReleaseEvent>(evt_vec[0].buf);
             evt.mEffectState = oldstate;
@@ -1682,7 +1681,7 @@ void CalcAttnSourceParams(Voice *voice, const VoiceProps *props, const ContextBa
     }
 
     /* Distance-based air absorption and initial send decay. */
-    if(Distance > props->RefDistance) LIKELY
+    if(Distance > props->RefDistance) [[likely]]
     {
         /* FIXME: In keeping with EAX, the base air absorption gain should be
          * taken from the reverb property in the "primary fx slot" when it has
@@ -1942,7 +1941,7 @@ void ProcessParamUpdates(ContextBase *ctx, const al::span<EffectSlot*> slots,
     ProcessVoiceChanges(ctx);
 
     IncrementRef(ctx->mUpdateCount);
-    if(!ctx->mHoldUpdates.load(std::memory_order_acquire)) LIKELY
+    if(!ctx->mHoldUpdates.load(std::memory_order_acquire)) [[likely]]
     {
         bool force{CalcContextParams(ctx)};
         auto sorted_slot_base = std::to_address(sorted_slots.begin());
@@ -2026,7 +2025,7 @@ void ProcessContexts(DeviceBase *device, const uint SamplesToDo)
                      * left that don't target any sorted slots, they can't
                      * contribute to the output, so leave them.
                      */
-                    if(next_target == split_point) UNLIKELY
+                    if(next_target == split_point) [[unlikely]]
                         break;
 
                     --next_target;
@@ -2046,7 +2045,10 @@ void ProcessContexts(DeviceBase *device, const uint SamplesToDo)
 
         /* Signal the event handler if there are any events to read. */
         if(RingBuffer *ring{ctx->mAsyncEvents.get()}; ring->readSpace() > 0)
-            ctx->mEventSem.post();
+        {
+            ctx->mEventsPending.store(true, std::memory_order_release);
+            ctx->mEventsPending.notify_all();
+        }
     };
     const auto contexts = al::span{*device->mContexts.load(std::memory_order_acquire)};
     std::for_each(contexts.begin(), contexts.end(), proc_context);
@@ -2062,15 +2064,15 @@ void ApplyDistanceComp(const al::span<FloatBufferLine> Samples, const size_t Sam
     for(auto &chanbuffer : Samples)
     {
         const float gain{distcomp->Gain};
-        auto distbuf = al::span{al::assume_aligned<16>(distcomp->Buffer.data()),
+        auto distbuf = al::span{std::assume_aligned<16>(distcomp->Buffer.data()),
             distcomp->Buffer.size()};
         ++distcomp;
 
         const size_t base{distbuf.size()};
         if(base < 1) continue;
 
-        const auto inout = al::span{al::assume_aligned<16>(chanbuffer.data()), SamplesToDo};
-        if(SamplesToDo >= base) LIKELY
+        const auto inout = al::span{std::assume_aligned<16>(chanbuffer.data()), SamplesToDo};
+        if(SamplesToDo >= base) [[likely]]
         {
             auto delay_end = std::rotate(inout.begin(), inout.end()-ptrdiff_t(base), inout.end());
             std::swap_ranges(inout.begin(), delay_end, distbuf.begin());
@@ -2274,7 +2276,7 @@ void DeviceBase::renderSamples(void *outBuffer, const uint numSamples, const siz
     {
         const uint samplesToDo{renderSamples(todo)};
 
-        if(outBuffer) LIKELY
+        if(outBuffer) [[likely]]
         {
             /* Finally, interleave and convert samples, writing to the device's
              * output buffer.
@@ -2316,7 +2318,9 @@ void DeviceBase::doDisconnect(std::string msg)
             {
                 std::construct_at(reinterpret_cast<AsyncEvent*>(evt_data.buf), evt);
                 ring->writeAdvance(1);
-                ctx->mEventSem.post();
+
+                ctx->mEventsPending.store(true, std::memory_order_release);
+                ctx->mEventsPending.notify_all();
             }
 
             if(!ctx->mStopVoicesOnDisconnect.load())

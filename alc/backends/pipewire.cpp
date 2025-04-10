@@ -40,6 +40,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <thread>
 #include <tuple>
@@ -47,8 +48,6 @@
 
 #include "alc/alconfig.h"
 #include "alc/backends/base.h"
-#include "almalloc.h"
-#include "alspan.h"
 #include "alstring.h"
 #include "core/devformat.h"
 #include "core/device.h"
@@ -74,6 +73,7 @@ _Pragma("GCC diagnostic ignored \"-Wold-style-cast\"")
 _Pragma("GCC diagnostic ignored \"-Wsign-compare\"")
 _Pragma("GCC diagnostic ignored \"-Winline\"")
 _Pragma("GCC diagnostic ignored \"-Wpragmas\"")
+_Pragma("GCC diagnostic ignored \"-Wvla\"")
 _Pragma("GCC diagnostic ignored \"-Weverything\"")
 #include "pipewire/pipewire.h"
 #include "pipewire/extensions/metadata.h"
@@ -116,10 +116,10 @@ constexpr auto get_pod_type(const spa_pod *pod) noexcept
 
 template<typename T>
 constexpr auto get_pod_body(const spa_pod *pod, size_t count) noexcept
-{ return al::span<T>{static_cast<T*>(SPA_POD_BODY(pod)), count}; }
+{ return std::span<T>{static_cast<T*>(SPA_POD_BODY(pod)), count}; }
 template<typename T, size_t N>
 constexpr auto get_pod_body(const spa_pod *pod) noexcept
-{ return al::span<T,N>{static_cast<T*>(SPA_POD_BODY(pod)), N}; }
+{ return std::span<T,N>{static_cast<T*>(SPA_POD_BODY(pod)), N}; }
 
 constexpr auto get_array_value_type(const spa_pod *pod) noexcept
 { return SPA_POD_ARRAY_VALUE_TYPE(pod); }
@@ -345,7 +345,7 @@ template<uint32_t T>
 using Pod_t = typename PodInfo<T>::Type;
 
 template<uint32_t T>
-al::span<const Pod_t<T>> get_array_span(const spa_pod *pod)
+auto get_array_span(const spa_pod *pod) -> std::span<const Pod_t<T>>
 {
     uint32_t nvals{};
     if(void *v{spa_pod_get_array(pod, &nvals)})
@@ -603,7 +603,7 @@ struct EventManager {
      */
     void waitForInit()
     {
-        if(!initIsDone(std::memory_order_acquire)) UNLIKELY
+        if(!initIsDone(std::memory_order_acquire)) [[unlikely]]
         {
             MainloopUniqueLock plock{mLoop};
             plock.wait([this](){ return initIsDone(std::memory_order_acquire); });
@@ -694,7 +694,7 @@ struct DeviceNode {
     static DeviceNode *Find(uint32_t id);
     static DeviceNode *FindByDevName(std::string_view devname);
     static void Remove(uint32_t id);
-    static auto GetList() noexcept { return al::span{sList}; }
+    static auto GetList() noexcept { return std::span{sList}; }
 
     void parseSampleRate(const spa_pod *value, bool force_update) noexcept;
     void parsePositions(const spa_pod *value, bool force_update) noexcept;
@@ -816,15 +816,15 @@ constexpr std::array X714Map{
  * Checks if every channel in 'map1' exists in 'map0' (that is, map0 is equal
  * to or a superset of map1).
  */
-bool MatchChannelMap(const al::span<const uint32_t> map0,
-    const al::span<const spa_audio_channel> map1)
+bool MatchChannelMap(const std::span<const uint32_t> map0,
+    const std::span<const spa_audio_channel> map1)
 {
     if(map0.size() < map1.size())
         return false;
 
     auto find_channel = [map0](const spa_audio_channel chid) -> bool
     { return std::find(map0.begin(), map0.end(), chid) != map0.end(); };
-    return std::all_of(map1.cbegin(), map1.cend(), find_channel);
+    return std::all_of(map1.begin(), map1.end(), find_channel);
 }
 
 void DeviceNode::parseSampleRate(const spa_pod *value, bool force_update) noexcept
@@ -994,7 +994,7 @@ void NodeProxy::infoCallback(void*, const pw_node_info *info) noexcept
     {
         /* Can this actually change? */
         const char *media_class{spa_dict_lookup(info->props, PW_KEY_MEDIA_CLASS)};
-        if(!media_class) UNLIKELY return;
+        if(!media_class) [[unlikely]] return;
         const std::string_view className{media_class};
 
         NodeType ntype{};
@@ -1090,7 +1090,7 @@ void NodeProxy::paramCallback(int, uint32_t id, uint32_t, uint32_t, const spa_po
     if(id == SPA_PARAM_EnumFormat || id == SPA_PARAM_Format)
     {
         DeviceNode *node{DeviceNode::Find(mId)};
-        if(!node) UNLIKELY return;
+        if(!node) [[unlikely]] return;
 
         TRACE("Device ID {} {} format{}:", node->mSerial,
             (id == SPA_PARAM_EnumFormat) ? "available" : "current",
@@ -1389,7 +1389,7 @@ spa_audio_info_raw make_spa_info(DeviceBase *device, bool is51rear, use_f32p_e u
 
     info.rate = device->mSampleRate;
 
-    al::span<const spa_audio_channel> map{};
+    std::span<const spa_audio_channel> map{};
     switch(device->FmtChans)
     {
     case DevFmtMono: map = MonoMap; break;
@@ -1481,9 +1481,9 @@ void PipeWirePlayback::ioChangedCallback(uint32_t id, void *area, uint32_t size)
 void PipeWirePlayback::outputCallback() noexcept
 {
     pw_buffer *pw_buf{pw_stream_dequeue_buffer(mStream.get())};
-    if(!pw_buf) UNLIKELY return;
+    if(!pw_buf) [[unlikely]] return;
 
-    const al::span<spa_data> datas{pw_buf->buffer->datas,
+    const auto datas = std::span{pw_buf->buffer->datas,
         std::min(mChannelPtrs.size(), size_t{pw_buf->buffer->n_datas})};
 #if PW_CHECK_VERSION(0,3,49)
     /* In 0.3.49, pw_buffer::requested specifies the number of samples needed
@@ -1497,7 +1497,7 @@ void PipeWirePlayback::outputCallback() noexcept
     uint length{mRateMatch ? mRateMatch->size : 0u};
 #endif
     /* If no length is specified, use the device's update size as a fallback. */
-    if(!length) UNLIKELY length = mDevice->mUpdateSize;
+    if(!length) [[unlikely]] length = mDevice->mUpdateSize;
 
     /* For planar formats, each datas[] seems to contain one channel, so store
      * the pointers in an array. Limit the render length in case the available
@@ -1535,19 +1535,19 @@ void PipeWirePlayback::open(std::string_view name)
         EventWatcherLockGuard evtlock{gEventHandler};
         auto&& devlist = DeviceNode::GetList();
 
-        auto match = devlist.cend();
+        auto match = devlist.end();
         if(!DefaultSinkDevice.empty())
         {
             auto match_default = [](const DeviceNode &n) -> bool
             { return n.mDevName == DefaultSinkDevice; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_default);
+            match = std::find_if(devlist.begin(), devlist.end(), match_default);
         }
-        if(match == devlist.cend())
+        if(match == devlist.end())
         {
             auto match_playback = [](const DeviceNode &n) -> bool
             { return n.mType != NodeType::Source; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_playback);
-            if(match == devlist.cend())
+            match = std::find_if(devlist.begin(), devlist.end(), match_playback);
+            if(match == devlist.end())
                 throw al::backend_exception{al::backend_error::NoDevice,
                     "No PipeWire playback device found"};
         }
@@ -1562,8 +1562,8 @@ void PipeWirePlayback::open(std::string_view name)
 
         auto match_name = [name](const DeviceNode &n) -> bool
         { return n.mType != NodeType::Source && (n.mName == name || n.mDevName == name); };
-        auto match = std::find_if(devlist.cbegin(), devlist.cend(), match_name);
-        if(match == devlist.cend())
+        auto match = std::find_if(devlist.begin(), devlist.end(), match_name);
+        if(match == devlist.end())
             throw al::backend_exception{al::backend_error::NoDevice,
                 "Device name \"{}\" not found", name};
 
@@ -1633,8 +1633,8 @@ bool PipeWirePlayback::reset()
 
         auto match_id = [targetid=mTargetId](const DeviceNode &n) -> bool
         { return targetid == n.mSerial; };
-        auto match = std::find_if(devlist.cbegin(), devlist.cend(), match_id);
-        if(match != devlist.cend())
+        auto match = std::find_if(devlist.begin(), devlist.end(), match_id);
+        if(match != devlist.end())
         {
             if(!mDevice->Flags.test(FrequencyRequest) && match->mSampleRate > 0)
             {
@@ -1860,7 +1860,7 @@ ClockLatency PipeWirePlayback::getClockLatency()
      */
     nanoseconds monoclock{seconds{tspec.tv_sec} + nanoseconds{tspec.tv_nsec}};
     nanoseconds curtic{}, delay{};
-    if(ptime.rate.denom < 1) UNLIKELY
+    if(ptime.rate.denom < 1) [[unlikely]]
     {
         /* If there's no stream rate, the stream hasn't had a chance to get
          * going and return time info yet. Just use dummy values.
@@ -1952,11 +1952,11 @@ void PipeWireCapture::stateChangedCallback(pw_stream_state, pw_stream_state, con
 void PipeWireCapture::inputCallback() noexcept
 {
     pw_buffer *pw_buf{pw_stream_dequeue_buffer(mStream.get())};
-    if(!pw_buf) UNLIKELY return;
+    if(!pw_buf) [[unlikely]] return;
 
     spa_data *bufdata{pw_buf->buffer->datas};
     const uint offset{bufdata->chunk->offset % bufdata->maxsize};
-    const auto input = al::span{static_cast<const char*>(bufdata->data), bufdata->maxsize}
+    const auto input = std::span{static_cast<const char*>(bufdata->data), bufdata->maxsize}
         .subspan(offset, std::min(bufdata->chunk->size, bufdata->maxsize - offset));
 
     std::ignore = mRing->write(input.data(), input.size() / mRing->getElemSize());
@@ -1977,23 +1977,23 @@ void PipeWireCapture::open(std::string_view name)
         EventWatcherLockGuard evtlock{gEventHandler};
         auto&& devlist = DeviceNode::GetList();
 
-        auto match = devlist.cend();
+        auto match = devlist.end();
         if(!DefaultSourceDevice.empty())
         {
             auto match_default = [](const DeviceNode &n) -> bool
             { return n.mDevName == DefaultSourceDevice; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_default);
+            match = std::find_if(devlist.begin(), devlist.end(), match_default);
         }
-        if(match == devlist.cend())
+        if(match == devlist.end())
         {
             auto match_capture = [](const DeviceNode &n) -> bool
             { return n.mType != NodeType::Sink; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_capture);
+            match = std::find_if(devlist.begin(), devlist.end(), match_capture);
         }
-        if(match == devlist.cend())
+        if(match == devlist.end())
         {
-            match = devlist.cbegin();
-            if(match == devlist.cend())
+            match = devlist.begin();
+            if(match == devlist.end())
                 throw al::backend_exception{al::backend_error::NoDevice,
                     "No PipeWire capture device found"};
         }
@@ -2011,22 +2011,22 @@ void PipeWireCapture::open(std::string_view name)
 
         auto match_name = [name](const DeviceNode &n) -> bool
         { return n.mType != NodeType::Sink && n.mName == name; };
-        auto match = std::find_if(devlist.cbegin(), devlist.cend(), match_name);
-        if(match == devlist.cend() && name.starts_with(prefix))
+        auto match = std::find_if(devlist.begin(), devlist.end(), match_name);
+        if(match == devlist.end() && name.starts_with(prefix))
         {
             const std::string_view sinkname{name.substr(prefix.length())};
             auto match_sinkname = [sinkname](const DeviceNode &n) -> bool
             { return n.mType == NodeType::Sink && n.mName == sinkname; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_sinkname);
+            match = std::find_if(devlist.begin(), devlist.end(), match_sinkname);
         }
-        else if(match == devlist.cend() && name.ends_with(suffix))
+        else if(match == devlist.end() && name.ends_with(suffix))
         {
             const std::string_view sinkname{name.substr(0, name.size()-suffix.size())};
             auto match_sinkname = [sinkname](const DeviceNode &n) -> bool
             { return n.mType == NodeType::Sink && n.mDevName == sinkname; };
-            match = std::find_if(devlist.cbegin(), devlist.cend(), match_sinkname);
+            match = std::find_if(devlist.begin(), devlist.end(), match_sinkname);
         }
-        if(match == devlist.cend())
+        if(match == devlist.end())
             throw al::backend_exception{al::backend_error::NoDevice,
                 "Device name \"{}\" not found", name};
 
@@ -2082,8 +2082,8 @@ void PipeWireCapture::open(std::string_view name)
 
         auto match_id = [targetid=mTargetId](const DeviceNode &n) -> bool
         { return targetid == n.mSerial; };
-        auto match = std::find_if(devlist.cbegin(), devlist.cend(), match_id);
-        if(match != devlist.cend())
+        auto match = std::find_if(devlist.begin(), devlist.end(), match_id);
+        if(match != devlist.end())
             is51rear = match->mIs51Rear;
     }
     auto info = spa_audio_info_raw{make_spa_info(mDevice, is51rear, UseDevType)};
@@ -2243,14 +2243,14 @@ auto PipeWireBackendFactory::enumerate(BackendType type) -> std::vector<std::str
     { return lhs.mId < rhs.mId; };
     std::sort(devlist.begin(), devlist.end(), sort_devnode);
 
-    auto defmatch = devlist.cbegin();
+    auto defmatch = devlist.begin();
     switch(type)
     {
     case BackendType::Playback:
-        defmatch = std::find_if(defmatch, devlist.cend(), match_defsink);
-        if(defmatch != devlist.cend())
+        defmatch = std::find_if(defmatch, devlist.end(), match_defsink);
+        if(defmatch != devlist.end())
             outnames.emplace_back(defmatch->mName);
-        for(auto iter = devlist.cbegin();iter != devlist.cend();++iter)
+        for(auto iter = devlist.begin();iter != devlist.end();++iter)
         {
             if(iter != defmatch && iter->mType != NodeType::Source)
                 outnames.emplace_back(iter->mName);
@@ -2258,15 +2258,15 @@ auto PipeWireBackendFactory::enumerate(BackendType type) -> std::vector<std::str
         break;
     case BackendType::Capture:
         outnames.reserve(devlist.size());
-        defmatch = std::find_if(defmatch, devlist.cend(), match_defsource);
-        if(defmatch != devlist.cend())
+        defmatch = std::find_if(defmatch, devlist.end(), match_defsource);
+        if(defmatch != devlist.end())
         {
             if(defmatch->mType == NodeType::Sink)
                 outnames.emplace_back(std::string{GetMonitorPrefix()}+defmatch->mName);
             else
                 outnames.emplace_back(defmatch->mName);
         }
-        for(auto iter = devlist.cbegin();iter != devlist.cend();++iter)
+        for(auto iter = devlist.begin();iter != devlist.end();++iter)
         {
             if(iter != defmatch)
             {

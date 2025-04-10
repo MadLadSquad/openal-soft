@@ -34,6 +34,7 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -91,11 +92,6 @@ std::string DefaultCapture{"/dev/dsp"s};
 struct DevMap {
     std::string name;
     std::string device_name;
-
-    template<typename T, typename U>
-    DevMap(T&& name_, U&& devname_)
-        : name{std::forward<T>(name_)}, device_name{std::forward<U>(devname_)}
-    { }
 };
 
 std::vector<DevMap> PlaybackDevices;
@@ -108,7 +104,8 @@ std::vector<DevMap> CaptureDevices;
 #define DSP_CAP_INPUT 0x00010000
 void ALCossListPopulate(std::vector<DevMap> &devlist, int type)
 {
-    devlist.emplace_back(GetDefaultName(), (type==DSP_CAP_INPUT) ? DefaultCapture : DefaultPlayback);
+    devlist.emplace_back(std::string{GetDefaultName()},
+        (type==DSP_CAP_INPUT) ? DefaultCapture : DefaultPlayback);
 }
 
 #else
@@ -304,7 +301,7 @@ int OSSPlayback::mixerProc()
             continue;
         }
 
-        al::span write_buf{mMixData};
+        auto write_buf = std::span{mMixData};
         mDevice->renderSamples(write_buf.data(), static_cast<uint>(write_buf.size()/frame_size),
             frame_step);
         while(!write_buf.empty() && !mKillNow.load(std::memory_order_acquire))

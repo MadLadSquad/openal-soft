@@ -26,6 +26,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <utility>
 
 #include "alc/alconfig.h"
 #include "core/device.h"
@@ -506,7 +508,7 @@ auto PortBackendFactory::enumerate(BackendType type) -> std::vector<std::string>
         {
             if(DeviceNames[i].mPlaybackChannels > 0)
             {
-                if(defaultid >= 0 && static_cast<uint>(defaultid) == i)
+                if(std::cmp_equal(defaultid, i))
                     devices.emplace(devices.cbegin(), DeviceNames[i].mName);
                 else
                     devices.emplace_back(DeviceNames[i].mName);
@@ -524,7 +526,7 @@ auto PortBackendFactory::enumerate(BackendType type) -> std::vector<std::string>
         {
             if(DeviceNames[i].mCaptureChannels > 0)
             {
-                if(defaultid >= 0 && static_cast<uint>(defaultid) == i)
+                if(std::cmp_equal(defaultid, i))
                     devices.emplace(devices.cbegin(), DeviceNames[i].mName);
                 else
                     devices.emplace_back(DeviceNames[i].mName);

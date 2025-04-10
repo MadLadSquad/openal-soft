@@ -7,9 +7,8 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
-#include <iterator>
 #include <limits>
-#include <new>
+#include <memory>
 
 #include "alnumeric.h"
 #include "alspan.h"
@@ -32,7 +31,7 @@ namespace {
 
 template<std::size_t A, typename T, std::size_t N>
 constexpr auto assume_aligned_span(const al::span<T,N> s) noexcept -> al::span<T,N>
-{ return al::span<T,N>{al::assume_aligned<A>(s.data()), s.size()}; }
+{ return al::span<T,N>{std::assume_aligned<A>(s.data()), s.size()}; }
 
 /* This sliding hold follows the input level with an instant attack and a
  * fixed duration hold before an instant release to the next highest level.
@@ -307,7 +306,7 @@ void Compressor::signalDelay(const uint SamplesToDo, const al::span<FloatBufferL
         const auto inout = al::span{buffer}.first(SamplesToDo);
         const auto delaybuf = al::span{*(delays++)}.first(lookAhead);
 
-        if(SamplesToDo >= delaybuf.size()) LIKELY
+        if(SamplesToDo >= delaybuf.size()) [[likely]]
         {
             const auto inout_start = inout.end() - ptrdiff_t(delaybuf.size());
             const auto delay_end = std::rotate(inout.begin(), inout_start, inout.end());

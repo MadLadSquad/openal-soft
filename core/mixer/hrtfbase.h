@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 #include "defs.h"
 #include "hrtfdefs.h"
@@ -54,7 +55,7 @@ inline void MixHrtfBlendBase(const al::span<const float> InSamples,
     const ConstHrirSpan NewCoeffs{newparams->Coeffs};
     const float newGainStep{newparams->GainStep};
 
-    if(oldparams->Gain > GainSilenceThreshold) LIKELY
+    if(oldparams->Gain > GainSilenceThreshold) [[likely]]
     {
         size_t ldelay{HrtfHistoryLength - oldparams->Delay[0]};
         size_t rdelay{HrtfHistoryLength - oldparams->Delay[1]};
@@ -70,7 +71,7 @@ inline void MixHrtfBlendBase(const al::span<const float> InSamples,
         }
     }
 
-    if(newGainStep*static_cast<float>(SamplesToDo) > GainSilenceThreshold) LIKELY
+    if(newGainStep*static_cast<float>(SamplesToDo) > GainSilenceThreshold) [[likely]]
     {
         size_t ldelay{HrtfHistoryLength+1 - newparams->Delay[0]};
         size_t rdelay{HrtfHistoryLength+1 - newparams->Delay[1]};
@@ -120,11 +121,11 @@ inline void MixDirectHrtfBase(const FloatBufferSpan LeftOut, const FloatBufferSp
     }
 
     /* Add the HRTF signal to the existing "direct" signal. */
-    const auto left = al::span{al::assume_aligned<16>(LeftOut.data()), SamplesToDo};
+    const auto left = al::span{std::assume_aligned<16>(LeftOut.data()), SamplesToDo};
     std::transform(left.cbegin(), left.cend(), AccumSamples.cbegin(), left.begin(),
         [](const float sample, const float2 &accum) noexcept -> float
         { return sample + accum[0]; });
-    const auto right = al::span{al::assume_aligned<16>(RightOut.data()), SamplesToDo};
+    const auto right = al::span{std::assume_aligned<16>(RightOut.data()), SamplesToDo};
     std::transform(right.cbegin(), right.cend(), AccumSamples.cbegin(), right.begin(),
         [](const float sample, const float2 &accum) noexcept -> float
         { return sample + accum[1]; });

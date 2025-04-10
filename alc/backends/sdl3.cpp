@@ -26,8 +26,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "almalloc.h"
 #include "core/device.h"
@@ -77,7 +79,7 @@ void EnumeratePlaybackDevices()
         return;
     }
 
-    auto devids = al::span{devicelist.get(), static_cast<uint>(numdevs)};
+    auto devids = std::span{devicelist.get(), static_cast<uint>(numdevs)};
     auto newlist = std::vector<DeviceEntry>{};
 
     newlist.reserve(devids.size());
@@ -285,7 +287,7 @@ auto Sdl3Backend::reset() -> bool
             "Failed to get stream format: {}", SDL_GetError()};
 
     if(!mDevice->Flags.test(ChannelsRequest)
-        || (static_cast<uint>(have.channels) != mDevice->channelsFromFmt()
+        || (std::cmp_not_equal(have.channels, mDevice->channelsFromFmt())
             && !(mDevice->FmtChans == DevFmtStereo && have.channels >= 2)))
     {
         /* SDL guarantees these layouts for the given channel count. */
