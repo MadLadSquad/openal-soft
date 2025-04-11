@@ -38,7 +38,6 @@
 #include <algorithm>
 
 #include "alnumeric.h"
-#include "alsem.h"
 #include "althrd_setname.h"
 #include "core/device.h"
 #include "core/helpers.h"
@@ -131,7 +130,6 @@ struct WinMMPlayback final : public BackendBase {
     void stop() override;
 
     std::atomic<uint> mWritable{0u};
-    al::semaphore mSem;
     uint mIdx{0u};
     std::array<WAVEHDR,4> mWaveBuffer{};
     al::vector<char,16> mBuffer;
@@ -160,7 +158,7 @@ void CALLBACK WinMMPlayback::waveOutProc(HWAVEOUT, UINT msg, DWORD_PTR, DWORD_PT
 {
     if(msg != WOM_DONE) return;
     mWritable.fetch_add(1, std::memory_order_acq_rel);
-    mSem.post();
+    mWritable.notify_all();
 }
 
 FORCE_ALIGN int WinMMPlayback::mixerProc()
@@ -171,22 +169,20 @@ FORCE_ALIGN int WinMMPlayback::mixerProc()
     while(!mKillNow.load(std::memory_order_acquire)
         && mDevice->Connected.load(std::memory_order_acquire))
     {
-        uint todo{mWritable.load(std::memory_order_acquire)};
-        if(todo < 1)
-        {
-            mSem.wait();
-            continue;
-        }
+        mWritable.wait(0, std::memory_order_acquire);
+        auto todo = mWritable.load(std::memory_order_acquire);
 
-        size_t widx{mIdx};
-        do {
+        auto widx = size_t{mIdx};
+        while(todo > 0)
+        {
             WAVEHDR &waveHdr = mWaveBuffer[widx];
             if(++widx == mWaveBuffer.size()) widx = 0;
 
             mDevice->renderSamples(waveHdr.lpData, mDevice->mUpdateSize, mFormat.nChannels);
             mWritable.fetch_sub(1, std::memory_order_acq_rel);
             waveOutWrite(mOutHdl, &waveHdr, sizeof(WAVEHDR));
-        } while(--todo);
+            --todo;
+        }
         mIdx = static_cast<uint>(widx);
     }
 
@@ -256,6 +252,7 @@ bool WinMMPlayback::reset()
     mDevice->mUpdateSize = mDevice->mBufferSize / 4;
     mDevice->mSampleRate = mFormat.nSamplesPerSec;
 
+    auto clearval = char{0};
     if(mFormat.wFormatTag == WAVE_FORMAT_IEEE_FLOAT)
     {
         if(mFormat.wBitsPerSample == 32)
@@ -271,7 +268,10 @@ bool WinMMPlayback::reset()
         if(mFormat.wBitsPerSample == 16)
             mDevice->FmtType = DevFmtShort;
         else if(mFormat.wBitsPerSample == 8)
+        {
             mDevice->FmtType = DevFmtUByte;
+            clearval = char{-0x80};
+        }
         else
         {
             ERR("Unhandled PCM sample depth: {}", mFormat.wBitsPerSample);
@@ -298,13 +298,18 @@ bool WinMMPlayback::reset()
     const uint BufferSize{mDevice->mUpdateSize * mFormat.nChannels * mDevice->bytesFromFmt()};
 
     decltype(mBuffer)(BufferSize*mWaveBuffer.size()).swap(mBuffer);
+    auto bufferiter = mBuffer.begin();
+    std::fill(bufferiter, mBuffer.end(), clearval);
+
     mWaveBuffer[0] = WAVEHDR{};
-    mWaveBuffer[0].lpData = mBuffer.data();
+    mWaveBuffer[0].lpData = std::to_address(bufferiter);
     mWaveBuffer[0].dwBufferLength = BufferSize;
     for(size_t i{1};i < mWaveBuffer.size();i++)
     {
+        bufferiter += mWaveBuffer[i-1].dwBufferLength;
+
         mWaveBuffer[i] = WAVEHDR{};
-        mWaveBuffer[i].lpData = mWaveBuffer[i-1].lpData + mWaveBuffer[i-1].dwBufferLength;
+        mWaveBuffer[i].lpData = std::to_address(bufferiter);
         mWaveBuffer[i].dwBufferLength = BufferSize;
     }
     mIdx = 0;
@@ -334,8 +339,12 @@ void WinMMPlayback::stop()
         return;
     mThread.join();
 
-    while(mWritable.load(std::memory_order_acquire) < mWaveBuffer.size())
-        mSem.wait();
+    auto writable = mWritable.load(std::memory_order_acquire);
+    while(writable < mWaveBuffer.size())
+    {
+        mWritable.wait(writable, std::memory_order_acquire);
+        writable = mWritable.load(std::memory_order_acquire);
+    }
     for(auto &waveHdr : mWaveBuffer)
         waveOutUnprepareHeader(mOutHdl, &waveHdr, sizeof(WAVEHDR));
     mWritable.store(0, std::memory_order_release);
@@ -359,7 +368,6 @@ struct WinMMCapture final : public BackendBase {
     uint availableSamples() override;
 
     std::atomic<uint> mReadable{0u};
-    al::semaphore mSem;
     uint mIdx{0};
     std::array<WAVEHDR,4> mWaveBuffer{};
     al::vector<char,16> mBuffer;
@@ -391,25 +399,22 @@ void CALLBACK WinMMCapture::waveInProc(HWAVEIN, UINT msg, DWORD_PTR, DWORD_PTR) 
 {
     if(msg != WIM_DATA) return;
     mReadable.fetch_add(1, std::memory_order_acq_rel);
-    mSem.post();
+    mReadable.notify_all();
 }
 
 int WinMMCapture::captureProc()
 {
     althrd_setname(GetRecordThreadName());
 
-    while(!mKillNow.load(std::memory_order_acquire) &&
-          mDevice->Connected.load(std::memory_order_acquire))
+    while(!mKillNow.load(std::memory_order_acquire)
+        && mDevice->Connected.load(std::memory_order_acquire))
     {
-        uint todo{mReadable.load(std::memory_order_acquire)};
-        if(todo < 1)
-        {
-            mSem.wait();
-            continue;
-        }
+        mReadable.wait(0, std::memory_order_acquire);
+        auto todo = mReadable.load(std::memory_order_acquire);
 
-        size_t widx{mIdx};
-        do {
+        auto widx = size_t{mIdx};
+        while(todo > 0)
+        {
             WAVEHDR &waveHdr = mWaveBuffer[widx];
             widx = (widx+1) % mWaveBuffer.size();
 
@@ -417,7 +422,8 @@ int WinMMCapture::captureProc()
                 waveHdr.dwBytesRecorded / mFormat.nBlockAlign);
             mReadable.fetch_sub(1, std::memory_order_acq_rel);
             waveInAddBuffer(mInHdl, &waveHdr, sizeof(WAVEHDR));
-        } while(--todo);
+            --todo;
+        }
         mIdx = static_cast<uint>(widx);
     }
 
@@ -457,9 +463,12 @@ void WinMMCapture::open(std::string_view name)
             DevFmtChannelsString(mDevice->FmtChans)};
     }
 
+    auto clearval = char{0};
     switch(mDevice->FmtType)
     {
     case DevFmtUByte:
+        clearval = char{-0x80};
+        [[fallthrough]];
     case DevFmtShort:
     case DevFmtInt:
     case DevFmtFloat:
@@ -474,7 +483,7 @@ void WinMMCapture::open(std::string_view name)
 
     mFormat = WAVEFORMATEX{};
     mFormat.wFormatTag = (mDevice->FmtType == DevFmtFloat) ?
-                         WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
+        WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
     mFormat.nChannels = static_cast<WORD>(mDevice->channelsFromFmt());
     mFormat.wBitsPerSample = static_cast<WORD>(mDevice->bytesFromFmt() * 8);
     mFormat.nBlockAlign = static_cast<WORD>(mFormat.wBitsPerSample * mFormat.nChannels / 8);
@@ -500,13 +509,18 @@ void WinMMCapture::open(std::string_view name)
     mRing = RingBuffer::Create(CapturedDataSize, mFormat.nBlockAlign, false);
 
     decltype(mBuffer)(BufferSize*mWaveBuffer.size()).swap(mBuffer);
+    auto bufferiter = mBuffer.begin();
+    std::fill(bufferiter, mBuffer.end(), clearval);
+
     mWaveBuffer[0] = WAVEHDR{};
-    mWaveBuffer[0].lpData = mBuffer.data();
+    mWaveBuffer[0].lpData = std::to_address(bufferiter);
     mWaveBuffer[0].dwBufferLength = BufferSize;
     for(size_t i{1};i < mWaveBuffer.size();++i)
     {
+        bufferiter += mWaveBuffer[i-1].dwBufferLength;
+
         mWaveBuffer[i] = WAVEHDR{};
-        mWaveBuffer[i].lpData = mWaveBuffer[i-1].lpData + mWaveBuffer[i-1].dwBufferLength;
+        mWaveBuffer[i].lpData = std::to_address(bufferiter);
         mWaveBuffer[i].dwBufferLength = mWaveBuffer[i-1].dwBufferLength;
     }
 
@@ -516,10 +530,10 @@ void WinMMCapture::open(std::string_view name)
 void WinMMCapture::start()
 {
     try {
-        for(size_t i{0};i < mWaveBuffer.size();++i)
+        for(WAVEHDR &buffer : mWaveBuffer)
         {
-            waveInPrepareHeader(mInHdl, &mWaveBuffer[i], sizeof(WAVEHDR));
-            waveInAddBuffer(mInHdl, &mWaveBuffer[i], sizeof(WAVEHDR));
+            waveInPrepareHeader(mInHdl, &buffer, sizeof(WAVEHDR));
+            waveInAddBuffer(mInHdl, &buffer, sizeof(WAVEHDR));
         }
 
         mKillNow.store(false, std::memory_order_release);
@@ -535,18 +549,14 @@ void WinMMCapture::start()
 
 void WinMMCapture::stop()
 {
-    waveInStop(mInHdl);
-
     mKillNow.store(true, std::memory_order_release);
     if(mThread.joinable())
-    {
-        mSem.post();
         mThread.join();
-    }
 
+    waveInStop(mInHdl);
     waveInReset(mInHdl);
-    for(size_t i{0};i < mWaveBuffer.size();++i)
-        waveInUnprepareHeader(mInHdl, &mWaveBuffer[i], sizeof(WAVEHDR));
+    for(WAVEHDR &buffer : mWaveBuffer)
+        waveInUnprepareHeader(mInHdl, &buffer, sizeof(WAVEHDR));
 
     mReadable.store(0, std::memory_order_release);
     mIdx = 0;
