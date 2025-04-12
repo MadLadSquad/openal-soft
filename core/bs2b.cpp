@@ -27,9 +27,9 @@
 #include <cmath>
 #include <iterator>
 #include <numbers>
+#include <span>
 #include <stdexcept>
 
-#include "alspan.h"
 #include "bs2b.h"
 
 namespace {
@@ -126,7 +126,7 @@ void bs2b::clear()
     history.fill(bs2b::t_last_sample{});
 }
 
-void bs2b::cross_feed(const al::span<float> Left, const al::span<float> Right)
+void bs2b::cross_feed(const std::span<float> Left, const std::span<float> Right)
 {
     const auto a0lo = a0_lo;
     const auto b1lo = b1_lo;
