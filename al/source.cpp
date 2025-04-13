@@ -149,6 +149,7 @@ void UpdateSourceProps(const ALsource *source, Voice *voice, ALCcontext *context
     props->mResampler = source->mResampler;
     props->DirectChannels = source->DirectChannels;
     props->mSpatializeMode = source->mSpatialize;
+    props->mPanningEnabled = source->mPanningEnabled;
 
     props->DryGainHFAuto = source->DryGainHFAuto;
     props->WetGainAuto = source->WetGainAuto;
@@ -525,9 +526,7 @@ void InitVoice(Voice *voice, ALsource *source, ALbufferQueueItem *BufferList, AL
 
     ALbuffer *buffer{BufferList->mBuffer};
     voice->mFrequency = buffer->mSampleRate;
-    if(buffer->mChannels == FmtMono && source->mPanningEnabled)
-        voice->mFmtChannels = FmtMonoDup;
-    else if(buffer->mChannels == FmtStereo && source->mStereoMode == SourceStereo::Enhanced)
+    if(buffer->mChannels == FmtStereo && source->mStereoMode == SourceStereo::Enhanced)
         voice->mFmtChannels = FmtSuperStereo;
     else
         voice->mFmtChannels = buffer->mChannels;
@@ -1059,7 +1058,7 @@ constexpr ALuint IntValsByProp(ALenum prop)
     case AL_SOURCE_RADIUS: /*AL_BYTE_RW_OFFSETS_SOFT:*/
         if(sBufferSubDataCompat)
             return 2;
-        /*fall-through*/
+        [[fallthrough]];
     case AL_CONE_INNER_ANGLE:
     case AL_CONE_OUTER_ANGLE:
     case AL_PITCH:
@@ -1138,7 +1137,7 @@ constexpr ALuint Int64ValsByProp(ALenum prop)
     case AL_SOURCE_RADIUS: /*AL_BYTE_RW_OFFSETS_SOFT:*/
         if(sBufferSubDataCompat)
             return 2;
-        /*fall-through*/
+        [[fallthrough]];
     case AL_CONE_INNER_ANGLE:
     case AL_CONE_OUTER_ANGLE:
     case AL_PITCH:
@@ -1233,7 +1232,7 @@ constexpr ALuint FloatValsByProp(ALenum prop)
     case AL_SOURCE_RADIUS: /*AL_BYTE_RW_OFFSETS_SOFT:*/
         if(!sBufferSubDataCompat)
             return 1;
-        /*fall-through*/
+        [[fallthrough]];
     case AL_SAMPLE_RW_OFFSETS_SOFT:
         break;
 
@@ -1308,7 +1307,7 @@ constexpr ALuint DoubleValsByProp(ALenum prop)
     case AL_SOURCE_RADIUS: /*AL_BYTE_RW_OFFSETS_SOFT:*/
         if(!sBufferSubDataCompat)
             return 1;
-        /*fall-through*/
+        [[fallthrough]];
     case AL_SAMPLE_RW_OFFSETS_SOFT:
         break;
 
@@ -1726,11 +1725,6 @@ NOINLINE void SetProperty(ALsource *const Source, ALCcontext *const Context, con
 
     case AL_PANNING_ENABLED_SOFT:
         CheckSize(1);
-        if(const ALenum state{GetSourceState(Source, GetSourceVoice(Source, Context))};
-            state == AL_PLAYING || state == AL_PAUSED)
-            Context->throw_error(AL_INVALID_OPERATION,
-                "Modifying panning enabled on playing or paused source {}", Source->id);
-
         CheckValue(values[0] == AL_FALSE || values[0] == AL_TRUE);
 
         Source->mPanningEnabled = values[0] != AL_FALSE;
