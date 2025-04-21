@@ -60,6 +60,9 @@ if(COMMAND CMAKE_POLICY)
     if(POLICY CMP0117)
         cmake_policy(SET CMP0117 NEW)
     endif(POLICY CMP0117)
+    if(POLICY CMP0155)
+        cmake_policy(SET CMP0155 NEW)
+    endif(POLICY CMP0155)
 endif(COMMAND CMAKE_POLICY)
 
 project(OpenAL)
@@ -159,7 +162,7 @@ if(MSVC)
     endif()
 endif()
 
-add_subdirectory(fmt-11.1.1 EXCLUDE_FROM_ALL)
+add_subdirectory(fmt-11.1.4 EXCLUDE_FROM_ALL)
 
 
 set(CPP_DEFS ) # C pre-processor, not C++
@@ -597,8 +600,6 @@ endif()
 # Common sources used by both the OpenAL implementation library, the OpenAL
 # router, and certain tools and examples.
 set(COMMON_OBJS
-    common/alassert.cpp
-    common/alassert.h
     common/albit.h
     common/alcomplex.cpp
     common/alcomplex.h
@@ -1280,8 +1281,8 @@ if(ALSOFT_UPDATE_BUILD_VERSION AND GIT_FOUND AND EXISTS "${OpenAL_SOURCE_DIR}/.g
 
     add_custom_target(alsoft.build_version DEPENDS "${OpenAL_BINARY_DIR}/version_witness.txt")
 else()
-    set(GIT_BRANCH "UNKNOWN")
-    set(GIT_COMMIT_HASH "unknown")
+    set(GIT_BRANCH "")
+    set(GIT_COMMIT_HASH "")
     configure_file(
         "${OpenAL_SOURCE_DIR}/version.h.in"
         "${OpenAL_BINARY_DIR}/version.h")
