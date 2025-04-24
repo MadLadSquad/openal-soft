@@ -1151,7 +1151,7 @@ auto UpdateDeviceParams(al::Device *device, const std::span<const int> attrList)
                 DevFmtChannels chans;
                 uint8_t order;
             };
-            constexpr std::array chanlist{
+            constexpr auto chanlist = std::array{
                 ChannelMap{"mono"sv,       DevFmtMono,   0},
                 ChannelMap{"stereo"sv,     DevFmtStereo, 0},
                 ChannelMap{"quad"sv,       DevFmtQuad,   0},
@@ -1165,6 +1165,7 @@ auto UpdateDeviceParams(al::Device *device, const std::span<const int> attrList)
                 ChannelMap{"ambi1"sv, DevFmtAmbi3D, 1},
                 ChannelMap{"ambi2"sv, DevFmtAmbi3D, 2},
                 ChannelMap{"ambi3"sv, DevFmtAmbi3D, 3},
+                ChannelMap{"ambi4"sv, DevFmtAmbi3D, 4},
             };
 
             auto iter = std::find_if(chanlist.begin(), chanlist.end(),
@@ -1203,6 +1204,13 @@ auto UpdateDeviceParams(al::Device *device, const std::span<const int> attrList)
             }
             else
                 ERR("Unsupported ambi-format: {}", *ambiopt);
+        }
+
+        if(aorder > 3 && (optlayout == DevAmbiLayout::FuMa || optscale == DevAmbiScaling::FuMa))
+        {
+            ERR("FuMa unsupported with {}{} order ambisonics", aorder, GetCounterSuffix(aorder));
+            optlayout = DevAmbiLayout::Default;
+            optscale = DevAmbiScaling::Default;
         }
 
         if(auto hrtfopt = device->configValue<std::string>({}, "hrtf"sv))
@@ -2851,7 +2859,15 @@ ALC_API void ALC_APIENTRY alcDestroyContext(ALCcontext *context) noexcept
 
     auto *Device = ctx->mALDevice.get();
     std::lock_guard<std::mutex> statelock{Device->StateLock};
+
+    const auto stopPlayback = Device->removeContext(ctx.get()) == 0;
     ctx->deinit();
+
+    if(stopPlayback && Device->mDeviceState == DeviceState::Playing)
+    {
+        Device->Backend->stop();
+        Device->mDeviceState = DeviceState::Configured;
+    }
 }
 
 
@@ -3074,8 +3090,17 @@ ALC_API ALCboolean ALC_APIENTRY alcCloseDevice(ALCdevice *device) noexcept
     DeviceList.erase(iter);
 
     std::unique_lock<std::mutex> statelock{dev->StateLock};
-    std::vector<ContextRef> orphanctxs;
-    for(ContextBase *ctx : *dev->mContexts.load())
+    if(dev->mDeviceState == DeviceState::Playing)
+    {
+        dev->Backend->stop();
+        dev->mDeviceState = DeviceState::Configured;
+    }
+
+    auto prevarray = dev->mContexts.exchange(al::Device::ContextArray::Create(0));
+    std::ignore = dev->waitForMix();
+
+    auto orphanctxs = std::vector<ContextRef>{};
+    for(ContextBase *ctx : *prevarray)
     {
         auto ctxiter = std::lower_bound(ContextList.begin(), ContextList.end(), ctx);
         if(ctxiter != ContextList.end() && *ctxiter == ctx)
@@ -3085,18 +3110,12 @@ ALC_API ALCboolean ALC_APIENTRY alcCloseDevice(ALCdevice *device) noexcept
         }
     }
     listlock.unlock();
+    prevarray.reset();
 
     for(ContextRef &context : orphanctxs)
     {
         WARN("Releasing orphaned context {}", voidp{context.get()});
         context->deinit();
-    }
-    orphanctxs.clear();
-
-    if(dev->mDeviceState == DeviceState::Playing)
-    {
-        dev->Backend->stop();
-        dev->mDeviceState = DeviceState::Configured;
     }
 
     return ALC_TRUE;
